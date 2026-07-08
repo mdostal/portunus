@@ -1,0 +1,25 @@
+# secrets & real config — NEVER commit
+.env
+*.local
+**/auth.json
+*.secret.*
+
+# portunus runtime state (registry, audit log, approvals, clock)
+.portunus/
+registry.json
+audit.log
+
+# python build / runtime
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+
+# os
+.DS_Store
+.venv/

@@ -1,0 +1,24 @@
+{
+  "name": "portunus",
+  "type": "core",
+  "version": "0.1.0",
+  "description": "Secret broker for the Dostal harness — reference registry + boundary-only resolver so a plaintext secret never enters an LLM/agent context.",
+  "author": "Mathew Dostal",
+  "license": "MIT",
+  "engine": {
+    "kind": "tool",
+    "entry": "portunus",
+    "install": "pipx install portunus"
+  },
+  "ui": {
+    "url": "http://localhost:7802",
+    "tab": "Vault",
+    "mount": "link"
+  },
+  "requires": ["gcloud"],
+  "config": {
+    "home": "${PORTUNUS_HOME:-~/.portunus}",
+    "gcp_project": "${PORTUNUS_GCP_PROJECT:-}",
+    "backend": "gcloud"
+  }
+}
