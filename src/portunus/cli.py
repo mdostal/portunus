@@ -14,6 +14,13 @@ from typing import List, Optional
 
 from . import __version__
 from .audit import AuditChain
+from .auth import (
+    AWSWebIdentityAuth,
+    AuthError,
+    EnvOIDCTokenSource,
+    GCPWorkloadIdentityAuth,
+    assert_no_long_lived_cloud_keys,
+)
 from .backend import BackendError, GcloudBackend, MockBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .registry import Registry
@@ -37,7 +44,18 @@ def _build(project: str = ""):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
     else:
-        backend = GcloudBackend(project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""))
+        auth = None
+        audience = os.environ.get("PORTUNUS_GCP_WIF_AUDIENCE", "")
+        if audience:
+            auth = GCPWorkloadIdentityAuth(
+                audience=audience,
+                token_source=EnvOIDCTokenSource(),
+                audit=audit,
+            )
+        backend = GcloudBackend(
+            project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""),
+            credential_provider=auth,
+        )
     return registry, audit, broker, Resolver(registry, backend, broker)
 
 
@@ -155,6 +173,36 @@ def cmd_verify(args) -> int:
     return 0 if ok else 2
 
 
+def cmd_auth_check(args) -> int:
+    audit = AuditChain()
+    try:
+        assert_no_long_lived_cloud_keys()
+        source = EnvOIDCTokenSource()
+        if args.provider == "gcp":
+            auth = GCPWorkloadIdentityAuth(
+                audience=args.audience or os.environ.get("PORTUNUS_GCP_WIF_AUDIENCE", ""),
+                token_source=source,
+                audit=audit,
+            )
+            minted = auth.mint()
+            print(
+                "gcp:wif ok "
+                f"identity={minted.identity} scope={minted.scope} expires_at={minted.expires_at}"
+            )
+            return 0
+        auth = AWSWebIdentityAuth(
+            role_arn=args.role_arn or os.environ.get("PORTUNUS_AWS_ROLE_ARN", ""),
+            token_source=source,
+            session_name=args.session_name,
+            audit=audit,
+        )
+        minted = auth.mint()
+        print(f"aws:web-identity ok identity={minted.identity} expires_at={minted.expires_at}")
+        return 0
+    except AuthError as exc:
+        return _err(str(exc))
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -212,6 +260,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")
     ve.set_defaults(func=cmd_verify)
+
+    auth = sub.add_parser("auth", help="check keyless WIF/OIDC credential minting")
+    auth_sub = auth.add_subparsers(dest="provider", required=True)
+    gcp = auth_sub.add_parser("gcp", help="mint a GCP WIF access token without printing it")
+    gcp.add_argument("--audience", default="")
+    gcp.set_defaults(func=cmd_auth_check)
+    aws = auth_sub.add_parser("aws", help="mint AWS STS creds without printing them")
+    aws.add_argument("--role-arn", default="")
+    aws.add_argument("--session-name", default="portunus-agent")
+    aws.set_defaults(func=cmd_auth_check)
 
     return p
 

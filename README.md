@@ -48,6 +48,12 @@ pip install -e ".[test]"
 Requires Python ≥ 3.9. The production backend shells to the `gcloud` CLI; point it at a project with
 `PORTUNUS_GCP_PROJECT`. State lives under `PORTUNUS_HOME` (default `~/.portunus`, `0700`).
 
+Portunus supports keyless cloud auth. The harness supplies a short-lived OIDC token through
+`PORTUNUS_OIDC_TOKEN_FILE` (preferred) or `PORTUNUS_OIDC_TOKEN`, plus non-secret metadata:
+`PORTUNUS_OIDC_ISSUER`, `PORTUNUS_OIDC_SUBJECT`, `PORTUNUS_OIDC_AUDIENCE`, and optionally
+`PORTUNUS_OIDC_EXPIRES_AT`. Static GCP service-account JSON and AWS access-key pairs are rejected by
+the conformance helper; they should not exist in the repo, agent env, or broker config.
+
 ## Usage
 
 ### Register a reference (name → Secret Manager location)
@@ -90,6 +96,36 @@ portunus audit 25     # last 25 access decisions (names + results, never values)
 portunus verify       # prove the hash chain is intact
 ```
 
+### Keyless WIF/OIDC
+
+GCP uses Workload Identity Federation. Configure a pool/provider outside Portunus, scoped to the
+harness OIDC issuer and claims, then set:
+
+```bash
+export PORTUNUS_GCP_PROJECT=my-project
+export PORTUNUS_GCP_WIF_AUDIENCE='//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/agents/providers/portunus'
+export PORTUNUS_OIDC_TOKEN_FILE=/run/portunus/agent-oidc.jwt
+portunus auth gcp     # mints a short-lived access token, prints only identity/scope metadata
+```
+
+When `PORTUNUS_GCP_WIF_AUDIENCE` is present, the GCP backend exchanges the OIDC token for a
+short-lived access token, passes it to `gcloud` via a temporary `0600` access-token file, and deletes
+that file before returning.
+
+AWS uses `AssumeRoleWithWebIdentity`; configure an IAM OIDC provider and a trust policy scoped by the
+same issuer/claim model, then set:
+
+```bash
+export PORTUNUS_AWS_ROLE_ARN=arn:aws:iam::123456789012:role/portunus-agent
+export PORTUNUS_OIDC_TOKEN_FILE=/run/portunus/agent-oidc.jwt
+portunus auth aws     # validates exchange without printing STS credentials
+```
+
+The trust model is intentionally external and human-reviewed: WIF pool/provider definitions, IAM role
+trust policies, and claim-to-identity mappings are the security boundary. Portunus records only
+identity/scope references and exchange outcomes in the audit chain; OIDC tokens, access tokens, and
+STS credentials are never written to the registry, audit log, README examples, or command output.
+
 ## Library API
 
 ```python
@@ -122,6 +158,7 @@ log, or a non-`0600` file.
 ```
 src/portunus/
   registry.py   reference registry (name -> SM path); no value field
+  auth.py        OIDC -> short-lived GCP/AWS credentials; no static keys
   backend.py    SecretBackend protocol; MockBackend (tests) + GcloudBackend (prod)
   broker.py     grant / gate / approve + lifecycle guard, wired to audit
   audit.py      tamper-evident hash-chain access log

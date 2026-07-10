@@ -14,10 +14,22 @@ Public surface:
     Resolver        boundary-only placeholder resolution
     MockBackend     in-memory backend for tests
     GcloudBackend   GCP Secret Manager backend (shells to gcloud)
+    GCPWorkloadIdentityAuth / AWSWebIdentityAuth
+                    OIDC -> short-lived cloud credentials
 """
 from .registry import Registry, Reference
 from .audit import AuditChain
 from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
+from .auth import (
+    AuthError,
+    OIDCToken,
+    EnvOIDCTokenSource,
+    GCPWorkloadIdentityAuth,
+    GCPAccessToken,
+    AWSWebIdentityAuth,
+    AWSSessionCredentials,
+    assert_no_long_lived_cloud_keys,
+)
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -31,6 +43,14 @@ __all__ = [
     "MockBackend",
     "GcloudBackend",
     "BackendError",
+    "AuthError",
+    "OIDCToken",
+    "EnvOIDCTokenSource",
+    "GCPWorkloadIdentityAuth",
+    "GCPAccessToken",
+    "AWSWebIdentityAuth",
+    "AWSSessionCredentials",
+    "assert_no_long_lived_cloud_keys",
     "Broker",
     "NotInjectable",
     "ApprovalRequired",
