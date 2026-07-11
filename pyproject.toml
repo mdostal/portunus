@@ -18,6 +18,7 @@ test = ["pytest>=7"]
 
 [project.scripts]
 portunus = "portunus.cli:main"
+secrets = "portunus.secrets_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mdostal/portunus"

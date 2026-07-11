@@ -2,7 +2,7 @@
   "name": "portunus",
   "type": "core",
   "version": "0.1.0",
-  "description": "Secret broker for the Dostal harness — reference registry + boundary-only resolver so a plaintext secret never enters an LLM/agent context.",
+  "description": "Secret broker for the Dostal harness \u2014 reference registry + boundary-only resolver so a plaintext secret never enters an LLM/agent context.",
   "author": "Mathew Dostal",
   "license": "MIT",
   "engine": {
@@ -15,10 +15,49 @@
     "tab": "Vault",
     "mount": "link"
   },
-  "requires": ["gcloud"],
+  "requires": [],
   "config": {
     "home": "${PORTUNUS_HOME:-~/.portunus}",
     "gcp_project": "${PORTUNUS_GCP_PROJECT:-}",
-    "backend": "gcloud"
+    "backend": "${PORTUNUS_BACKEND:-local}",
+    "backends": [
+      "local",
+      "gcloud",
+      "mock"
+    ],
+    "key_provider": "${PORTUNUS_KEY_PROVIDER:-keychain on macOS, file elsewhere}"
+  },
+  "optional": {
+    "gcloud": "only for the GCP Secret Manager backend"
+  },
+  "mount": {
+    "tab": "Vault",
+    "kind": "cli-json",
+    "describe": "secrets mount",
+    "sources": {
+      "references": [
+        "secrets",
+        "discover",
+        "--output",
+        "json"
+      ],
+      "status": [
+        "secrets",
+        "status",
+        "<scope>",
+        "<kind>"
+      ],
+      "audit": [
+        "secrets",
+        "audit",
+        "--output",
+        "json"
+      ],
+      "verify": [
+        "secrets",
+        "verify"
+      ]
+    },
+    "guarantee": "every mount source is values-free by construction"
   }
 }

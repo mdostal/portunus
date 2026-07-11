@@ -90,6 +90,55 @@ portunus audit 25     # last 25 access decisions (names + results, never values)
 portunus verify       # prove the hash chain is intact
 ```
 
+## Local encrypted tier (v1 — no cloud required)
+
+For machines without WIF + a cloud Secret Manager, Portunus ships a local
+encrypted vault and a swarm-compatible `bin/secrets` CLI. Values are encrypted
+at rest (never plaintext on disk) under a 256-bit master key held in the
+**macOS Keychain** (`portunus-local-vault`; 0600 key file fallback on headless/non-mac hosts).
+Same broker, lifecycle guard, audit chain, and resolver as the cloud tier —
+`LocalVault` just implements the `SecretBackend` protocol.
+
+```bash
+# store (value via hidden prompt / stdin / --file — never argv)
+bin/secrets set att linear                    # -> dostal-att-linear, encrypted at rest
+bin/secrets set shared gemini --file ~/key   # kind -> GEMINI_API_KEY,GOOGLE_API_KEY
+
+# inject at dispatch: 0600 env file, stdout is the PATH only
+bin/secrets inject att --out /tmp/agent.env --ttl 1800
+bin/secrets expire-check /tmp/agent.env
+
+# inject at exec: values only in the child process environment
+bin/secrets exec att -- curl -H "Authorization: Bearer $LINEAR_API_KEY" ...
+
+# boundary resolution of placeholders (the model only ever sees the ref)
+bin/secrets resolve -- curl -H "Authorization: Bearer {{secret:att-linear}}" ...
+
+# lifecycle: drop -> enable -> lock (inject-only) -> revoke (fail closed)
+bin/secrets drop att linear && bin/secrets enable att linear
+bin/secrets lock att linear      # `get` now refuses; inject/exec still work
+bin/secrets audit && bin/secrets verify
+```
+
+Kind → env mapping matches dostal-swarm's `bin/secrets:env_names`:
+`gemini→GEMINI_API_KEY,GOOGLE_API_KEY · openai/codex→OPENAI_API_KEY ·
+anthropic/claude→ANTHROPIC_API_KEY · linear→LINEAR_API_KEY ·
+slack→SLACK_BOT_TOKEN · github→GH_TOKEN,GITHUB_TOKEN · else <KIND>_KEY`.
+
+Crypto: stdlib-only AEAD from standard primitives — HMAC-SHA256-CTR keystream,
+encrypt-then-MAC (`hmac.compare_digest`), per-version derived keys, AAD binding
+each blob to `name:version`. Master key creation feeds the Keychain via
+`security -i` stdin so the key never appears in argv/ps. Set
+`PORTUNUS_BACKEND=local` to point the `portunus` CLI at the same vault.
+
+## Pantheon mount contract
+
+`manifest.json` carries a `mount` block (also `secrets mount`): a Vault tab can
+be rendered from four values-free CLI sources — `discover --output json`
+(references + metadata), `status` (lifecycle/versions), `audit --output json`
+(hash-chain log), and `verify` (integrity). No mount source can return a
+secret value by construction.
+
 ## Library API
 
 ```python

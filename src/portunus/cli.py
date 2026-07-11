@@ -36,6 +36,11 @@ def _build(project: str = ""):
             if k.startswith("PORTUNUS_MOCK_"):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
+    elif os.environ.get("PORTUNUS_BACKEND", "").lower() == "local":
+        # The local encrypted tier: values encrypted at rest under a
+        # Keychain-held master key; no cloud dependency.
+        from .localvault import LocalVault
+        backend = LocalVault()
     else:
         backend = GcloudBackend(project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""))
     return registry, audit, broker, Resolver(registry, backend, broker)

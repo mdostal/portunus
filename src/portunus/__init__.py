@@ -13,11 +13,19 @@ Public surface:
     Broker          grant / gate / approve + lifecycle guard, wired to audit
     Resolver        boundary-only placeholder resolution
     MockBackend     in-memory backend for tests
+    LocalVault      local encrypted-at-rest backend (Keychain master key)
     GcloudBackend   GCP Secret Manager backend (shells to gcloud)
 """
 from .registry import Registry, Reference
 from .audit import AuditChain
 from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
+from .localvault import (
+    LocalVault,
+    KeychainKeyProvider,
+    FileKeyProvider,
+    LocalKeyError,
+    VaultIntegrityError,
+)
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -31,6 +39,11 @@ __all__ = [
     "MockBackend",
     "GcloudBackend",
     "BackendError",
+    "LocalVault",
+    "KeychainKeyProvider",
+    "FileKeyProvider",
+    "LocalKeyError",
+    "VaultIntegrityError",
     "Broker",
     "NotInjectable",
     "ApprovalRequired",
