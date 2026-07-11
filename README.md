@@ -2,6 +2,21 @@
 
 **A secret broker for the Dostal harness.** Named for the Roman god of keys and gates.
 
+## Component model
+
+**Portunus is the whole secret-broker system**, not any single piece of it. Its components carry
+their own (Latin, theme-consistent) names:
+
+| Component | Role | Where it lives today |
+|---|---|---|
+| **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary) | `resolver.py` + the `portunus` CLI (`cli.py`) |
+| **ARCA** | The vault store itself — the local-encrypted tier and the GCP Secret Manager tier behind one interface | `backend.py` (`SecretBackend`, `GcloudBackend`); local-encrypted tier lands with DOS-448 (`localvault.py`) |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
+| *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
+
+So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
+does **ARCA** give up (or accept) a value — and every decision lands in the audit chain.
+
 Portunus keeps a **reference registry** (`name -> Secret Manager location`, *never the value*) and
 resolves a `{{secret:NAME}}` placeholder to a live value **only at the execution boundary** — the
 actual outbound API / tool / build call, which runs *after* the model has produced its output.
@@ -122,11 +137,11 @@ log, or a non-`0600` file.
 ```
 src/portunus/
   registry.py   reference registry (name -> SM path); no value field
-  backend.py    SecretBackend protocol; MockBackend (tests) + GcloudBackend (prod)
-  broker.py     grant / gate / approve + lifecycle guard, wired to audit
+  backend.py    ARCA — SecretBackend protocol; MockBackend (tests) + GcloudBackend (prod)
+  broker.py     Petitio — grant / gate / approve + lifecycle guard, wired to audit
   audit.py      tamper-evident hash-chain access log
-  resolver.py   boundary-only {{secret:NAME}} resolution  ← the core
-  cli.py        the `portunus` tool
+  resolver.py   OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
+  cli.py        OSTIARIUS — the `portunus` tool
 manifest.json   Dostal plugin manifest (type: core, engine: tool)
 ```
 
