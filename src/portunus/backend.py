@@ -1,4 +1,7 @@
-"""Secret Manager backends.
+"""ARCA — the vault store: Secret Manager backends behind one tiny interface.
+
+ARCA (Roman strongbox/coffer) is the store itself — the GCP Secret Manager
+tier here, plus the local-encrypted tier (DOS-448).
 
 A backend answers exactly one dangerous question — "give me the plaintext for
 this SM name" — and is called ONLY from the resolver, at the boundary. Keeping
