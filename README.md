@@ -60,8 +60,10 @@ pipx install portunus         # once published
 pip install -e ".[test]"
 ```
 
-Requires Python ≥ 3.9. The production backend shells to the `gcloud` CLI; point it at a project with
-`PORTUNUS_GCP_PROJECT`. State lives under `PORTUNUS_HOME` (default `~/.portunus`, `0700`).
+Requires Python ≥ 3.9. **The default ARCA tier is the local encrypted vault** (Keychain-held
+master key, ciphertext-only at rest) — no cloud dependency. The GCP tier is explicit opt-in
+(`PORTUNUS_BACKEND=gcloud`, read-only until its adapter slice lands) and shells to the `gcloud`
+CLI with `PORTUNUS_GCP_PROJECT`. State lives under `PORTUNUS_HOME` (default `~/.portunus`, `0700`).
 
 ## Usage
 
@@ -143,8 +145,9 @@ slack→SLACK_BOT_TOKEN · github→GH_TOKEN,GITHUB_TOKEN · else <KIND>_KEY`.
 Crypto: stdlib-only AEAD from standard primitives — HMAC-SHA256-CTR keystream,
 encrypt-then-MAC (`hmac.compare_digest`), per-version derived keys, AAD binding
 each blob to `name:version`. Master key creation feeds the Keychain via
-`security -i` stdin so the key never appears in argv/ps. Set
-`PORTUNUS_BACKEND=local` to point the `portunus` CLI at the same vault.
+`security -i` stdin so the key never appears in argv/ps. The `portunus` CLI
+uses this same vault by default (local-first); every ARCA tier plugs in behind
+the `ArcaBackend` seam (`access` / `set` / `list_names` / `delete`).
 
 ## Pantheon mount contract
 

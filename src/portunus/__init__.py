@@ -23,7 +23,7 @@ Public surface:
 """
 from .registry import Registry, Reference
 from .audit import AuditChain
-from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
+from .backend import SecretBackend, ArcaBackend, MockBackend, GcloudBackend, BackendError
 from .localvault import (
     LocalVault,
     KeychainKeyProvider,
@@ -41,6 +41,7 @@ __all__ = [
     "Reference",
     "AuditChain",
     "SecretBackend",
+    "ArcaBackend",
     "MockBackend",
     "GcloudBackend",
     "BackendError",

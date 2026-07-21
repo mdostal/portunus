@@ -29,20 +29,23 @@ def _build(project: str = ""):
     registry = Registry()
     audit = AuditChain()
     broker = Broker(registry, audit)
-    if os.environ.get("PORTUNUS_BACKEND") == "mock":
+    choice = os.environ.get("PORTUNUS_BACKEND", "").lower()
+    if choice == "mock":
         # For local dry-runs only; values come from PORTUNUS_MOCK_<SM_NAME>.
         values = {}
         for k, v in os.environ.items():
             if k.startswith("PORTUNUS_MOCK_"):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
-    elif os.environ.get("PORTUNUS_BACKEND", "").lower() == "local":
-        # The local encrypted tier: values encrypted at rest under a
-        # Keychain-held master key; no cloud dependency.
+    elif choice in ("gcloud", "gcp"):
+        # Cloud tier is explicit opt-in ONLY — Portunus is local-first by
+        # canon. (Read-only today; the full cloud adapter is a later slice.)
+        backend = GcloudBackend(project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""))
+    else:
+        # DEFAULT: the local encrypted tier (ARCA local) — values encrypted
+        # at rest under a Keychain-held master key; no cloud dependency.
         from .localvault import LocalVault
         backend = LocalVault()
-    else:
-        backend = GcloudBackend(project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""))
     return registry, audit, broker, Resolver(registry, backend, broker)
 
 

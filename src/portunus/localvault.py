@@ -303,6 +303,10 @@ class LocalVault:
         self._save(sm_name, doc)
         return version
 
+    def set(self, sm_name: str, value: str) -> None:
+        """ArcaBackend seam: encrypt `value` as the newest version of `sm_name`."""
+        self.add_version(sm_name, value)
+
     def delete(self, sm_name: str) -> bool:
         """Remove a secret's vault file (ciphertext only ever touched disk)."""
         path = self._path(sm_name)
@@ -338,3 +342,7 @@ class LocalVault:
 
     def names(self) -> List[str]:
         return sorted(p.stem for p in self.dir.glob("*.json"))
+
+    def list_names(self) -> List[str]:
+        """ArcaBackend seam: sorted secret names in this tier (never values)."""
+        return self.names()
