@@ -19,10 +19,16 @@ Public surface:
     Resolver        OSTIARIUS — boundary-only placeholder resolution
     MockBackend     ARCA, in-memory backend for tests
     GcloudBackend   ARCA, GCP Secret Manager backend (shells to gcloud)
+    AwsBackend      ARCA, AWS Secrets Manager backend (shells to aws)
+    AzureBackend    ARCA, Azure Key Vault — unimplemented stub (EPIC DOS-89)
+    get_backend     ARCA, factory: provider name -> SecretBackend
 """
 from .registry import Registry, Reference
 from .audit import AuditChain
-from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
+from .backend import (
+    SecretBackend, MockBackend, GcloudBackend, AwsBackend, AzureBackend,
+    BackendError, get_backend,
+)
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -35,6 +41,9 @@ __all__ = [
     "SecretBackend",
     "MockBackend",
     "GcloudBackend",
+    "AwsBackend",
+    "AzureBackend",
+    "get_backend",
     "BackendError",
     "Broker",
     "NotInjectable",
