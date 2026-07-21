@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from . import __version__
 from .audit import AuditChain
-from .backend import BackendError, GcloudBackend, MockBackend
+from .backend import BackendError, MockBackend, get_backend
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .registry import Registry
 from .resolver import Resolver, UnknownReference
@@ -29,15 +29,28 @@ def _build(project: str = ""):
     registry = Registry()
     audit = AuditChain()
     broker = Broker(registry, audit)
-    if os.environ.get("PORTUNUS_BACKEND") == "mock":
+    provider = os.environ.get("PORTUNUS_BACKEND", "gcp")
+    if provider == "mock":
         # For local dry-runs only; values come from PORTUNUS_MOCK_<SM_NAME>.
         values = {}
         for k, v in os.environ.items():
             if k.startswith("PORTUNUS_MOCK_"):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
+    elif provider == "gcp":
+        backend = get_backend(
+            "gcp", project=project or os.environ.get("PORTUNUS_GCP_PROJECT", "")
+        )
+    elif provider == "aws":
+        backend = get_backend("aws", region=os.environ.get("PORTUNUS_AWS_REGION", ""))
+    elif provider == "azure":
+        backend = get_backend(
+            "azure", vault_url=os.environ.get("PORTUNUS_AZURE_VAULT_URL", "")
+        )
     else:
-        backend = GcloudBackend(project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""))
+        raise BackendError(
+            f"unknown PORTUNUS_BACKEND: {provider!r} (want one of mock, gcp, aws, azure)"
+        )
     return registry, audit, broker, Resolver(registry, backend, broker)
 
 
@@ -219,7 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except BackendError as exc:
+        return _err(str(exc))
 
 
 if __name__ == "__main__":

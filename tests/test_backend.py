@@ -96,6 +96,15 @@ def test_mock_unknown_secret_raises_backend_error():
         MockBackend().access("nope")
 
 
+def test_aws_strips_exactly_one_trailing_newline_not_the_values_own(monkeypatch):
+    # `aws ... --output text` always appends one newline on top of whatever
+    # the secret's real bytes are — a secret that itself ends in "\n" must
+    # come back with that single trailing newline intact, not stripped away.
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/local/bin/aws")
+    monkeypatch.setattr(subprocess, "run", _fake_run_ok(OPAQUE_BYTES + "\n\n"))
+    assert AwsBackend().access("dostal-x") == OPAQUE_BYTES + "\n"
+
+
 # --- Azure: interface-conformant, cleanly unimplemented ---------------------
 
 def test_azure_is_instance_of_protocol():

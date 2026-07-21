@@ -101,7 +101,10 @@ class AwsBackend:
             raise BackendError(
                 f"aws access failed for {sm_name}: {proc.stderr.strip()[:200]}"
             )
-        return proc.stdout.rstrip("\n")
+        # `--output text` always appends a trailing newline the API response
+        # itself doesn't have (unlike gcloud, which streams exact bytes) —
+        # strip exactly one to match GcloudBackend's byte-for-byte contract.
+        return proc.stdout[:-1] if proc.stdout.endswith("\n") else proc.stdout
 
 
 class AzureBackend:
