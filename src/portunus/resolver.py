@@ -1,4 +1,7 @@
-"""The resolver — boundary-only ``{{secret:NAME}}`` substitution.
+"""OSTIARIUS — the gatekeeper API: boundary-only ``{{secret:NAME}}`` substitution.
+
+OSTIARIUS is the request/deposit boundary of Portunus — the only way to
+request things from the vault store (ARCA) or hand things to it.
 
 This is the heart of Portunus and the whole reason it exists. The LLM/agent
 only ever emits a placeholder: ``{{secret:shared-anthropic}}``. The real value

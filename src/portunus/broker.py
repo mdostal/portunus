@@ -1,4 +1,6 @@
-"""The broker — grant / gate / approve + the lifecycle guard.
+"""Petitio — the approval-gate wrapper: grant / gate / approve + the lifecycle guard.
+
+Petitio wraps every OSTIARIUS request so access is always gated.
 
 Ported from the approval + lifecycle layer of ``bin/secrets``. The broker
 owns the *policy* decisions; the resolver asks it one question before every
