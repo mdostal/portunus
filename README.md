@@ -1,56 +1,80 @@
 # Portunus
 
-**A secret broker for the Dostal harness.** Named for the Roman god of keys and gates.
+**A harness-side secret broker for the Pantheon god-stack.** Named for the Roman god of keys and gates.
+
+## What & why
+
+An LLM/agent context must **never** contain a plaintext secret. Portunus exists to enforce exactly that
+boundary. The model only ever sees a reference — `{{secret:slack-bot-token}}` — and the real value is
+fetched and substituted **at the execution boundary** (the outbound API / tool / build call), which runs
+*after* the model has produced its output. Secrets are referenced by **name**; the harness injects the
+real value only where it is used, then drops it.
+
+It is its own service (not a library baked into one god) so that **every** god shares one audited,
+policy-gated secret path — swap the vault backend underneath without any caller changing, and a leak has
+exactly one place to be prevented and one place to be audited.
 
 ## Component model
 
-**Portunus is the whole secret-broker system**, not any single piece of it. Its components carry
-their own (Latin, theme-consistent) names:
+**Portunus is the whole secret-broker system**, not any single piece of it. Its components carry their
+own (Latin, theme-consistent) names:
 
-| Component | Role | Where it lives today |
+| Component | Role | Where it lives |
 |---|---|---|
-| **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary) | `resolver.py` + the `portunus` CLI (`cli.py`) |
+| **OSTIARIUS** | The gatekeeper API — the *only* way to request a value from the vault or deposit one into it (the request/deposit boundary) | `resolver.py` + the `portunus` CLI (`cli.py`) |
 | **ARCA** | The vault store itself — the local-encrypted tier (default, Stage 1) and the GCP Secret Manager tier (Stage 2+) behind one interface | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`) |
-| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
-| *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always lifecycle-guarded and policy-gated | `broker.py` |
+| *(audit)* | Tamper-evident SHA-256 hash-chain access log underneath all of the above | `audit.py` |
+| *(registry)* | Reference registry (`name → Secret Manager location`, **never the value**) | `registry.py` |
 
-So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
-does **ARCA** give up (or accept) a value — and every decision lands in the audit chain.
+So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then does
+**ARCA** give up (or accept) a value — and every decision lands in the audit chain.
 
-Portunus keeps a **reference registry** (`name -> Secret Manager location`, *never the value*) and
-resolves a `{{secret:NAME}}` placeholder to a live value **only at the execution boundary** — the
-actual outbound API / tool / build call, which runs *after* the model has produced its output.
+## Architecture
 
-> **The non-negotiable principle:** an LLM/agent context must never contain a plaintext secret.
-> Secrets are referenced by **name**; the harness fetches and injects the real value at the boundary.
-> The model only ever sees `{{secret:slack-bot-token}}`.
+```mermaid
+flowchart LR
+    subgraph ctx["Model context (never sees a value)"]
+        A["ticket / agent"] --> L["the LLM"]
+    end
+    L -->|"emits {{secret:NAME}}"| O
 
-This is a **Dostal harness plugin** (`type: core`, engine `tool`) — one of the first runtime plugins
-alongside the Anonymizer (PII) and Approval plugins. Multica/Hive registers its `manifest.json` and
-links its Vault tab; agents call the `portunus` tool.
+    subgraph portunus["Portunus (harness-side)"]
+        direction TB
+        O["OSTIARIUS<br/>resolver.py + CLI"]
+        P["Petitio<br/>broker.py<br/>lifecycle guard + gate/approve/grant"]
+        R["Registry<br/>name → SM location<br/>(no value field)"]
+        AR["ARCA<br/>backend.py<br/>SecretBackend interface"]
+        AU["Audit chain<br/>audit.py<br/>SHA-256, names only"]
 
+        O -->|"1. check_injectable(name)"| P
+        P -->|"resolve ref"| R
+        O -->|"2. access(sm_name)"| AR
+        P --> AU
+        O --> AU
+    end
+
+    AR -->|"fetch by name, boundary only"| SM[("GCP Secret Manager")]
+    O -->|"3. inject at the boundary"| B["outbound API / tool / exec<br/>(real value, then dropped)"]
 ```
-                 model sees only  {{secret:shared-anthropic}}
-  ┌──────────┐   ┌───────────┐   ┌────────────────────┐   ┌──────────────┐
-  │  ticket/ │──▶│  the LLM  │──▶│  PORTUNUS RESOLVE  │──▶│ outbound API │
-  │  agent   │   │ (context) │   │  gate + fetch + sub│   │  (real value)│
-  └──────────┘   └───────────┘   └─────────┬──────────┘   └──────────────┘
-                                           │ fetch by name (boundary only)
-                                           ▼
-                                  GCP Secret Manager
-```
 
-## Why it's safe
+The plaintext value flows only into one of three **boundary sinks**: a caller-supplied callable, the argv
+of an exec'd subprocess, or a `0600` temp file the caller must delete. It is never returned up the stack,
+never written to a log, and never handed back to model-facing code.
 
-- **The registry has no value field.** A `Reference` records the SM name/path, scope, kind, lifecycle
-  state, and approval gate — nothing secret. It's safe to read, copy, and inspect.
-- **The resolver never returns a value up the stack.** The plaintext flows only into one of three
-  boundary sinks: a caller-supplied callable, an exec'd subprocess's argv, or a `0600` temp file the
-  caller must delete. It is never returned to arbitrary caller/model code and never written to a log.
-- **Every fetch is policy-gated.** `dropped`/`revoked` references fail closed; gated references need a
-  time-boxed human approval before they resolve.
-- **Every resolution is hash-chain audited** — the log records the reference/SM name and result, never
-  the value; `portunus verify` proves the chain is untampered.
+## How it fits
+
+Portunus is a **Pantheon runtime plugin** (`type: core`, engine `tool`) — one of the first-class runtime
+gods alongside the Anonymizer (PII) and Approval plugins. It runs harness-side, so secrets and PII never
+touch LLM chat.
+
+- **Core host** — [pantheon-v2](https://github.com/mdostal/pantheon-v2) owns the plugin contracts; Portunus
+  registers its `manifest.json` and exposes the `portunus` tool.
+- **Substrate** — orchestrated on [Multica](https://github.com/firefly-events/multica) with the SDLC run
+  through [plugin-hive](https://firefly-events.github.io/plugin-hive/).
+- **Sibling gods it talks to** — **Janus** (UI layer) mounts the future Vault tab; **Heimdall** holds the
+  lane/token *routes* while Portunus controls the token *values*; **Vesta** owns non-secret config so
+  Portunus can stay strictly secrets-only.
 
 ## Install
 
@@ -66,7 +90,7 @@ lives in its own `0600` file, separate from the encrypted vault file, both under
 `~/.portunus`, `0700`). Set `PORTUNUS_BACKEND=gcloud` (+ `PORTUNUS_GCP_PROJECT`) to use GCP Secret Manager
 instead (Stage 2+); `PORTUNUS_BACKEND=mock` is for tests/dry-runs.
 
-## Usage
+## Quickstart
 
 ### Drop a secret into Arca (harness-side only)
 
@@ -110,6 +134,9 @@ metadata = vault.inspect_session("example.test", "dostal@example.test")
 record = vault.load_session("example.test", "dostal@example.test")
 ```
 
+The registry persists to `$PORTUNUS_HOME/registry.json`. It records the SM name, scope, kind, lifecycle
+state, and gate — **never a value**.
+
 ### Resolve at the boundary
 
 Exec mode — plaintext exists only in the child process argv, nothing is written to disk:
@@ -126,7 +153,9 @@ path=$(portunus resolve "key={{secret:shared-openai}}")
 rm -f "$path"
 ```
 
-### Policy: gate / approve / grant
+Dry-run without GCP — set `PORTUNUS_BACKEND=mock` and provide values via `PORTUNUS_MOCK_<SM_NAME>`.
+
+### 3. Policy: gate / approve / grant
 
 ```bash
 portunus gate shared-anthropic          # now requires human approval to resolve
@@ -136,7 +165,7 @@ portunus state shared-anthropic revoked  # emergency: blocks all injection
 portunus status shared-anthropic
 ```
 
-### Audit
+### 4. Audit
 
 ```bash
 portunus audit 25     # last 25 access decisions (names + results, never values)
@@ -167,22 +196,29 @@ pytest -q
 ```
 
 Tests use an in-memory `MockBackend` and an isolated `PORTUNUS_HOME`, so they never touch GCP or real
-state. The load-bearing test asserts that a resolved value never appears in a return value, the audit
-log, or a non-`0600` file.
+state. The load-bearing test asserts that a resolved value never appears in a return value, the audit log,
+or a non-`0600` file.
 
 ## Layout
 
 ```
 src/portunus/
-  registry.py    reference registry (name -> SM path); no value field
+  registry.py    reference registry (name -> SM path); JSON-backed, no value field
   backend.py     ARCA — SecretBackend protocol; MockBackend (tests) + GcloudBackend (Stage 2+)
   localvault.py  ARCA — LocalEncryptedBackend, the Stage 1 default (encrypted at rest)
   broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit
-  audit.py       tamper-evident hash-chain access log
+  audit.py       tamper-evident SHA-256 hash-chain access log
   resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
   cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
-manifest.json    Dostal plugin manifest (type: core, engine: tool)
+  paths.py       shared 0700 state-home resolution
+manifest.json    Pantheon plugin manifest (type: core, engine: tool)
 ```
+
+## Status
+
+**WIP.** The local-first CLI + Python library run today with a passing test suite (23 tests on `main`); the
+GCP backend, daemon auto-pull, and Janus Vault tab are the next rungs. See **[VISION.md](./VISION.md)** for
+where it is, where it's going, and good first contributions.
 
 ## License
 
