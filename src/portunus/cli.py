@@ -1,4 +1,4 @@
-"""``portunus`` — the engine tool agents call.
+"""OSTIARIUS — the ``portunus`` engine tool agents call.
 
 Registry management, policy (gate/approve/grant), the audit chain, and the
 boundary-only resolver. No subcommand ever prints a secret value to stdout;
