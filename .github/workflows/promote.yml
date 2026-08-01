@@ -24,7 +24,7 @@ jobs:
       - name: Open or update dev -> default-branch PR
         run: |
           set -e
-          BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
+          BASE=$(gh api "repos/$GH_REPO" -q .default_branch)
           if [ "$BASE" = "dev" ]; then
             echo "Default branch is 'dev' — nothing to promote."; exit 0
           fi
