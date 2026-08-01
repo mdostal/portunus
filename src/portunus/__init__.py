@@ -18,11 +18,13 @@ Public surface:
     Broker          Petitio — grant / gate / approve + lifecycle guard, wired to audit
     Resolver        OSTIARIUS — boundary-only placeholder resolution
     MockBackend     ARCA, in-memory backend for tests
-    GcloudBackend   ARCA, GCP Secret Manager backend (shells to gcloud)
+    LocalEncryptedBackend  ARCA, Stage 1 local-encrypted tier (default backend)
+    GcloudBackend   ARCA, GCP Secret Manager backend (shells to gcloud; Stage 2+)
 """
 from .registry import Registry, Reference
 from .audit import AuditChain
 from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
+from .localvault import LocalEncryptedBackend
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -34,6 +36,7 @@ __all__ = [
     "AuditChain",
     "SecretBackend",
     "MockBackend",
+    "LocalEncryptedBackend",
     "GcloudBackend",
     "BackendError",
     "Broker",
