@@ -1,0 +1,27 @@
+name: portunus-session-vault
+title: Portunus Durable Session Vault
+description: Persist Playwright and login sessions durably as secrets using Arca and Ostiarius.
+target_codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
+methodology: tdd
+version_bump: minor
+stories:
+  - id: 01-arca-storage-model
+    title: Arca Vault Storage Model for Sessions
+    complexity: medium
+    depends_on: []
+  - id: 02-session-api
+    title: Core Session API (save/load/list/revoke)
+    complexity: medium
+    depends_on: ["01-arca-storage-model"]
+  - id: 03-ostiarius-gate
+    title: Ostiarius Role-Scoped Access Gate
+    complexity: medium
+    depends_on: ["02-session-api"]
+  - id: 04-cli-broker-seam
+    title: CLI and Broker Seam Integration
+    complexity: low
+    depends_on: ["02-session-api"]
+  - id: 05-playwright-integration-tests
+    title: Playwright Integration and End-to-End Tests
+    complexity: high
+    depends_on: ["03-ostiarius-gate", "04-cli-broker-seam"]

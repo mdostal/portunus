@@ -1,0 +1,38 @@
+id: 01-arca-storage-model
+epic: portunus-session-vault
+title: Arca Vault Storage Model for Sessions
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+description: |
+  Design and implement the data model to store browser/login session state (like Playwright storageState, cookies, tokens) in the Arca local-encrypted vault.
+  The state must be namespaced per site/account and include TTL and rotation metadata.
+  Data must be encrypted at rest and never written to plaintext .env or logs.
+acceptance_criteria:
+  - "Given a session object, when stored, then it is encrypted in the Arca vault under a site/account namespace"
+  - "Given a stored session, when inspected in the vault, then it contains TTL and rotation metadata"
+  - "Given the system logs, when a session is saved, then no plaintext secrets or session data are leaked"
+metric:
+  applies: false
+  justification: This story focuses on the schema and encryption wrapper which doesn't expose a measurable performance or usage metric at this stage.
+steps:
+  - id: step-1
+    description: Define the session schema and metadata structure (TTL, namespaces).
+    agent: developer
+  - id: step-2
+    description: Implement the Arca vault encryption/decryption adapter for the session schema.
+    agent: developer
+context:
+  codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
+  tech_stack: {}
+  key_files:
+    - path: src/arca/vault.ts
+      purpose: Core vault implementation to extend for session storage.
+design_decisions:
+  - decision: Use Arca local-encrypted vault for all session data.
+    rationale: Ensures data is encrypted at rest and prevents accidental leaks into logs or .env files.
+risks:
+  - severity: high
+    description: Plaintext leak of session tokens in debug logs during serialization.
+    mitigation: Enforce strict sanitization and use safe-serialization wrappers for all Arca vault operations.

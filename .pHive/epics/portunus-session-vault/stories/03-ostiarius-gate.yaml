@@ -1,0 +1,37 @@
+id: 03-ostiarius-gate
+epic: portunus-session-vault
+title: Ostiarius Role-Scoped Access Gate
+status: pending
+complexity: medium
+methodology: tdd
+depends_on:
+  - 02-session-api
+description: |
+  Integrate the Session API with Ostiarius to enforce role-scoped gating on reads.
+  Only the owning agent or an explicitly authorized role can load a session from the vault.
+acceptance_criteria:
+  - "Given an agent with the owning role, when loading a session, then access is granted"
+  - "Given an agent without the owning role, when loading a session, then access is denied by Ostiarius"
+metric:
+  applies: false
+  justification: Security gate implementation evaluated via binary pass/fail authorization tests, not numeric metrics.
+steps:
+  - id: step-1
+    description: Define Ostiarius permissions for session read/write access.
+    agent: developer
+  - id: step-2
+    description: Wrap the load-session API with Ostiarius authorization checks.
+    agent: developer
+context:
+  codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
+  tech_stack: {}
+  key_files:
+    - path: src/ostiarius/gate.ts
+      purpose: Core access control logic to be applied to the session API.
+design_decisions:
+  - decision: Bind session ownership to agent roles rather than individual agent IDs.
+    rationale: Allows resilient agent swapping (e.g., Multica task re-dispatch) without losing access to necessary session state.
+risks:
+  - severity: medium
+    description: Overly restrictive gates breaking legitimate cross-agent workflows.
+    mitigation: Implement comprehensive unit tests simulating different agent roles requesting access.
