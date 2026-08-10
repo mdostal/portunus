@@ -15,13 +15,17 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
+from urllib.parse import quote
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from .backend import BackendError
 from .paths import home
+
+SESSION_SCHEMA = "portunus.session.v1"
 
 
 class LocalEncryptedBackend:
@@ -92,3 +96,107 @@ class LocalEncryptedBackend:
         if existed:
             self._flush(data)
         return existed
+
+    # --- browser/login session storage -------------------------------------
+    @staticmethod
+    def session_key(site: str, account: str) -> str:
+        """Return the stable Arca namespace for a site/account session."""
+        site = _namespace_part(site, "site")
+        account = _namespace_part(account, "account")
+        return f"session:{quote(site, safe='')}:{quote(account, safe='')}"
+
+    def store_session(
+        self,
+        site: str,
+        account: str,
+        session: Any,
+        *,
+        ttl_seconds: int,
+        rotation_interval_seconds: Optional[int] = None,
+        rotation_generation: int = 1,
+    ) -> Dict[str, Any]:
+        """Encrypt and persist a browser/login session with TTL metadata.
+
+        ``session`` may be a Playwright-style storageState dict or another
+        JSON-serializable session object. The returned inspection view contains
+        only namespace and lifecycle metadata, never cookies or token payloads.
+        """
+        ttl_seconds = _positive_int(ttl_seconds, "ttl_seconds")
+        rotation_generation = _positive_int(rotation_generation, "rotation_generation")
+        if rotation_interval_seconds is not None:
+            rotation_interval_seconds = _positive_int(
+                rotation_interval_seconds, "rotation_interval_seconds"
+            )
+
+        site = _namespace_part(site, "site")
+        account = _namespace_part(account, "account")
+        created_at = _utc_now()
+        expires_at = created_at + timedelta(seconds=ttl_seconds)
+        rotate_after = (
+            created_at + timedelta(seconds=rotation_interval_seconds)
+            if rotation_interval_seconds is not None
+            else None
+        )
+        record = {
+            "schema": SESSION_SCHEMA,
+            "namespace": {"site": site, "account": account},
+            "ttl": {"seconds": ttl_seconds, "expires_at": _format_time(expires_at)},
+            "rotation": {
+                "generation": rotation_generation,
+                "last_rotated_at": _format_time(created_at),
+                "interval_seconds": rotation_interval_seconds,
+                "rotate_after": _format_time(rotate_after) if rotate_after else None,
+            },
+            "session": session,
+        }
+        try:
+            payload = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError):
+            raise ValueError("session must be JSON-serializable") from None
+        self.store(self.session_key(site, account), payload)
+        return self.inspect_session(site, account)
+
+    def load_session(self, site: str, account: str) -> Dict[str, Any]:
+        """Decrypt and return a complete stored session record."""
+        key = self.session_key(site, account)
+        try:
+            record = json.loads(self.access(key))
+        except json.JSONDecodeError as exc:
+            raise BackendError(f"local vault: invalid session record for {key}") from exc
+        if not isinstance(record, dict) or record.get("schema") != SESSION_SCHEMA:
+            raise BackendError(f"local vault: invalid session record for {key}")
+        return record
+
+    def inspect_session(self, site: str, account: str) -> Dict[str, Any]:
+        """Return non-secret namespace, TTL, and rotation metadata."""
+        record = self.load_session(site, account)
+        return {
+            "schema": record["schema"],
+            "namespace": dict(record["namespace"]),
+            "ttl": dict(record["ttl"]),
+            "rotation": dict(record["rotation"]),
+        }
+
+    def remove_session(self, site: str, account: str) -> bool:
+        """Remove a stored browser/login session."""
+        return self.remove(self.session_key(site, account))
+
+
+def _namespace_part(value: str, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty string")
+    return value.strip()
+
+
+def _positive_int(value: int, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return value
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _format_time(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
