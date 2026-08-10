@@ -1,0 +1,44 @@
+id: 05-playwright-integration-tests
+epic: portunus-session-vault
+title: Playwright Integration and End-to-End Tests
+status: pending
+complexity: high
+methodology: bdd
+depends_on:
+  - 03-ostiarius-gate
+  - 04-cli-broker-seam
+description: |
+  Implement Playwright integration that injects storageState into a context and strictly drops it after use.
+  Create end-to-end tests validating the round-trip: save/load restores an authenticated context, expired sessions are refused, and revoked sessions are removed.
+  Reconcile with SEED story PAN-7047 as part of the implementation.
+acceptance_criteria:
+  - "Given a saved valid Playwright session, when a new context is created, then the storageState is injected and the user is authenticated"
+  - "Given an injected context, when the context closes, then the ephemeral local state is dropped"
+  - "Given a revoked session, when tested in Playwright, then the context fails to authenticate"
+  - "Given SEED story PAN-7047 requirements, when running the test suite, then those specific integration constraints are met"
+metric:
+  applies: false
+  justification: Integration and End-to-End testing represents a boolean completion quality gate, rather than a quantifiable performance metric.
+steps:
+  - id: step-1
+    description: Write adapter to safely inject Portunus loaded sessions into Playwright storageState.
+    agent: developer
+  - id: step-2
+    description: Implement teardown hooks to ensure local storageState is destroyed post-use.
+    agent: developer
+  - id: step-3
+    description: Write e2e tests covering round-trip auth, expiration, and revocation (incorporating PAN-7047).
+    agent: tester
+context:
+  codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
+  tech_stack: {}
+  key_files:
+    - path: tests/e2e/playwright.config.ts
+      purpose: E2E test configuration to wire up Portunus session loading.
+design_decisions:
+  - decision: Drop Playwright storageState aggressively after context close.
+    rationale: Ensures no ephemeral plaintext footprints are left on the runner filesystem, adhering to strict security requirements.
+risks:
+  - severity: high
+    description: Playwright caching or leaving trailing storageState files on disk.
+    mitigation: Use memory-only injection if supported, or ensure robust cleanup hooks for any temp files.

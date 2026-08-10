@@ -1,0 +1,39 @@
+id: 02-session-api
+epic: portunus-session-vault
+title: Core Session API (save/load/list/revoke)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on:
+  - 01-arca-storage-model
+description: |
+  Implement the core programmatic API for managing sessions: save, load, list, and revoke.
+  The API must enforce TTLs, returning an error or empty state if a requested session is expired.
+acceptance_criteria:
+  - "Given a valid session payload, when calling save-session, then it is persisted via the Arca storage model"
+  - "Given an active session ID, when calling load-session, then the session data is returned"
+  - "Given an expired session, when calling load-session, then the API refuses the request and indicates expiration"
+  - "Given an existing session, when calling revoke, then the session is permanently removed from the vault"
+metric:
+  applies: false
+  justification: Functional API implementation is a boolean completion state, not a quantitative optimization.
+steps:
+  - id: step-1
+    description: Implement the save, load, list, and revoke functions.
+    agent: developer
+  - id: step-2
+    description: Add TTL checking logic to the load function to reject expired sessions.
+    agent: developer
+context:
+  codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
+  tech_stack: {}
+  key_files:
+    - path: src/portunus/api.ts
+      purpose: Entry point for Portunus core API functions.
+design_decisions:
+  - decision: Enforce TTL at the API load boundary.
+    rationale: Prevents stale or expired sessions from ever being inadvertently restored to a browser context.
+risks:
+  - severity: medium
+    description: Race conditions during save/revoke operations.
+    mitigation: Use transactional semantics or atomic writes within the Arca vault adapter.

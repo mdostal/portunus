@@ -89,6 +89,27 @@ portunus reg add shared-anthropic dostal-shared-anthropic --scope shared --kind 
 portunus reg show
 ```
 
+### Store browser/login session state in Arca
+
+Arca can persist Playwright-style `storageState` or another JSON-serializable session object under a
+site/account namespace. The raw vault stores one encrypted blob at `session:<site>:<account>`; inspection
+returns only TTL and rotation metadata, never cookies, tokens, or local storage values:
+
+```python
+from portunus import LocalEncryptedBackend
+
+vault = LocalEncryptedBackend()
+vault.store_session(
+    "example.test",
+    "dostal@example.test",
+    storage_state,
+    ttl_seconds=3600,
+    rotation_interval_seconds=900,
+)
+metadata = vault.inspect_session("example.test", "dostal@example.test")
+record = vault.load_session("example.test", "dostal@example.test")
+```
+
 ### Resolve at the boundary
 
 Exec mode — plaintext exists only in the child process argv, nothing is written to disk:
