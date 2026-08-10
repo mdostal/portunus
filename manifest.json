@@ -25,7 +25,7 @@
       "gcloud",
       "mock"
     ],
-    "key_provider": "${PORTUNUS_KEY_PROVIDER:-keychain on macOS, file elsewhere}"
+    "key_provider": "file"
   },
   "optional": {
     "gcloud": "only for the GCP Secret Manager backend"

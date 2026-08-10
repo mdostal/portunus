@@ -1,7 +1,7 @@
 """``secrets`` — the local-first broker CLI (drop-in for dostal-swarm's bin/secrets).
 
-Backed by the local encrypted vault (``LocalVault``): every value is encrypted
-at rest under a Keychain-held master key, and every read goes through the same
+Backed by the local encrypted vault (``LocalEncryptedBackend``): every value is
+encrypted at rest under a local master key, and every read goes through the same
 broker/lifecycle/audit chokepoints as the cloud tier.
 
 Zero-leak rules (enforced here, tested in tests/test_secrets_cli.py):
@@ -34,7 +34,8 @@ from . import __version__
 from .audit import AuditChain
 from .backend import BackendError
 from .broker import ApprovalRequired, Broker, NotInjectable
-from .localvault import LocalKeyError, LocalVault
+from .localvault import LocalEncryptedBackend
+from .paths import home
 from .registry import Registry, Reference
 from .resolver import Resolver, UnknownReference
 
@@ -71,12 +72,73 @@ def _err(msg: str) -> int:
     return 1
 
 
+class _SecretStore:
+    """Small secrets-CLI adapter over LocalEncryptedBackend.
+
+    The encrypted vault stores values only. Version counters and metadata live
+    in a separate 0600 JSON sidecar because they are non-secret mount/status
+    data and should stay queryable without decrypting values.
+    """
+
+    def __init__(self):
+        self.backend = LocalEncryptedBackend()
+        self.meta_path = home() / "secrets-meta.json"
+
+    def _load_meta(self) -> Dict[str, Dict[str, object]]:
+        if not self.meta_path.exists():
+            return {}
+        try:
+            return json.loads(self.meta_path.read_text() or "{}")
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _flush_meta(self, data: Dict[str, Dict[str, object]]) -> None:
+        self.meta_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.meta_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.meta_path)
+        os.chmod(self.meta_path, 0o600)
+
+    def add_version(self, sm_name: str, value: str, meta: Optional[Dict[str, str]] = None) -> int:
+        data = self._load_meta()
+        current = data.get(sm_name, {})
+        version = int(current.get("version", 0)) + 1
+        self.backend.store(sm_name, value)
+        stored_meta = dict(current.get("meta", {}))
+        if meta:
+            stored_meta.update({k: v for k, v in meta.items() if v})
+        data[sm_name] = {"version": version, "meta": stored_meta}
+        self._flush_meta(data)
+        return version
+
+    def access(self, sm_name: str) -> str:
+        return self.backend.access(sm_name)
+
+    def delete(self, sm_name: str) -> bool:
+        removed = self.backend.remove(sm_name)
+        data = self._load_meta()
+        if sm_name in data:
+            del data[sm_name]
+            self._flush_meta(data)
+        return removed
+
+    def latest_version(self, sm_name: str) -> int:
+        if sm_name not in self.backend._load():
+            raise BackendError(f"unknown secret: {sm_name}")
+        return int(self._load_meta().get(sm_name, {}).get("version", 1))
+
+    def meta(self, sm_name: str) -> Dict[str, str]:
+        meta = self._load_meta().get(sm_name, {}).get("meta", {})
+        return dict(meta) if isinstance(meta, dict) else {}
+
+
 class _Stack:
     def __init__(self):
         self.registry = Registry()
         self.audit = AuditChain()
         self.broker = Broker(self.registry, self.audit)
-        self.vault = LocalVault()
+        self.vault = _SecretStore()
         self.resolver = Resolver(self.registry, self.vault, self.broker)
 
 
@@ -113,7 +175,7 @@ def _store(stack: _Stack, args, state: str, action: str) -> int:
     }
     try:
         version = stack.vault.add_version(sm, value, meta=meta)
-    except (BackendError, LocalKeyError) as exc:
+    except BackendError as exc:
         return _err(str(exc))
     del value
     existing = stack.registry.get(name)
@@ -299,7 +361,7 @@ def _do_inject(args, deprecated_env: bool = False) -> int:
         pairs, handles = _resolve_pairs(stack, chosen)
     except KeyError as exc:
         return _err(str(exc.args[0]))
-    except (NotInjectable, ApprovalRequired, BackendError, LocalKeyError) as exc:
+    except (NotInjectable, ApprovalRequired, BackendError) as exc:
         return _err(str(exc))
     if args.out:
         path = Path(args.out)
@@ -331,7 +393,7 @@ def cmd_exec(args) -> int:
         pairs, handles = _resolve_pairs(stack, chosen)
     except KeyError as exc:
         return _err(str(exc.args[0]))
-    except (NotInjectable, ApprovalRequired, BackendError, LocalKeyError) as exc:
+    except (NotInjectable, ApprovalRequired, BackendError) as exc:
         return _err(str(exc))
     stack.audit.append("exec", f"scope={args.scope}",
                        f"handles={','.join(handles)} argv0={args.cmd_argv[0]}")
@@ -579,8 +641,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.cmd_argv = cmd_argv
     try:
         return args.func(args)
-    except LocalKeyError as exc:
-        return _err(f"master key: {exc}")
+    except BackendError as exc:
+        return _err(str(exc))
 
 
 if __name__ == "__main__":

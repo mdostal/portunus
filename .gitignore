@@ -1,6 +1,9 @@
 # secrets & real config — NEVER commit
 .env
+.env.*
 *.local
+*.key
+*-sa.json
 **/auth.json
 *.secret.*
 

@@ -2,6 +2,21 @@
 
 **A secret broker for the Dostal harness.** Named for the Roman god of keys and gates.
 
+## Component model
+
+**Portunus is the whole secret-broker system**, not any single piece of it. Its components carry
+their own (Latin, theme-consistent) names:
+
+| Component | Role | Where it lives today |
+|---|---|---|
+| **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary) | `resolver.py` + the `portunus` CLI (`cli.py`) |
+| **ARCA** | The vault store itself — the local-encrypted tier (default, Stage 1) and the GCP Secret Manager tier (Stage 2+) behind one interface | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`) |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
+| *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
+
+So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
+does **ARCA** give up (or accept) a value — and every decision lands in the audit chain.
+
 Portunus keeps a **reference registry** (`name -> Secret Manager location`, *never the value*) and
 resolves a `{{secret:NAME}}` placeholder to a live value **only at the execution boundary** — the
 actual outbound API / tool / build call, which runs *after* the model has produced its output.
@@ -45,12 +60,29 @@ pipx install portunus         # once published
 pip install -e ".[test]"
 ```
 
-Requires Python ≥ 3.9. The production backend shells to the `gcloud` CLI; point it at a project with
-`PORTUNUS_GCP_PROJECT`. State lives under `PORTUNUS_HOME` (default `~/.portunus`, `0700`).
+Requires Python ≥ 3.9. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
+`cryptography`'s Fernet recipe — AES-128-CBC + HMAC-SHA256; we never hand-roll a cipher). The master key
+lives in its own `0600` file, separate from the encrypted vault file, both under `PORTUNUS_HOME` (default
+`~/.portunus`, `0700`). Set `PORTUNUS_BACKEND=gcloud` (+ `PORTUNUS_GCP_PROJECT`) to use GCP Secret Manager
+instead (Stage 2+); `PORTUNUS_BACKEND=mock` is for tests/dry-runs.
 
 ## Usage
 
-### Register a reference (name → Secret Manager location)
+### Drop a secret into Arca (harness-side only)
+
+`drop` is how a value gets into the local-encrypted vault — from stdin or a local file, **never** an
+inline flag (it would land in shell history / `ps`) and never through an LLM turn. It lands in
+`state=dropped` (fail-closed) so a separate, explicit `enable` is required before it's injectable:
+
+```bash
+portunus drop shared-anthropic dostal-shared-anthropic --value-file /path/to/value   # or --stdin
+portunus state shared-anthropic enabled     # now injectable
+portunus state shared-anthropic locked      # optional: freeze further changes, still injectable
+```
+
+### Register a reference to an out-of-band secret (name → Secret Manager location)
+
+Use this instead of `drop` when the value already lives in the backend (e.g. an existing GCP secret):
 
 ```bash
 portunus reg add shared-anthropic dostal-shared-anthropic --scope shared --kind anthropic
@@ -94,10 +126,10 @@ portunus verify       # prove the hash chain is intact
 
 For machines without WIF + a cloud Secret Manager, Portunus ships a local
 encrypted vault and a swarm-compatible `bin/secrets` CLI. Values are encrypted
-at rest (never plaintext on disk) under a 256-bit master key held in the
-**macOS Keychain** (`portunus-local-vault`; 0600 key file fallback on headless/non-mac hosts).
+at rest (never plaintext on disk) under a Fernet master key held in a separate
+`0600` key file.
 Same broker, lifecycle guard, audit chain, and resolver as the cloud tier —
-`LocalVault` just implements the `SecretBackend` protocol.
+`LocalEncryptedBackend` implements the `SecretBackend` protocol.
 
 ```bash
 # store (value via hidden prompt / stdin / --file — never argv)
@@ -125,11 +157,8 @@ Kind → env mapping matches dostal-swarm's `bin/secrets:env_names`:
 anthropic/claude→ANTHROPIC_API_KEY · linear→LINEAR_API_KEY ·
 slack→SLACK_BOT_TOKEN · github→GH_TOKEN,GITHUB_TOKEN · else <KIND>_KEY`.
 
-Crypto: stdlib-only AEAD from standard primitives — HMAC-SHA256-CTR keystream,
-encrypt-then-MAC (`hmac.compare_digest`), per-version derived keys, AAD binding
-each blob to `name:version`. Master key creation feeds the Keychain via
-`security -i` stdin so the key never appears in argv/ps. Set
-`PORTUNUS_BACKEND=local` to point the `portunus` CLI at the same vault.
+Crypto: `cryptography`'s Fernet recipe, matching the default local ARCA tier.
+Set `PORTUNUS_BACKEND=local` to point the `portunus` CLI at the same vault.
 
 ## Pantheon mount contract
 
@@ -170,13 +199,14 @@ log, or a non-`0600` file.
 
 ```
 src/portunus/
-  registry.py   reference registry (name -> SM path); no value field
-  backend.py    SecretBackend protocol; MockBackend (tests) + GcloudBackend (prod)
-  broker.py     grant / gate / approve + lifecycle guard, wired to audit
-  audit.py      tamper-evident hash-chain access log
-  resolver.py   boundary-only {{secret:NAME}} resolution  ← the core
-  cli.py        the `portunus` tool
-manifest.json   Dostal plugin manifest (type: core, engine: tool)
+  registry.py    reference registry (name -> SM path); no value field
+  backend.py     ARCA — SecretBackend protocol; MockBackend (tests) + GcloudBackend (Stage 2+)
+  localvault.py  ARCA — LocalEncryptedBackend, the Stage 1 default (encrypted at rest)
+  broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit
+  audit.py       tamper-evident hash-chain access log
+  resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
+  cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
+manifest.json    Dostal plugin manifest (type: core, engine: tool)
 ```
 
 ## License

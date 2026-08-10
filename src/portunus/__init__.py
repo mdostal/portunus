@@ -7,25 +7,24 @@ boundary (the outbound API/tool/build call). The plaintext value never enters
 an LLM/agent context, a log line, the board, or a return value handed back up
 the stack.
 
+Portunus is the WHOLE system; its components carry their own names:
+    OSTIARIUS   the gatekeeper API — the request/deposit boundary (Resolver + CLI)
+    ARCA        the vault store — local-encrypted + GCP SM tiers (backends)
+    Petitio     the approval-gate wrapper — every request is gated (Broker)
+
 Public surface:
     Registry        reference registry (name -> SM path); never stores a value
     AuditChain      tamper-evident hash-chain access log
-    Broker          grant / gate / approve + lifecycle guard, wired to audit
-    Resolver        boundary-only placeholder resolution
-    MockBackend     in-memory backend for tests
-    LocalVault      local encrypted-at-rest backend (Keychain master key)
-    GcloudBackend   GCP Secret Manager backend (shells to gcloud)
+    Broker          Petitio — grant / gate / approve + lifecycle guard, wired to audit
+    Resolver        OSTIARIUS — boundary-only placeholder resolution
+    MockBackend     ARCA, in-memory backend for tests
+    LocalEncryptedBackend  ARCA, Stage 1 local-encrypted tier (default backend)
+    GcloudBackend   ARCA, GCP Secret Manager backend (shells to gcloud; Stage 2+)
 """
 from .registry import Registry, Reference
 from .audit import AuditChain
 from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
-from .localvault import (
-    LocalVault,
-    KeychainKeyProvider,
-    FileKeyProvider,
-    LocalKeyError,
-    VaultIntegrityError,
-)
+from .localvault import LocalEncryptedBackend
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -37,13 +36,9 @@ __all__ = [
     "AuditChain",
     "SecretBackend",
     "MockBackend",
+    "LocalEncryptedBackend",
     "GcloudBackend",
     "BackendError",
-    "LocalVault",
-    "KeychainKeyProvider",
-    "FileKeyProvider",
-    "LocalKeyError",
-    "VaultIntegrityError",
     "Broker",
     "NotInjectable",
     "ApprovalRequired",
