@@ -1,0 +1,37 @@
+id: 04-cli-broker-seam
+epic: portunus-session-vault
+title: CLI and Broker Seam Integration
+status: pending
+complexity: low
+methodology: tdd
+depends_on:
+  - 02-session-api
+description: |
+  Expose the Portunus session API (save, load, list, revoke) via the CLI and the broker seam.
+  This enables external systems and runner-agnostic lanes (codex/gemini) to interact with the durable session vault.
+acceptance_criteria:
+  - "Given the CLI, when running a session command, then it successfully interfaces with the underlying Session API"
+  - "Given a broker message for session listing, when received, then it correctly lists namespaced sessions"
+metric:
+  applies: false
+  justification: Boilerplate seam and CLI routing do not lend themselves to meaningful performance metrics.
+steps:
+  - id: step-1
+    description: Add CLI commands for save, load, list, and revoke.
+    agent: developer
+  - id: step-2
+    description: Map broker events/RPC calls to the corresponding Session API functions.
+    agent: developer
+context:
+  codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
+  tech_stack: {}
+  key_files:
+    - path: src/cli/index.ts
+      purpose: CLI routing layer to be updated with new commands.
+design_decisions:
+  - decision: CLI and broker layers will act as thin wrappers around the core API.
+    rationale: Keeps business logic centralized in the core API and avoids duplication.
+risks:
+  - severity: low
+    description: Inconsistent argument parsing between CLI and broker.
+    mitigation: Use shared validation schemas for all inbound API requests regardless of the transport.

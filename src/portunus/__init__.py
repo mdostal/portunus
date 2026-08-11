@@ -18,10 +18,11 @@ Public surface:
     Broker          Petitio — grant / gate / approve + lifecycle guard, wired to audit
     Resolver        OSTIARIUS — boundary-only placeholder resolution
     MockBackend     ARCA, in-memory backend for tests
-    GcloudBackend   ARCA, GCP Secret Manager backend (shells to gcloud)
-    AwsBackend      ARCA, AWS Secrets Manager backend (shells to aws)
+    LocalEncryptedBackend  ARCA, Stage 1 local-encrypted tier (default backend)
+    GcloudBackend   ARCA, GCP Secret Manager backend (shells to gcloud; Stage 2+)
+    AwsBackend      ARCA, AWS Secrets Manager backend (shells to aws; Stage 2+)
     AzureBackend    ARCA, Azure Key Vault — unimplemented stub (EPIC DOS-89)
-    get_backend     ARCA, factory: provider name -> SecretBackend
+    get_backend     ARCA, factory: provider name ("gcp"|"aws"|"azure") -> SecretBackend
 """
 from .registry import Registry, Reference
 from .audit import AuditChain
@@ -29,6 +30,7 @@ from .backend import (
     SecretBackend, MockBackend, GcloudBackend, AwsBackend, AzureBackend,
     BackendError, get_backend,
 )
+from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -40,6 +42,8 @@ __all__ = [
     "AuditChain",
     "SecretBackend",
     "MockBackend",
+    "LocalEncryptedBackend",
+    "SESSION_SCHEMA",
     "GcloudBackend",
     "AwsBackend",
     "AzureBackend",

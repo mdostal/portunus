@@ -1,4 +1,4 @@
-"""``portunus`` — the engine tool agents call.
+"""OSTIARIUS — the ``portunus`` engine tool agents call.
 
 Registry management, policy (gate/approve/grant), the audit chain, and the
 boundary-only resolver. No subcommand ever prints a secret value to stdout;
@@ -10,11 +10,13 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from . import __version__
 from .audit import AuditChain
 from .backend import BackendError, MockBackend, get_backend
+from .localvault import LocalEncryptedBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .registry import Registry
 from .resolver import Resolver, UnknownReference
@@ -29,27 +31,32 @@ def _build(project: str = ""):
     registry = Registry()
     audit = AuditChain()
     broker = Broker(registry, audit)
-    provider = os.environ.get("PORTUNUS_BACKEND", "gcp")
-    if provider == "mock":
+    backend_kind = os.environ.get("PORTUNUS_BACKEND", "local")
+    if backend_kind == "mock":
         # For local dry-runs only; values come from PORTUNUS_MOCK_<SM_NAME>.
         values = {}
         for k, v in os.environ.items():
             if k.startswith("PORTUNUS_MOCK_"):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
-    elif provider == "gcp":
+    elif backend_kind in ("gcloud", "gcp"):
         backend = get_backend(
             "gcp", project=project or os.environ.get("PORTUNUS_GCP_PROJECT", "")
         )
-    elif provider == "aws":
+    elif backend_kind == "aws":
         backend = get_backend("aws", region=os.environ.get("PORTUNUS_AWS_REGION", ""))
-    elif provider == "azure":
+    elif backend_kind == "azure":
         backend = get_backend(
             "azure", vault_url=os.environ.get("PORTUNUS_AZURE_VAULT_URL", "")
         )
+    elif backend_kind == "local":
+        # Stage 1 default: the local-encrypted ARCA tier. No plaintext ever
+        # leaves this machine, let alone an LLM context.
+        backend = LocalEncryptedBackend()
     else:
         raise BackendError(
-            f"unknown PORTUNUS_BACKEND: {provider!r} (want one of mock, gcp, aws, azure)"
+            f"unknown PORTUNUS_BACKEND: {backend_kind!r} "
+            "(want one of local, mock, gcloud/gcp, aws, azure)"
         )
     return registry, audit, broker, Resolver(registry, backend, broker)
 
@@ -79,6 +86,43 @@ def cmd_reg(args) -> int:
         print(json.dumps({r.name: r.to_dict() for r in registry}, indent=2))
         return 0
     return _err(f"unknown reg action: {args.action}")
+
+
+def cmd_drop(args) -> int:
+    """Put a secret INTO Arca. Harness-side only: the value never enters the
+    LLM chat, ~/.claude, or a provider — it comes from stdin or a local file
+    the human/harness prepared out-of-band, never from an inline argv flag.
+
+    Lands in state=dropped (fail-closed); `portunus state <name> enabled` is
+    the separate, explicit step that makes it injectable.
+    """
+    registry, _, broker, resolver = _build()
+    backend = resolver.backend
+    if not hasattr(backend, "store"):
+        return _err(
+            "drop requires the local-encrypted backend "
+            "(unset PORTUNUS_BACKEND or set it to unset/local)"
+        )
+    if args.stdin:
+        value = sys.stdin.readline().rstrip("\n")
+    else:
+        try:
+            value = Path(args.value_file).read_text().rstrip("\n")
+        except OSError as exc:
+            return _err(f"cannot read --value-file: {exc}")
+    if not value:
+        return _err("empty secret value; nothing dropped")
+    ref = registry.add(
+        args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
+    )
+    backend.store(ref.sm_name, value)
+    del value  # scrub our local reference promptly
+    broker.audit.append("drop", ref.sm_name, "stored")
+    print(
+        f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} (state=dropped; "
+        f"run `portunus state {ref.name} enabled` to allow injection)"
+    )
+    return 0
 
 
 def cmd_resolve(args) -> int:
@@ -187,6 +231,19 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
+
+    dr = sub.add_parser(
+        "drop",
+        help="put a secret INTO Arca (local-encrypted); lands state=dropped",
+    )
+    dr.add_argument("name", help="reference name, e.g. shared-anthropic")
+    dr.add_argument("sm_name", help="vault key, e.g. dostal-shared-anthropic")
+    dr.add_argument("--scope", default="")
+    dr.add_argument("--kind", default="")
+    src = dr.add_mutually_exclusive_group(required=True)
+    src.add_argument("--stdin", action="store_true", help="read the value from stdin")
+    src.add_argument("--value-file", help="read the value from this local file")
+    dr.set_defaults(func=cmd_drop)
 
     rv = sub.add_parser("resolve", help="resolve {{secret:NAME}} at the boundary")
     rv.add_argument("text", nargs="?", help="template text (or use --stdin)")

@@ -15,10 +15,10 @@
     "tab": "Vault",
     "mount": "link"
   },
-  "requires": ["gcloud"],
+  "requires": [],
   "config": {
     "home": "${PORTUNUS_HOME:-~/.portunus}",
     "gcp_project": "${PORTUNUS_GCP_PROJECT:-}",
-    "backend": "gcloud"
+    "backend": "local"
   }
 }

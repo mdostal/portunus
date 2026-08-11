@@ -1,0 +1,83 @@
+name: CI
+# Standard, reusable CI gate shared identically across all Pantheon/god repos.
+# Auto-detects the stack (node / python / go) and runs install + build + test.
+# Runs on every PR into dev and into the default branch (main/master). This is THE gate.
+on:
+  pull_request:
+    branches: [dev, main, master]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect stack
+        id: detect
+        run: |
+          if [ -f package.json ]; then echo "stack=node" >> "$GITHUB_OUTPUT"
+          elif [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f setup.py ]; then echo "stack=python" >> "$GITHUB_OUTPUT"
+          elif [ -f go.mod ]; then echo "stack=go" >> "$GITHUB_OUTPUT"
+          else echo "stack=none" >> "$GITHUB_OUTPUT"; fi
+          echo "Detected stack: $(tail -n1 "$GITHUB_OUTPUT")"
+
+      # ---- Node ----
+      - name: Setup Node
+        if: steps.detect.outputs.stack == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Node install / build / test
+        if: steps.detect.outputs.stack == 'node'
+        run: |
+          set -e
+          if [ -f package-lock.json ]; then npm ci || npm install; else npm install; fi
+          npm run build --if-present
+          if node -e "const s=(require('./package.json').scripts)||{};process.exit(s.test?0:1)"; then
+            npm test
+          else
+            echo "No test script defined — CI gate passes (no tests to run)."
+          fi
+
+      # ---- Python ----
+      - name: Setup Python
+        if: steps.detect.outputs.stack == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python install / test
+        if: steps.detect.outputs.stack == 'python'
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          [ -f requirements.txt ] && pip install -r requirements.txt || true
+          if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e . || pip install . || true; fi
+          pip install pytest
+          set +e
+          pytest -q
+          code=$?
+          if [ "$code" -eq 5 ]; then echo "No tests collected — CI gate passes."; exit 0; fi
+          exit $code
+
+      # ---- Go ----
+      - name: Setup Go
+        if: steps.detect.outputs.stack == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Go build / test
+        if: steps.detect.outputs.stack == 'go'
+        run: |
+          set -e
+          go build ./...
+          go test ./...
+
+      # ---- None ----
+      - name: No recognized stack
+        if: steps.detect.outputs.stack == 'none'
+        run: echo "No node/python/go project detected at repo root — CI gate passes (no-op)."

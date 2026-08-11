@@ -10,7 +10,7 @@ their own (Latin, theme-consistent) names:
 | Component | Role | Where it lives today |
 |---|---|---|
 | **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary) | `resolver.py` + the `portunus` CLI (`cli.py`) |
-| **ARCA** | The vault store itself — the local-encrypted tier and the GCP Secret Manager tier behind one interface | `backend.py` (`SecretBackend`, `GcloudBackend`); local-encrypted tier lands with DOS-448 (`localvault.py`) |
+| **ARCA** | The vault store itself — the local-encrypted tier (default, Stage 1) and the GCP Secret Manager tier (Stage 2+) behind one interface | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`) |
 | **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
@@ -60,16 +60,54 @@ pipx install portunus         # once published
 pip install -e ".[test]"
 ```
 
-Requires Python ≥ 3.9. The production backend shells to the `gcloud` CLI; point it at a project with
-`PORTUNUS_GCP_PROJECT`. State lives under `PORTUNUS_HOME` (default `~/.portunus`, `0700`).
+Requires Python ≥ 3.9. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
+`cryptography`'s Fernet recipe — AES-128-CBC + HMAC-SHA256; we never hand-roll a cipher). The master key
+lives in its own `0600` file, separate from the encrypted vault file, both under `PORTUNUS_HOME` (default
+`~/.portunus`, `0700`). Set `PORTUNUS_BACKEND=gcloud` (+ `PORTUNUS_GCP_PROJECT`) to use GCP Secret Manager
+instead (Stage 2+); `PORTUNUS_BACKEND=mock` is for tests/dry-runs.
 
 ## Usage
 
-### Register a reference (name → Secret Manager location)
+### Drop a secret into Arca (harness-side only)
+
+`drop` is how a value gets into the local-encrypted vault — from stdin or a local file, **never** an
+inline flag (it would land in shell history / `ps`) and never through an LLM turn. It lands in
+`state=dropped` (fail-closed) so a separate, explicit `enable` is required before it's injectable:
+
+```bash
+portunus drop shared-anthropic dostal-shared-anthropic --value-file /path/to/value   # or --stdin
+portunus state shared-anthropic enabled     # now injectable
+portunus state shared-anthropic locked      # optional: freeze further changes, still injectable
+```
+
+### Register a reference to an out-of-band secret (name → Secret Manager location)
+
+Use this instead of `drop` when the value already lives in the backend (e.g. an existing GCP secret):
 
 ```bash
 portunus reg add shared-anthropic dostal-shared-anthropic --scope shared --kind anthropic
 portunus reg show
+```
+
+### Store browser/login session state in Arca
+
+Arca can persist Playwright-style `storageState` or another JSON-serializable session object under a
+site/account namespace. The raw vault stores one encrypted blob at `session:<site>:<account>`; inspection
+returns only TTL and rotation metadata, never cookies, tokens, or local storage values:
+
+```python
+from portunus import LocalEncryptedBackend
+
+vault = LocalEncryptedBackend()
+vault.store_session(
+    "example.test",
+    "dostal@example.test",
+    storage_state,
+    ttl_seconds=3600,
+    rotation_interval_seconds=900,
+)
+metadata = vault.inspect_session("example.test", "dostal@example.test")
+record = vault.load_session("example.test", "dostal@example.test")
 ```
 
 ### Resolve at the boundary
@@ -136,13 +174,14 @@ log, or a non-`0600` file.
 
 ```
 src/portunus/
-  registry.py   reference registry (name -> SM path); no value field
-  backend.py    ARCA — SecretBackend protocol; MockBackend (tests) + GcloudBackend (prod)
-  broker.py     Petitio — grant / gate / approve + lifecycle guard, wired to audit
-  audit.py      tamper-evident hash-chain access log
-  resolver.py   OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
-  cli.py        OSTIARIUS — the `portunus` tool
-manifest.json   Dostal plugin manifest (type: core, engine: tool)
+  registry.py    reference registry (name -> SM path); no value field
+  backend.py     ARCA — SecretBackend protocol; MockBackend (tests) + GcloudBackend (Stage 2+)
+  localvault.py  ARCA — LocalEncryptedBackend, the Stage 1 default (encrypted at rest)
+  broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit
+  audit.py       tamper-evident hash-chain access log
+  resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
+  cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
+manifest.json    Dostal plugin manifest (type: core, engine: tool)
 ```
 
 ## License
