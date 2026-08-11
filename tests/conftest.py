@@ -1,6 +1,5 @@
 """Shared fixtures — every test gets an isolated PORTUNUS_HOME so nothing
 touches the real state directory or GCP."""
-import importlib
 
 import pytest
 

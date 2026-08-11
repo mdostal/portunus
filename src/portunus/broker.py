@@ -31,6 +31,14 @@ class ApprovalRequired(RuntimeError):
     """Raised when a gated reference has no valid (unexpired) approval."""
 
 
+class SessionAccessDenied(RuntimeError):
+    """Raised when an agent attempts to load a session they don't own."""
+
+
+class SessionExpired(RuntimeError):
+    """Raised when an agent attempts to load an expired session."""
+
+
 class Broker:
     def __init__(self, registry: Registry, audit: Optional[AuditChain] = None,
                  approvals_dir: Optional[Path] = None):
@@ -115,3 +123,25 @@ class Broker:
         ref = self.registry.require(name)
         self.audit.append("grant", ref.sm_name, f"granted:{member}")
         return ref
+
+    # --- session policy --------------------------------------------------
+    def check_session_access(self, site: str, account: str, record: dict, agent_role: str) -> None:
+        """Enforce role-scoped gating and TTL on session read."""
+        from datetime import datetime, timezone
+        
+        # Check TTL
+        ttl = record.get("ttl", {})
+        expires_at_str = ttl.get("expires_at")
+        if expires_at_str:
+            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > expires_at:
+                self.audit.append("load-session", f"{site}:{account}", "denied-expired")
+                raise SessionExpired(f"Session for {site}:{account} expired at {expires_at_str}")
+
+        # Check Role
+        owner_role = record.get("namespace", {}).get("owner_role")
+        if owner_role and agent_role != owner_role:
+            self.audit.append("load-session", f"{site}:{account}", f"denied-role:{agent_role}")
+            raise SessionAccessDenied(f"Role '{agent_role}' not authorized for session owned by '{owner_role}'")
+        
+        self.audit.append("load-session", f"{site}:{account}", "ok")

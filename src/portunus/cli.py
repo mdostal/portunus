@@ -17,7 +17,7 @@ from . import __version__
 from .audit import AuditChain
 from .backend import BackendError, GcloudBackend, MockBackend
 from .localvault import LocalEncryptedBackend
-from .broker import ApprovalRequired, Broker, NotInjectable
+from .broker import ApprovalRequired, Broker, NotInjectable, SessionAccessDenied, SessionExpired
 from .registry import Registry
 from .resolver import Resolver, UnknownReference
 
@@ -49,6 +49,80 @@ def _build(project: str = ""):
 
 
 # --- subcommand handlers -------------------------------------------------
+def cmd_session(args) -> int:
+    registry, _, broker, resolver = _build()
+    backend = resolver.backend
+    if not hasattr(backend, "store_session"):
+        return _err("session commands require the local-encrypted backend")
+
+    if args.action == "save":
+        import json
+        try:
+            if args.stdin:
+                session_data = json.loads(sys.stdin.read())
+            else:
+                session_data = json.loads(Path(args.value_file).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            return _err(f"cannot read/parse session value: {exc}")
+        
+        owner_role = args.owner_role or os.environ.get("MULTICA_AGENT_ROLE", "default")
+        
+        try:
+            insp = backend.store_session(
+                args.site,
+                args.account,
+                session_data,
+                ttl_seconds=args.ttl,
+                owner_role=owner_role
+            )
+            broker.audit.append("save-session", f"{args.site}:{args.account}", f"owner:{owner_role}")
+            print(f"saved session for {args.site}:{args.account} (expires {insp['ttl']['expires_at']})")
+            return 0
+        except Exception as exc:
+            return _err(str(exc))
+
+    if args.action == "load":
+        import json
+        agent_role = args.agent_role or os.environ.get("MULTICA_AGENT_ROLE", "default")
+        try:
+            record = backend.load_session(args.site, args.account)
+            broker.check_session_access(args.site, args.account, record, agent_role)
+            print(json.dumps(record["session"]))
+            return 0
+        except (BackendError, SessionExpired, SessionAccessDenied) as exc:
+            return _err(str(exc))
+
+    if args.action == "list":
+        data = backend._load()
+        print(f"{'site':<20} {'account':<20} {'owner_role':<15} {'expires_at'}")
+        for k in data.keys():
+            if k.startswith("session:"):
+                try:
+                    parts = k.split(":")
+                    if len(parts) >= 3:
+                        from urllib.parse import unquote
+                        site = unquote(parts[1])
+                        account = unquote(parts[2])
+                        insp = backend.inspect_session(site, account)
+                        role = insp["namespace"].get("owner_role", "")
+                        exp = insp["ttl"].get("expires_at", "")
+                        print(f"{site:<20} {account:<20} {role:<15} {exp}")
+                except Exception:
+                    pass
+        return 0
+
+    if args.action == "revoke":
+        existed = backend.remove_session(args.site, args.account)
+        if existed:
+            broker.audit.append("revoke-session", f"{args.site}:{args.account}", "ok")
+            print(f"revoked session for {args.site}:{args.account}")
+        else:
+            print(f"no session found for {args.site}:{args.account}")
+        return 0
+
+    return _err(f"unknown session action: {args.action}")
+
+
 def cmd_reg(args) -> int:
     registry, *_ = _build()
     if args.action == "show":
@@ -218,6 +292,29 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
+
+    ses = sub.add_parser("session", help="manage browser/login sessions")
+    ses_sub = ses.add_subparsers(dest="action", required=True)
+    sv = ses_sub.add_parser("save", help="save a session")
+    sv.add_argument("site")
+    sv.add_argument("account")
+    sv.add_argument("--ttl", type=int, default=3600, help="TTL in seconds")
+    sv.add_argument("--owner-role", help="agent role that owns this session")
+    sv_src = sv.add_mutually_exclusive_group(required=True)
+    sv_src.add_argument("--stdin", action="store_true", help="read JSON from stdin")
+    sv_src.add_argument("--value-file", help="read JSON from file")
+    
+    ld = ses_sub.add_parser("load", help="load a session")
+    ld.add_argument("site")
+    ld.add_argument("account")
+    ld.add_argument("--agent-role", help="role of the requesting agent")
+    
+    ses_sub.add_parser("list", help="list sessions")
+    
+    rv = ses_sub.add_parser("revoke", help="revoke a session")
+    rv.add_argument("site")
+    rv.add_argument("account")
+    ses.set_defaults(func=cmd_session)
 
     dr = sub.add_parser(
         "drop",

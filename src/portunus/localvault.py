@@ -112,6 +112,7 @@ class LocalEncryptedBackend:
         session: Any,
         *,
         ttl_seconds: int,
+        owner_role: Optional[str] = None,
         rotation_interval_seconds: Optional[int] = None,
         rotation_generation: int = 1,
     ) -> Dict[str, Any]:
@@ -137,9 +138,13 @@ class LocalEncryptedBackend:
             if rotation_interval_seconds is not None
             else None
         )
+        namespace_dict = {"site": site, "account": account}
+        if owner_role:
+            namespace_dict["owner_role"] = owner_role
+
         record = {
             "schema": SESSION_SCHEMA,
-            "namespace": {"site": site, "account": account},
+            "namespace": namespace_dict,
             "ttl": {"seconds": ttl_seconds, "expires_at": _format_time(expires_at)},
             "rotation": {
                 "generation": rotation_generation,
