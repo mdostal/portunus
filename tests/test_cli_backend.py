@@ -5,11 +5,20 @@ import pytest
 
 from portunus.backend import AwsBackend, AzureBackend, BackendError, GcloudBackend, MockBackend
 from portunus.cli import _build
+from portunus.localvault import LocalEncryptedBackend
 
 
-def test_default_backend_is_gcp(home):
+def test_default_backend_is_local(home):
+    *_, resolver = _build()
+    assert isinstance(resolver.backend, LocalEncryptedBackend)
+
+
+def test_portunus_backend_gcloud_alias(home, monkeypatch):
+    monkeypatch.setenv("PORTUNUS_BACKEND", "gcloud")
+    monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "proj-1")
     *_, resolver = _build()
     assert isinstance(resolver.backend, GcloudBackend)
+    assert resolver.backend.project == "proj-1"
 
 
 def test_portunus_backend_gcp(home, monkeypatch):
