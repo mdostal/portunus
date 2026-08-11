@@ -18,7 +18,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -180,6 +180,22 @@ class LocalEncryptedBackend:
     def remove_session(self, site: str, account: str) -> bool:
         """Remove a stored browser/login session."""
         return self.remove(self.session_key(site, account))
+
+    def list_sessions(self) -> list[Dict[str, Any]]:
+        """List all stored browser/login sessions (metadata only)."""
+        data = self._load()
+        results = []
+        for key in data.keys():
+            if key.startswith("session:"):
+                parts = key.split(":")
+                if len(parts) >= 3:
+                    site = unquote(parts[1])
+                    account = unquote(parts[2])
+                    try:
+                        results.append(self.inspect_session(site, account))
+                    except BackendError:
+                        pass
+        return results
 
 
 def _namespace_part(value: str, field: str) -> str:

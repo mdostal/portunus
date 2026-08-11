@@ -115,3 +115,30 @@ class Broker:
         ref = self.registry.require(name)
         self.audit.append("grant", ref.sm_name, f"granted:{member}")
         return ref
+
+    # --- session api -----------------------------------------------------
+    def session_save(self, site: str, account: str, session: dict, vault=None, ttl_seconds: int = 86400) -> dict:
+        from .localvault import LocalEncryptedBackend
+        vault = vault or LocalEncryptedBackend()
+        record = vault.store_session(site, account, session, ttl_seconds=ttl_seconds)
+        self.audit.append("session-save", vault.session_key(site, account), "ok")
+        return record
+
+    def session_load(self, site: str, account: str, vault=None) -> dict:
+        from .localvault import LocalEncryptedBackend
+        vault = vault or LocalEncryptedBackend()
+        record = vault.load_session(site, account)
+        self.audit.append("session-load", vault.session_key(site, account), "ok")
+        return record
+
+    def session_list(self, vault=None) -> list:
+        from .localvault import LocalEncryptedBackend
+        vault = vault or LocalEncryptedBackend()
+        return vault.list_sessions()
+
+    def session_revoke(self, site: str, account: str, vault=None) -> bool:
+        from .localvault import LocalEncryptedBackend
+        vault = vault or LocalEncryptedBackend()
+        ok = vault.remove_session(site, account)
+        self.audit.append("session-revoke", vault.session_key(site, account), "ok" if ok else "not-found")
+        return ok

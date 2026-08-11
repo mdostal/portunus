@@ -30,7 +30,6 @@ def test_gate_then_approve_ttl_expires(home):
     with pytest.raises(ApprovalRequired):
         b.check_injectable("x")
     # approve for exactly 1 clock tick beyond now
-    now = b._clock_now()
     b.approve("x", ttl=1)
     # the approve() call itself ticked the clock; the token exp is now+1 at
     # approve time. One more successful check consumes the remaining budget.

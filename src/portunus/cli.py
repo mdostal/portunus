@@ -199,7 +199,57 @@ def cmd_verify(args) -> int:
     return 0 if ok else 2
 
 
-# --- parser --------------------------------------------------------------
+def cmd_session(args) -> int:
+    import json
+    _, _, broker, _ = _build()
+    
+    if args.action == "save":
+        # read session from stdin or file
+        if args.value_file:
+            val = Path(args.value_file).read_text()
+        else:
+            val = sys.stdin.read()
+        try:
+            session_obj = json.loads(val)
+        except json.JSONDecodeError as exc:
+            return _err(f"invalid JSON session: {exc}")
+        
+        try:
+            res = broker.session_save(args.site, args.account, session_obj, ttl_seconds=args.ttl)
+            print(json.dumps(res, sort_keys=True))
+            return 0
+        except Exception as exc:
+            return _err(str(exc))
+            
+    elif args.action == "load":
+        try:
+            res = broker.session_load(args.site, args.account)
+            print(json.dumps(res, sort_keys=True))
+            return 0
+        except Exception as exc:
+            return _err(str(exc))
+            
+    elif args.action == "list":
+        try:
+            res = broker.session_list()
+            print(json.dumps(res, sort_keys=True))
+            return 0
+        except Exception as exc:
+            return _err(str(exc))
+            
+    elif args.action == "revoke":
+        try:
+            ok = broker.session_revoke(args.site, args.account)
+            if not ok:
+                return _err(f"session not found: {args.site} {args.account}")
+            print(f"revoked session for {args.site} {args.account}")
+            return 0
+        except Exception as exc:
+            return _err(str(exc))
+            
+    return _err(f"unknown action {args.action}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
     p.add_argument("--version", action="version", version=f"portunus {__version__}")
@@ -269,6 +319,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")
     ve.set_defaults(func=cmd_verify)
+
+    sess = sub.add_parser("session", help="manage browser/login sessions")
+    sess_sub = sess.add_subparsers(dest="action", required=True)
+    
+    ss = sess_sub.add_parser("save", help="save a session")
+    ss.add_argument("site")
+    ss.add_argument("account")
+    ss.add_argument("--ttl", type=int, default=86400, help="session TTL in seconds")
+    ss_src = ss.add_mutually_exclusive_group(required=True)
+    ss_src.add_argument("--stdin", action="store_true", help="read session JSON from stdin")
+    ss_src.add_argument("--value-file", help="read session JSON from a file")
+    
+    sl = sess_sub.add_parser("load", help="load a session")
+    sl.add_argument("site")
+    sl.add_argument("account")
+    
+    sess_sub.add_parser("list", help="list saved sessions")
+    
+    sr = sess_sub.add_parser("revoke", help="revoke (remove) a session")
+    sr.add_argument("site")
+    sr.add_argument("account")
+    
+    sess.set_defaults(func=cmd_session)
 
     return p
 
