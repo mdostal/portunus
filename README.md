@@ -1,5 +1,10 @@
 # Portunus
 
+[![Build Status](https://github.com/mdostal/portunus/actions/workflows/ci.yml/badge.svg)](https://github.com/mdostal/portunus/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![OSS Lifecycle](https://img.shields.io/badge/OSS-Active-brightgreen.svg)]()
+[![Documentation](https://img.shields.io/badge/docs-GitHub_Pages-blue.svg)](https://mdostal.github.io/portunus/)
+
 **A secret broker for the Dostal harness.** Named for the Roman god of keys and gates.
 
 ## Component model
@@ -183,6 +188,13 @@ src/portunus/
   cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
 manifest.json    Dostal plugin manifest (type: core, engine: tool)
 ```
+
+## Support
+
+Portunus is an open-source project. If it provides value to you or your organization, please consider supporting its ongoing development.
+
+- [Sponsor on GitHub](https://github.com/sponsors/mdostal)
+- [Buy Me A Coffee](https://www.buymeacoffee.com/mdostal)
 
 ## License
 
