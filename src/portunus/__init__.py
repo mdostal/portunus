@@ -27,6 +27,14 @@ from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
 from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
+from .playwright import (
+    EphemeralPlaywrightContext,
+    PLAYWRIGHT_SESSION_KIND,
+    PlaywrightSessionAdapter,
+    SessionExpired,
+    SessionRevoked,
+    SessionUnavailable,
+)
 
 __version__ = "0.1.0"
 
@@ -46,5 +54,11 @@ __all__ = [
     "Resolver",
     "UnknownReference",
     "PLACEHOLDER_RE",
+    "EphemeralPlaywrightContext",
+    "PLAYWRIGHT_SESSION_KIND",
+    "PlaywrightSessionAdapter",
+    "SessionExpired",
+    "SessionRevoked",
+    "SessionUnavailable",
     "__version__",
 ]

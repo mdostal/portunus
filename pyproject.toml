@@ -26,4 +26,5 @@ Homepage = "https://github.com/mdostal/portunus"
 where = ["src"]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 testpaths = ["tests"]
