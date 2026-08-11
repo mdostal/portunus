@@ -17,7 +17,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -176,6 +176,32 @@ class LocalEncryptedBackend:
             "ttl": dict(record["ttl"]),
             "rotation": dict(record["rotation"]),
         }
+
+    def list_sessions(self) -> List[Dict[str, Any]]:
+        """Return non-secret metadata for all stored browser/login sessions."""
+        sessions = []
+        for key, token in sorted(self._load().items()):
+            if not key.startswith("session:"):
+                continue
+            try:
+                record = json.loads(self._fernet.decrypt(token.encode()).decode())
+            except InvalidToken as exc:
+                raise BackendError(
+                    f"local vault: cannot decrypt {key} (wrong master key or corrupt data)"
+                ) from exc
+            except json.JSONDecodeError as exc:
+                raise BackendError(f"local vault: invalid session record for {key}") from exc
+            if not isinstance(record, dict) or record.get("schema") != SESSION_SCHEMA:
+                raise BackendError(f"local vault: invalid session record for {key}")
+            sessions.append(
+                {
+                    "schema": record["schema"],
+                    "namespace": dict(record["namespace"]),
+                    "ttl": dict(record["ttl"]),
+                    "rotation": dict(record["rotation"]),
+                }
+            )
+        return sessions
 
     def remove_session(self, site: str, account: str) -> bool:
         """Remove a stored browser/login session."""

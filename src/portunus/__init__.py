@@ -25,6 +25,13 @@ from .registry import Registry, Reference
 from .audit import AuditChain
 from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
 from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
+from .api import (
+    SessionExpiredError,
+    list_sessions,
+    load_session,
+    revoke_session,
+    save_session,
+)
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -38,6 +45,11 @@ __all__ = [
     "MockBackend",
     "LocalEncryptedBackend",
     "SESSION_SCHEMA",
+    "SessionExpiredError",
+    "save_session",
+    "load_session",
+    "list_sessions",
+    "revoke_session",
     "GcloudBackend",
     "BackendError",
     "Broker",

@@ -110,6 +110,23 @@ metadata = vault.inspect_session("example.test", "dostal@example.test")
 record = vault.load_session("example.test", "dostal@example.test")
 ```
 
+Use the public session API when restoring sessions. It enforces TTL at the load
+boundary and only returns non-secret metadata from list calls:
+
+```python
+from portunus import SessionExpiredError, list_sessions, load_session, revoke_session, save_session
+
+save_session("example.test", "dostal@example.test", storage_state, ttl_seconds=3600)
+active_sessions = list_sessions()
+
+try:
+    storage_state = load_session("example.test", "dostal@example.test")
+except SessionExpiredError:
+    storage_state = None
+
+revoke_session("example.test", "dostal@example.test")
+```
+
 ### Resolve at the boundary
 
 Exec mode — plaintext exists only in the child process argv, nothing is written to disk:
