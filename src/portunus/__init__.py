@@ -24,7 +24,7 @@ Public surface:
 from .registry import Registry, Reference
 from .audit import AuditChain
 from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
-from .localvault import LocalEncryptedBackend
+from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
@@ -37,6 +37,7 @@ __all__ = [
     "SecretBackend",
     "MockBackend",
     "LocalEncryptedBackend",
+    "SESSION_SCHEMA",
     "GcloudBackend",
     "BackendError",
     "Broker",
