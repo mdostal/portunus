@@ -4,6 +4,38 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-13
+
+### Added
+
+- **Richer secret metadata.** `Reference` gains `description`/`purpose`/`injected_as`
+  (`{env: "env:VAR"|"file:path"}`) -- additive, non-tag-matchable, round-trips through
+  existing registry files unchanged.
+- **Keyless GCP backend (Workload Identity Federation).** Ported the tested `auth.py`
+  module (`GCPWorkloadIdentityAuth`, `AWSWebIdentityAuth`, `assert_no_long_lived_cloud_keys`)
+  from this repo's own `dos-81-keyless-wif` branch. `GcloudBackend` is now multi-project
+  aware -- `PORTUNUS_HOME/gcp-bindings.json` (`0600`) maps project -> WIF audience; two
+  references pointing at different GCP projects each mint against their own binding in
+  the same process. Access tokens are 0600-tempfile-then-unlink, never logged/printed/
+  returned. `portunus auth gcp [--project]` reports identity/scope/expiry only.
+- **GCP secret discovery.** `portunus discover --provider gcp --project <id> [--register]`
+  -- read-only enumeration of what already exists in a live GCP Secret Manager project
+  (names + labels + create-time, never a value; `discover.py` holds no reference to any
+  backend's `access()` method at all). `--register` writes not-yet-registered secrets as
+  `state=requested` placeholders, description seeded from GCP labels, local name derived
+  as `<project>-<sm-name>` to avoid cross-project collisions, never overwrites an existing
+  reference. Manually validated against two real GCP projects.
+- **LLM-facing "list keys for project" query.** `Registry.list_by_project()` -- metadata
+  only, zero-to-many, a sibling method to `resolve_by_tags()` rather than an overload of
+  it. `portunus list --project <id>` and `portunus ask "what secrets are available for
+  X"` (new `list` intent kind, alongside fetch/add/rotate).
+- **AWS Secrets Manager backend stub.** `AWSSecretsManagerBackend` -- `access()` raises
+  clearly, zero AWS SDK/network calls. `PORTUNUS_BACKEND=aws` selects it; fixes a real
+  gap found during implementation where an unrecognized backend kind silently fell
+  through to the local-encrypted default instead of failing closed.
+- README's ARCA/OSTIARIUS sections now narrate the full multi-backend vision (pluggable
+  stores selected per-Reference by provider+project) with a worked discovery example.
+
 ## [0.6.0] - 2026-08-13
 
 ### Added

@@ -1,0 +1,94 @@
+id: 03-gcp-project-binding-backend
+epic: portunus-vault-metadata
+title: Multi-project GCP backend with WIF credential binding
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
+complexity: high
+methodology: tdd
+depends_on: [02-port-wif-auth-module]
+
+description: |
+  Slice B (part 2). GcloudBackend gains an optional credential_provider (the
+  mint-token-to-0600-tempfile-then---access-token-file pattern from dos-81-keyless-wif's
+  backend.py diff, ported unchanged: mint via GCPWorkloadIdentityAuth, write to a
+  tempfile.mkstemp path chmod'd 0o600, pass --access-token-file=<path> to gcloud, unlink in a
+  finally block). New GcpProjectBinding concept: a project id + optional WIF audience, keyed
+  by project name, loaded from PORTUNUS_HOME/gcp-bindings.json (0600 on disk, per grill H1)
+  with PORTUNUS_GCP_PROJECT/PORTUNUS_GCP_WIF_AUDIENCE env vars as the zero-config fallback
+  (preserves today's single-project behavior when no bindings file exists). cli.py's _build()
+  resolves the backend's project per-request from the Reference.project field instead of one
+  process-global project. New `portunus auth gcp [--project]` subcommand mirrors the branch's
+  auth check -- mints and prints identity/scope/expiry only, never the token.
+
+acceptance_criteria:
+  - "Given no gcp-bindings.json exists and PORTUNUS_GCP_PROJECT is set, when a GCP-provider Reference is resolved, then the backend uses that env var's project (unchanged from pre-epic behavior)"
+  - "Given a gcp-bindings.json exists mapping project 'personalsites-487021' to a WIF audience, when a Reference with project=personalsites-487021 is resolved, then GcloudBackend is constructed with that project and a credential_provider using that audience"
+  - "Given two Reference entries with different project values, when each is resolved in the same process, then each uses its own project's binding, not a single global one"
+  - "Given a credential_provider is set and access() is called, when the gcloud subprocess is invoked, then --access-token-file points at a 0600 tempfile that is deleted before access() returns (even on gcloud failure)"
+  - "Given gcp-bindings.json is written by this story's code, when checked on disk, then its file mode is 0600"
+  - "Given `portunus auth gcp` is run with a mocked token source and transport, when it completes, then stdout contains identity/scope/expires_at but never the access token string"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm current cli.py _build()'s single-backend construction path and where per-Reference resolution would need to hook in (resolver.py's call site).
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for GcpProjectBinding loading (bindings file + env fallback), per-Reference project selection, 0600 file permissions on both the bindings file and the access-token tempfile, and the `auth gcp` CLI subcommand's token-never-printed guarantee.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add credential_provider param to GcloudBackend (ported from the branch diff); implement GcpProjectBinding loading; change _build()/resolver call sites to resolve project per-Reference; add the `auth gcp` CLI subcommand.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the access token never appears in a log/print/return value/audit entry, and that gcp-bindings.json and the tempfile are both 0600.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: GcloudBackend this story extends with credential_provider
+    - path: src/portunus/cli.py
+      purpose: _build() this story changes from one-global-project to per-Reference project resolution
+    - path: src/portunus/resolver.py
+      purpose: The boundary-only resolver that calls backend.access() -- confirm where project selection needs to happen relative to this call
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: Add credential_provider param and _access_token_file() context manager to GcloudBackend
+  - file: src/portunus/registry.py
+    change: Add GcpProjectBinding loading (new small module or a function within registry.py/paths.py -- decide during implement based on where PORTUNUS_HOME path helpers already live)
+  - file: src/portunus/cli.py
+    change: _build() resolves project per-Reference; add `auth gcp` subcommand
+  - file: tests/test_backend_gcp_wif.py
+    change: New test file for credential_provider + project binding behavior
+
+design_decisions:
+  - decision: gcp-bindings.json lives at PORTUNUS_HOME/gcp-bindings.json, parallel to registry.json, 0600
+    rationale: "Grill H1 -- resolved in design-discussion: matches Registry's existing 0600-on-disk convention rather than inventing a new file-permission story"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The minted WIF access token is a second value-class that must never leak (same class as a secret value) -- tempfile is 0600, unlinked in finally, never logged/printed/returned. Explicit test coverage for the tempfile lifecycle."
+  - concern: audit-chain-integrity
+    action: "credential-mint audit entries (from story 02's ported auth.py) fire on every real mint during backend.access() when a credential_provider is set."
+
+risks:
+  - severity: high
+    description: A bug in the tempfile cleanup path could leave a live GCP access token readable on disk after the process exits
+    mitigation: finally-block unlink (ported from the tested branch pattern) plus an explicit test that asserts the tempfile path does not exist after access() returns, including on the gcloud-failure path
+  - severity: medium
+    description: Changing _build() from one-global-backend to per-Reference resolution could regress the existing single-project zero-config behavior most current usage depends on
+    mitigation: Acceptance criterion 1 explicitly locks in current PORTUNUS_GCP_PROJECT-only behavior as unchanged when no bindings file exists
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- GCP backend selection per project + WIF auth"

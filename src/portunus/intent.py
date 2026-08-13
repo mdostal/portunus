@@ -26,6 +26,7 @@ _VOCAB_FIELDS = ("provider", "project", "env")
 # list stays small and literal rather than trying to be clever.
 _ADD_KEYWORDS = ("add", "create", "new secret")
 _ROTATE_KEYWORDS = ("rotate", "roll", "regenerate")
+_LIST_KEYWORDS = ("list", "what secrets", "available for", "which secrets")
 
 
 class ParsedIntent(dict):
@@ -39,25 +40,25 @@ class ParsedIntent(dict):
 
 
 def classify_intent_kind(text_l: str) -> str:
-    """Classify already-lowercased text as 'fetch' | 'add' | 'rotate'.
+    """Classify already-lowercased text as 'fetch' | 'add' | 'rotate' | 'list'.
 
     Public so callers that need the kind before vocabulary-matched tags are
     even meaningful (e.g. an 'add' request naming brand-new tags with no
     existing vocabulary to match against) can classify first, independent
     of parse_intent()'s registry-vocabulary lookup.
     """
-    is_add = any(re.search(rf"\b{re.escape(kw)}\b", text_l) for kw in _ADD_KEYWORDS)
-    is_rotate = any(re.search(rf"\b{re.escape(kw)}\b", text_l) for kw in _ROTATE_KEYWORDS)
-    if is_add and is_rotate:
-        raise AmbiguousIntent(
-            "request mentions both add and rotate language -- please specify one",
-            candidates=["add", "rotate"],
+    matched = [
+        kind for kind, keywords in (
+            ("add", _ADD_KEYWORDS), ("rotate", _ROTATE_KEYWORDS), ("list", _LIST_KEYWORDS),
         )
-    if is_add:
-        return "add"
-    if is_rotate:
-        return "rotate"
-    return "fetch"
+        if any(re.search(rf"\b{re.escape(kw)}\b", text_l) for kw in keywords)
+    ]
+    if len(matched) > 1:
+        raise AmbiguousIntent(
+            f"request mentions multiple possible intents: {matched} -- please specify one",
+            candidates=matched,
+        )
+    return matched[0] if matched else "fetch"
 
 
 class AmbiguousIntent(Exception):

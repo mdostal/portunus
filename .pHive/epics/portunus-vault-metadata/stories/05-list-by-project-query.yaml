@@ -1,0 +1,93 @@
+id: 05-list-by-project-query
+epic: portunus-vault-metadata
+title: LLM-facing "list keys for project" query
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
+complexity: medium
+methodology: tdd
+depends_on: [01-reference-metadata-fields]
+
+description: |
+  Slice D. Registry.list_by_project(project, *, provider=None, env=None) -> List[Reference]:
+  zero-to-many, metadata fields only, deliberately a separate method from resolve_by_tags (not
+  an overload) since it's a browse, not a fail-closed single-match resolve. `portunus ask
+  "what secrets are available for personalsites"` recognizes a new intent_kind="list"
+  (alongside existing fetch/add/rotate) and routes to this method, printing
+  name/description/purpose/env/injected_as for every match -- never a value; the code path
+  never touches SecretBackend.access() at all (same structural-safety pattern as discovery). A
+  thin `portunus list --project <id>` CLI command exposes the method directly for scripting.
+
+acceptance_criteria:
+  - "Given a registry with 3 references for project=personalsites-487021 and 2 for a different project, when list_by_project('personalsites-487021') is called, then exactly the 3 matching References are returned, metadata only"
+  - "Given list_by_project() is called, when its return value is inspected, then no Reference in the result has ever passed through a SecretBackend.access() call (structural: list_by_project has no reference to a backend at all)"
+  - "Given `portunus ask \"what secrets are available for personalsites\"` is run, when intent parsing classifies it, then intent_kind=='list' and the command prints names/descriptions/purposes without ever calling resolve_by_tags's single-match path"
+  - "Given `portunus list --project personalsites-487021` is run, when it completes, then stdout shows every matching reference's name/description/purpose/env/injected_as and no value is printed anywhere in the output"
+  - "Given zero references match the given project, when list_by_project() or `portunus list` is called, then it returns/prints an empty result, not an error (browse semantics, not fail-closed resolve semantics)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm resolve_by_tags's matches_tag() logic to reuse for filtering (not the ambiguity-raising wrapper) and intent.py's existing classify_intent_kind()/_ADD_KEYWORDS/_ROTATE_KEYWORDS pattern to extend with a list keyword set.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for list_by_project() filtering, the new intent_kind=='list' classification (fail-closed default stays 'fetch' on ambiguity, per existing intent.py convention), and the `portunus list` CLI command's metadata-only output.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement Registry.list_by_project(); extend classify_intent_kind() with a narrow list keyword set (e.g. "list", "what secrets", "available for"); wire cmd_ask's list-intent routing and the new `portunus list` CLI subcommand.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm list_by_project() and its CLI/ask call paths hold no reference to any SecretBackend instance anywhere in the call chain.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: resolve_by_tags/matches_tag() logic this story's list_by_project() reuses for matching
+    - path: src/portunus/intent.py
+      purpose: classify_intent_kind(), _ADD_KEYWORDS, _ROTATE_KEYWORDS -- this story adds a sibling _LIST_KEYWORDS set
+    - path: src/portunus/cli.py
+      purpose: cmd_ask's existing intent_kind routing (fetch/add/rotate) this story extends with list
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: Add Registry.list_by_project()
+  - file: src/portunus/intent.py
+    change: Add _LIST_KEYWORDS and extend classify_intent_kind() to recognize intent_kind='list'
+  - file: src/portunus/cli.py
+    change: Route ask's list intent to list_by_project(); add `portunus list --project` subcommand
+  - file: tests/test_registry.py
+    change: Add list_by_project() tests
+  - file: tests/test_intent.py
+    change: Add list-intent classification tests
+  - file: tests/test_cli_ask_requests.py
+    change: Add ask-list-intent CLI test
+
+design_decisions:
+  - decision: list_by_project() is a new Registry method, not an overload of resolve_by_tags()
+    rationale: "Design-discussion Slice D / Open Question 2 -- resolve_by_tags's fail-closed single-match contract is depended on by find/ask-fetch/inject; a browse query needs zero-to-many semantics, which must not risk changing that existing contract"
+  - decision: intent_kind='list' misclassification fails closed to 'fetch' (existing default), same as add/rotate
+    rationale: "Matches the established intent.py convention from portunus-agent-ops-federation -- a false-negative-to-fetch just means the ask does nothing new, the safe failure mode"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "list_by_project() and its CLI/ask call paths are structurally incapable of calling SecretBackend.access() -- reviewed explicitly, same discipline as story 04's discovery module."
+  - concern: audit-chain-integrity
+    action: "N/A -- read-only metadata browse, matching the existing unaudited-read convention (find/reg show already don't write audit entries)."
+
+risks:
+  - severity: medium
+    description: The new 'list' intent keyword set could overlap with existing fetch phrasing (e.g. "what's the secret for X" vs "what secrets are available for X"), misclassifying a fetch as a list or vice versa
+    mitigation: Narrow, distinct keyword set ("list", "available for", "what secrets") disjoint from fetch's implicit any-other-phrasing default; test explicitly covers a near-miss fetch phrase staying classified as fetch
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata/docs/design-discussion.md
+    relevant_excerpt: "Slice D -- LLM-facing list keys for project query"
