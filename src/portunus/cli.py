@@ -232,6 +232,61 @@ def _cmd_ask_rotate(tag_set, registry, broker) -> int:
     return 0
 
 
+def _cmd_ask_list(tag_set, registry, broker) -> int:
+    """Agent-facing "what secrets exist for project X" query. Metadata only,
+    zero-to-many, never a value -- routes through Registry.list_by_project(),
+    which has no path to a backend at all. Requires a project in the
+    inferred tags (a list without a project has nothing to scope the
+    browse to); fails closed with a clear message otherwise, same
+    no-guessing discipline as fetch/rotate."""
+    project = tag_set.get("project", "")
+    if not project:
+        broker.audit.append("semantic_op", "-", "list-no-project")
+        return _err(
+            "a 'list' request needs a recognizable project "
+            "(e.g. \"what secrets are available for mdostal.com\")"
+        )
+    refs = registry.list_by_project(
+        project, provider=tag_set.get("provider") or None, env=tag_set.get("env") or None,
+    )
+    broker.audit.append("semantic_op", f"project:{project}", f"listed:{len(refs)}")
+    if not refs:
+        print(f"no references found for project={project}")
+        return 0
+    _print_reference_list(refs)
+    return 0
+
+
+def _print_reference_list(refs) -> None:
+    """Metadata only, never a value."""
+    for ref in sorted(refs, key=lambda r: r.name):
+        print(
+            f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
+            f"(provider={ref.provider}, env={ref.env}, state={ref.state})"
+        )
+        if ref.description:
+            print(f"    description: {ref.description}")
+        if ref.purpose:
+            print(f"    purpose:     {ref.purpose}")
+        if ref.injected_as:
+            print(f"    injected_as: {ref.injected_as}")
+
+
+def cmd_list(args) -> int:
+    """portunus list --project <id> -- direct CLI access to list_by_project(),
+    the same metadata-only method the LLM-facing `ask` list intent uses."""
+    registry, *_ = _build()
+    refs = registry.list_by_project(args.project, provider=args.provider or None, env=args.env or None)
+    if args.json:
+        print(json.dumps([r.to_dict() for r in sorted(refs, key=lambda r: r.name)]))
+        return 0
+    if not refs:
+        print(f"no references found for project={args.project}")
+        return 0
+    _print_reference_list(refs)
+    return 0
+
+
 def cmd_ask(args) -> int:
     """Semantic front door: natural-language request -> parse_intent -> a tag
     set -> resolve_by_tags -> the same boundary-injection dispatch as inject.
@@ -262,6 +317,9 @@ def cmd_ask(args) -> int:
 
     if intent_kind == "rotate":
         return _cmd_ask_rotate(tag_set, registry, broker)
+
+    if intent_kind == "list":
+        return _cmd_ask_list(tag_set, registry, broker)
 
     try:
         ref = registry.resolve_by_tags(**tag_set)
@@ -675,6 +733,16 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
+
+    ls = sub.add_parser(
+        "list",
+        help="list every reference for a project (metadata only, never a value)",
+    )
+    ls.add_argument("--project", required=True)
+    ls.add_argument("--provider", default="")
+    ls.add_argument("--env", default="")
+    ls.add_argument("--json", action="store_true", help="machine-readable output")
+    ls.set_defaults(func=cmd_list)
 
     fd = sub.add_parser("find", help="find a reference by tags (metadata only, never a value)")
     fd.add_argument("--tags", required=True,

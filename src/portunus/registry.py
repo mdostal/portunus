@@ -309,6 +309,23 @@ class Registry:
             raise AmbiguousMatch([m.name for m in matches])
         return matches[0]
 
+    def list_by_project(
+        self, project: str, *, provider: Optional[str] = None, env: Optional[str] = None
+    ) -> List[Reference]:
+        """Metadata-only browse: every reference for `project`, optionally
+        narrowed by provider/env. Zero-to-many, never raises on zero or many
+        matches -- deliberately a different method from resolve_by_tags()
+        (a fail-closed single-match resolve), not an overload of it, so an
+        LLM-facing "what's available" query can't accidentally change
+        resolve_by_tags's existing contract. Never touches a backend --
+        this is a pure read over already-loaded Reference metadata."""
+        return [
+            ref for ref in self._data.values()
+            if ref.project == project
+            and (provider is None or ref.provider == provider)
+            and (env is None or ref.env == env)
+        ]
+
     def __contains__(self, name: object) -> bool:
         return name in self._data
 
