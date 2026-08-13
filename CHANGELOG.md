@@ -4,6 +4,35 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-13
+
+### Fixed
+
+- **Multi-account GCP bindings.** Found live: authenticating a second GCP account
+  (`gcloud auth login`) silently broke access to every project governed by the first, because
+  no Portunus GCP code path passed an explicit `--account=` -- everything followed gcloud's
+  single mutable "active account" pointer. Both credentials were never actually lost (`gcloud`
+  already stores multiple accounts simultaneously); the fix makes every GCP call explicit.
+
+### Added
+
+- `GcpProjectBinding` gains `account: str` -- a local gcloud CLI identity to use per project,
+  mutually exclusive with a WIF binding on the same project (a minted token already carries
+  identity). `GcloudBackend.access()` (the real value-fetch/injection path) and
+  `discover.py::list_gcp_secrets()` (the exact path that broke live) both pass `--account=`
+  when configured.
+- **`portunus bindings set/show`** -- previously no CLI command existed to configure
+  `gcp-bindings.json` at all (only `save_gcp_bindings()`, called by tests). `set` is an
+  upsert (only passed fields change); `show` prints real account/WIF-audience values (a
+  local-CLI-reading-its-own-config trust boundary, deliberately different from the UI's
+  presence-only `wif_configured`).
+- Verified live against two real GCP accounts in one session:
+  `portunus discover --project ffe-cicd` (342 secrets, `account=mdostal@ff.events`)
+  immediately followed by `portunus discover --project personalsites-487021` (36 secrets,
+  `account=mathew.dostal@gmail.com`), both succeeding regardless of which account gcloud
+  considered "active" -- and confirmed the pre-fix failure mode by removing the binding and
+  reproducing the exact `Permission denied` error the user hit.
+
 ## [0.8.0] - 2026-08-13
 
 ### Added
