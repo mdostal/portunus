@@ -13,6 +13,11 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
+from .backend import load_gcp_bindings
+from .cli import _build_tree
+from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
+from .registry import AmbiguousMatch, NoMatch, Registry
+
 mcp = FastMCP("portunus")
 
 
@@ -23,6 +28,72 @@ def portunus_health() -> str:
     registry, a backend, or PORTUNUS_HOME. Answers "is this process alive",
     not "is the vault healthy"."""
     return "ok"
+
+
+@mcp.tool()
+def portunus_list(project: str) -> list:
+    """List every secret registered for `project` -- metadata only
+    (name, description, purpose, state, tags, etc), never a value.
+    Use this to find the exact reference name you need before calling
+    portunus_resolve_to_tempfile or portunus_resolve_exec."""
+    registry = Registry()
+    return [ref.to_dict() for ref in registry.list_by_project(project)]
+
+
+@mcp.tool()
+def portunus_tree(project: str = "") -> dict:
+    """Render secrets by group hierarchy + related links -- metadata only,
+    never a value. Same shape as `portunus tree --json`: {ungrouped, tree,
+    refs}. A reference with no group appears in `ungrouped`, never dropped."""
+    registry = Registry()
+    refs = list(registry)
+    if project:
+        refs = [r for r in refs if r.project == project]
+    if not refs:
+        return {"ungrouped": [], "tree": {}, "refs": {}}
+    ungrouped, tree, refs_meta = _build_tree(refs)
+    return {"ungrouped": sorted(ungrouped), "tree": tree, "refs": refs_meta}
+
+
+@mcp.tool()
+def portunus_ask_preview(request: str) -> dict:
+    """Preview what secret a plain-language request would resolve to --
+    metadata only, never a value, never injects anything. Only handles
+    fetch requests (e.g. "the vercel secret for mdostal.com in prod"); a
+    request that reads as an add/rotate/list request is rejected with a
+    clear message rather than silently executing that other behavior.
+    Fails closed on anything ambiguous or unrecognized -- never guesses."""
+    registry = Registry()
+    intent_kind = classify_intent_kind(request.lower())
+    if intent_kind != "fetch":
+        return {
+            "error": f"not a fetch request (classified as {intent_kind!r}) -- "
+            "portunus_ask_preview only previews fetch requests"
+        }
+    try:
+        tag_set = parse_intent(request, registry)
+    except AmbiguousIntent as exc:
+        return {"error": exc.clarifying_question}
+    try:
+        ref = registry.resolve_by_tags(**tag_set)
+    except NoMatch:
+        return {"error": f"no reference matches the inferred tags: {dict(tag_set)!r}"}
+    except AmbiguousMatch as exc:
+        return {"error": f"ambiguous match: {exc.candidates}"}
+    return ref.to_dict()
+
+
+@mcp.tool()
+def portunus_bindings_show(project: str = "") -> dict:
+    """Show configured GCP project bindings (account/WIF audience) -- one
+    project or all. Same values as `portunus bindings show --json`."""
+    bindings = load_gcp_bindings()
+    if project:
+        binding = bindings.get(project)
+        if binding is None:
+            return {}
+        bindings = {project: binding}
+    return {p: {"account": b.account, "wif_audience": b.wif_audience} for p, b in bindings.items()}
 
 
 def run_server() -> None:
