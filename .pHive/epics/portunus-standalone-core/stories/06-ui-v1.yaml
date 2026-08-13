@@ -1,0 +1,99 @@
+id: 06-ui-v1
+epic: portunus-standalone-core
+title: Standalone UI v1 (view, add, rotate)
+status: pending
+complexity: high
+methodology: tdd
+depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door"]
+
+description: |
+  A localhost-only Next.js/React UI: a reference list (tags + state, never values), a
+  reference detail view (audit trail), an add-secret form, and a rotate action. This is the
+  biggest single new surface in the epic and the one place the design discussion identified a
+  real boundary decision (Grill U1): the add-secret form is the deliberate human-plaintext-entry
+  point, exactly analogous to `portunus drop --stdin` today — it submits to the same
+  harness-side-only local drop path, never through an LLM/agent, must be localhost-only, and
+  must never log/cache the value. Every other UI operation is strictly read-only-for-values.
+  All writes route through the existing Broker.check_injectable gate — no second privileged
+  path.
+
+acceptance_criteria:
+  - "Given the UI is running, when a user views the reference list, then only tags/state/metadata are shown, never a value"
+  - "Given a user submits the add-secret form, when the submission completes, then it lands in state=dropped via the same local drop path the CLI uses, and no request/response/log anywhere in the UI's stack contains the value"
+  - "Given a user triggers a rotate action, when it completes, then it either generates the new value server-side or falls back to the add-secret form's human-entry path — never a hidden shortcut that bypasses the gate"
+  - "Given any UI write operation, when it is inspected, then it is provably routed through Broker.check_injectable (backend integration test, not just UI-level trust)"
+  - "Given a UI action occurs (view/add/rotate), when it completes, then a ui_action audit entry is written"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm the CLI's drop path and Broker.check_injectable call sites the UI's backend route must reuse, not reimplement.
+    agent: researcher
+  - id: ui-design
+    description: Delegate to /design for wireframes (atomic external call; see skills/design/SKILL.md). Covers the reference list, detail/audit view, add-secret form, and rotate action screens, plus the UI's exact backend-route mechanism (left open by the structured outline).
+    agent: ui-designer
+    delegates_to: design
+    depends_on: [research]
+  - id: test-spec
+    description: Write failing backend integration tests asserting the UI's write route calls Broker.check_injectable and cannot bypass it, plus a boundary-invariant test that the add-secret path never logs the value.
+    agent: tester
+    depends_on: [ui-design]
+  - id: implement
+    description: Implement the UI (per the /design wireframe brief) and its backend route, wired through the existing gated path.
+    agent: developer
+    depends_on: [test-spec]
+    inputs:
+      - source: step_output
+        step: ui-design
+        key: wireframe_brief
+  - id: review
+    description: Review specifically for a second privileged write path — the exact risk flagged in the design discussion.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/broker.py
+      purpose: Broker.check_injectable gate every UI write must route through
+    - path: src/portunus/cli.py
+      purpose: Existing harness-side-only drop path the add-secret form submits to
+
+files_to_modify:
+  - file: ui/**
+    change: New Next.js/React app — exact file tree owned by the /design delegation
+  - file: src/portunus/audit.py
+    change: Add ui_action entry type
+  - file: tests/test_ui_gate.py
+    change: New test file — backend-side gating + boundary-invariant tests
+
+design_decisions:
+  - decision: The UI's add-secret form is the designated human-plaintext-entry point, analogous to `portunus drop --stdin`
+    rationale: "Grill U1 resolution in design-discussion.md: a human has to originate the value somewhere; this is the one boundary-adjacent surface allowed to see it, with explicit localhost-only + no-logging constraints"
+  - decision: Localhost-only for v1, no remote deployment
+    rationale: "Vertical-plan.md §4 Deferred Items — remote UI deployment out of scope for this epic"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Applies directly to the add-secret form path — boundary-invariant test required for the UI's backend route specifically, not assumed from story 03's adapter tests."
+  - concern: audit-chain-integrity
+    action: "New ui_action entry type. portunus verify test against a chain including it is required."
+  - concern: documentation
+    action: "README.md needs a new UI section once this ships (tracked in story 07)."
+
+risks:
+  - severity: high
+    description: UI's backend route bypasses Broker.check_injectable, becoming a second privileged path
+    mitigation: Backend-side gating test is treated as merge-blocking and permanent (not a one-time check) per structured-outline Part 7 finding #5
+
+references:
+  - path: .pHive/epics/portunus-standalone-core/docs/design-discussion.md
+    relevant_excerpt: |
+      (Grill U1) ...the UI's "add" form is that entry point... the value must not be logged,
+      cached, or sent to any analytics/telemetry inside the UI app itself.
+  - path: .pHive/epics/portunus-standalone-core/docs/structured-outline.md
+    relevant_excerpt: "Phase 6's exact UI backend-route mechanism and automated test tooling are left open for the /design delegation."

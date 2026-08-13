@@ -1,0 +1,89 @@
+id: 07-glossary-verify-closeout
+epic: portunus-standalone-core
+title: CONTEXT.md update, full-chain verify, session-vault reconciliation
+status: pending
+complexity: low
+methodology: classic
+depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door", "05-http-adapters", "06-ui-v1"]
+
+description: |
+  Epic closeout. No new capability ships here — this story reconciles what already shipped:
+  updates CONTEXT.md's Terminology section for the vocabulary this epic introduced (tag
+  schema, adapter, resolve_by_tags, parse_intent — per grill finding C1), runs portunus
+  verify once against a full chain spanning every entry type from stories 01-06 together
+  (not just per-story in isolation), and resolves portunus-session-vault's disposition:
+  folding stories 01/02 into the new tag schema, and closing or re-scoping 03-05 against
+  what actually shipped.
+
+acceptance_criteria:
+  - "Given the epic's shipped code, when CONTEXT.md is read, then tag schema, adapter, resolve_by_tags, and parse_intent are defined in the Terminology section"
+  - "Given a registry/audit chain exercised across stories 01-06's features together, when portunus verify runs, then it passes against the full combined chain"
+  - "Given portunus-session-vault's stories 01/02, when reviewed, then they are updated to reference the new tag schema instead of a separate storage model"
+  - "Given portunus-session-vault's stories 03-05, when reviewed, then each is explicitly closed-as-superseded or re-scoped — none left silently orphaned"
+
+methodology: classic
+steps:
+  - id: research
+    description: Read the final shipped state of stories 01-06 and portunus-session-vault's current stories.
+    agent: researcher
+  - id: implement
+    description: Update CONTEXT.md, write and run the full-chain portunus verify pass, and update/close the session-vault stories per the reconciliation decision.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Confirm the full-chain portunus verify pass is captured as a repeatable test, not a one-off manual run.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no session-vault story was silently left in an ambiguous state.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: Glossary this story updates
+    - path: .pHive/epics/portunus-session-vault/
+      purpose: Prior epic this story reconciles against
+
+files_to_modify:
+  - file: .pHive/CONTEXT.md
+    change: Add Terminology entries for tag schema, adapter, resolve_by_tags, parse_intent
+  - file: tests/test_audit_full_chain.py
+    change: New test — portunus verify against a chain spanning all entry types from this epic
+  - file: .pHive/epics/portunus-session-vault/stories/01-arca-storage-model.yaml
+    change: Update to reference the new tag schema
+  - file: .pHive/epics/portunus-session-vault/stories/02-session-api.yaml
+    change: Update to reference the new tag schema
+  - file: .pHive/epics/portunus-session-vault/stories/03-ostiarius-gate.yaml
+    change: Close as superseded by Broker.check_injectable, or document why it's still distinct
+  - file: .pHive/epics/portunus-session-vault/stories/04-cli-broker-seam.yaml
+    change: Re-scope against what shipped, or close
+  - file: .pHive/epics/portunus-session-vault/stories/05-playwright-integration-tests.yaml
+    change: Re-scope against what shipped, or close
+
+design_decisions:
+  - decision: Full-chain verify runs once at closeout, in addition to each story's own per-story verify test
+    rationale: "Structured-outline Part 2 Phase 7: catches any interaction between entry types that per-story isolation testing wouldn't surface"
+
+cross_cutting:
+  - concern: documentation
+    action: "This story IS the documentation cross-cutting concern's primary discharge point for the epic — CONTEXT.md and README updates land here."
+  - concern: audit-chain-integrity
+    action: "Final full-chain portunus verify pass is this story's core deliverable."
+
+risks:
+  - severity: low
+    description: Session-vault reconciliation surfaces more rework than a simple fold-in
+    mitigation: "If so, spin out a small follow-up epic rather than blocking this story's closeout indefinitely (per vertical-plan.md moldability notes)"
+
+references:
+  - path: .pHive/CONTEXT.md
+    relevant_excerpt: "Update triggers: A new domain term enters the codebase... Update CONTEXT.md."
+  - path: .pHive/epics/portunus-session-vault/epic.yaml
+    relevant_excerpt: "5 stories, TDD methodology, pre-dates this epic's north-star reframe."

@@ -1,0 +1,102 @@
+id: 01-tag-schema-migration-lock
+epic: portunus-standalone-core
+title: Structured tag schema, legacy migration, and registry write lock
+status: pending
+complexity: high
+methodology: tdd
+depends_on: []
+
+description: |
+  Foundation phase. Extend Reference with structured provider/project/env/tags fields
+  alongside the existing scope/kind, add resolve_by_tags() with a fail-closed contract
+  (exactly one match or an explicit NoMatch/AmbiguousMatch error, never a guess), migrate
+  existing references additively, and add a coarse file lock around registry mutation so
+  the upcoming UI/CLI/agent writers can't race each other. Nothing downstream can be built
+  or tested against a moving target, so this ships in isolation first.
+
+acceptance_criteria:
+  - "Given a Reference with only legacy scope/kind set, when migrate_legacy_tags() runs, then tags{} is populated additively without altering scope/kind"
+  - "Given zero references match a partial tag query, when resolve_by_tags() is called, then it raises NoMatch"
+  - "Given more than one reference matches a partial tag query, when resolve_by_tags() is called, then it raises AmbiguousMatch listing every candidate name, never guessing one"
+  - "Given exactly one reference matches, when resolve_by_tags() is called, then it returns that Reference"
+  - "Given two writers attempt to mutate the registry concurrently, when both call a mutating method, then the file lock serializes them and the registry file is never corrupted"
+  - "Given a lock cannot be acquired within a bounded timeout, when a mutating method is called, then it raises RegistryLocked rather than hanging indefinitely"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Reference's exact current field set and VALID_STATES in registry.py; confirm no existing caller relies on tags{} being absent.
+    agent: researcher
+  - id: test-spec
+    description: |
+      Write failing tests for resolve_by_tags (0/1/>1 match), migrate_legacy_tags
+      (additive, idempotent), and the write lock (concurrency + bounded-timeout RegistryLocked).
+      Do NOT read the implementation while writing these — the tests define the contract.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement the schema extension, resolve_by_tags, migrate_legacy_tags, and the file lock to make the failing tests pass. Do not modify the tests.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Review for the fail-closed contract specifically — adversarially check for any matcher path that could be too permissive.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  tech_stack:
+    language: python
+    test: pytest
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Reference dataclass and Registry class this story extends directly
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: Add provider/project/env/tags fields to Reference; add resolve_by_tags, migrate_legacy_tags, NoMatch, AmbiguousMatch, RegistryLocked, and the write lock around mutating methods
+  - file: tests/test_registry_tags.py
+    change: New test file — resolve_by_tags, migration, concurrency/lock tests
+
+code_examples:
+  - title: Existing lifecycle-state validation pattern to mirror for tag validation
+    file: src/portunus/registry.py
+    snippet: |
+      VALID_STATES = ("enabled", "locked", "dropped", "revoked")
+      ...
+      def set_state(self, name: str, state: str) -> Reference:
+          if state not in VALID_STATES:
+              raise ValueError(f"invalid state: {state!r}")
+
+design_decisions:
+  - decision: tags{} is an open dict alongside structured provider/project/env fields, not a fully open schema or a fully rigid one
+    rationale: "Design-discussion Q2 default call: hedge until real usage shows which fields matter most"
+  - decision: Coarse, whole-registry file lock rather than per-reference locking
+    rationale: "Structured-outline Part 7: right-sized for single-developer scale (north_star), avoids premature complexity"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A for this story — no value-handling code is introduced (metadata schema only). Confirmed not applicable, not skipped."
+  - concern: audit-chain-integrity
+    action: "N/A for this story — no new resolution/gate decision path introduced yet (adapters land in story 03)."
+  - concern: documentation
+    action: "None yet — CONTEXT.md update for the new vocabulary is deferred to story 07 once the schema is stable, per grill finding C1."
+
+risks:
+  - severity: high
+    description: resolve_by_tags matcher too permissive, ambiguity slips through undetected
+    mitigation: Fixture tests with deliberately near-identical references differing only in one tag field; explicit adversarial review during code review, not just green tests
+
+references:
+  - path: .pHive/epics/portunus-standalone-core/docs/structured-outline.md
+    relevant_excerpt: |
+      Phase 1: Tag schema, migration, write lock — Goal: Registry supports structured tags
+      with fail-closed resolution; zero behavior change for existing callers.
+  - path: .pHive/epics/portunus-standalone-core/docs/design-discussion.md
+    relevant_excerpt: |
+      (Grill H2) Slice 1 needs to either add a write lock... or the team explicitly accepts
+      single-writer-at-a-time as a v1 constraint. Decision: add the lock now.

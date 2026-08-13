@@ -1,0 +1,59 @@
+name: portunus-standalone-core
+title: Portunus Standalone Core — Metadata Lookup, Injection Adapters, UI
+description: >
+  Re-scopes Portunus around its kickoff north_star: a standalone, metadata-indexed secret
+  manager with boundary-only injection adapters and a localhost UI, not primarily a
+  Dostal-harness plugin. Supersedes/folds in portunus-session-vault's storage-model work;
+  L2 Pantheon plugin lifecycle wiring is explicitly deferred to a future epic.
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [backend, python, cli, new-ui, security, migration]
+  roster: [researcher, technical-writer, tpm, reviewer, ui-designer]
+  per_tag_reasoning:
+    backend: "Core work is extending registry/resolver/broker/backend/audit — all Python library code"
+    new-ui: "Slice 6 is a net-new Next.js UI, no UI code exists in the repo today"
+    security: "secret-boundary-invariant and audit-chain-integrity cross-cutting concerns apply to nearly every story"
+    migration: "Story 01 migrates existing Reference records to a new tag schema, additively"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1 converged after revision — 6/6 findings resolved)
+    collaborative_review: user-facing design-discussion + structured-outline gates ran; multi-persona
+      simulation was self-authored (single-session planning, no separate persona dispatch infra active)
+
+stories:
+  - id: 01-tag-schema-migration-lock
+    title: Structured tag schema, legacy migration, and registry write lock
+    complexity: high
+    depends_on: []
+  - id: 02-cli-tag-query
+    title: CLI tag-query consumer (portunus find)
+    complexity: low
+    depends_on: ["01-tag-schema-migration-lock"]
+  - id: 03-env-file-adapters
+    title: Env-var and file injection adapters (portunus inject)
+    complexity: medium
+    depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query"]
+  - id: 04-semantic-front-door
+    title: Semantic agent-facing front door (portunus ask + Claude skill)
+    complexity: medium
+    depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters"]
+  - id: 05-http-adapters
+    title: HTTP header and body injection adapters
+    complexity: low
+    depends_on: ["03-env-file-adapters"]
+  - id: 06-ui-v1
+    title: Standalone UI v1 (view, add, rotate)
+    complexity: high
+    depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door"]
+  - id: 07-glossary-verify-closeout
+    title: CONTEXT.md update, full-chain verify, session-vault reconciliation
+    complexity: low
+    depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door", "05-http-adapters", "06-ui-v1"]
