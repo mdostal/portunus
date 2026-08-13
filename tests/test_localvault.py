@@ -3,15 +3,35 @@ land on disk, in the key file, or survive decryption with the wrong key."""
 import json
 import os
 import stat
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from cryptography.fernet import Fernet
 
 from portunus.backend import BackendError
-from portunus.localvault import LocalEncryptedBackend
+from portunus.localvault import SESSION_SCHEMA, LocalEncryptedBackend, SessionExpired
 
 SECRET = "FAKE-TEST-VALUE-do-not-leak-0xBEEF"
 SESSION_SECRET = "SESSION-COOKIE-do-not-leak-0xDEAD"
+
+
+def _store_expired_session(backend, site, account, ttl_seconds=60):
+    """Directly write an already-expired session record -- avoids real
+    sleeping in tests. Bypasses store_session()'s own (correct) expiry
+    computation on purpose, to construct the past-tense case directly."""
+    past = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(seconds=10)
+    past_iso = past.isoformat().replace("+00:00", "Z")
+    record = {
+        "schema": SESSION_SCHEMA,
+        "namespace": {"site": site, "account": account},
+        "ttl": {"seconds": ttl_seconds, "expires_at": past_iso},
+        "rotation": {
+            "generation": 1, "last_rotated_at": past_iso,
+            "interval_seconds": None, "rotate_after": None,
+        },
+        "session": _session_state(),
+    }
+    backend.store(backend.session_key(site, account), json.dumps(record))
 
 
 def _session_state():
@@ -157,3 +177,55 @@ def test_store_session_does_not_log_or_print_plaintext(home, caplog, capsys):
     assert "bearer-token-do-not-leak" not in captured.out
     assert "bearer-token-do-not-leak" not in captured.err
     assert "bearer-token-do-not-leak" not in caplog.text
+
+
+# --- story 01: TTL enforcement ---------------------------------------------
+
+def test_load_session_raises_session_expired_by_default(home):
+    backend = LocalEncryptedBackend()
+    _store_expired_session(backend, "example.test", "dostal@example.test")
+
+    with pytest.raises(SessionExpired):
+        backend.load_session("example.test", "dostal@example.test")
+
+
+def test_session_expired_is_a_backend_error(home):
+    """Existing `except BackendError` call sites must stay correct."""
+    assert issubclass(SessionExpired, BackendError)
+
+
+def test_load_session_allow_expired_bypasses_the_check(home):
+    backend = LocalEncryptedBackend()
+    _store_expired_session(backend, "example.test", "dostal@example.test")
+
+    record = backend.load_session("example.test", "dostal@example.test", allow_expired=True)
+    assert record["session"] == _session_state()
+
+
+def test_inspect_session_never_raises_and_flags_expired_true(home):
+    backend = LocalEncryptedBackend()
+    _store_expired_session(backend, "example.test", "dostal@example.test")
+
+    inspection = backend.inspect_session("example.test", "dostal@example.test")
+    assert inspection["expired"] is True
+    assert "session" not in inspection
+    assert SESSION_SECRET not in json.dumps(inspection)
+
+
+def test_inspect_session_flags_expired_false_for_a_valid_session(home):
+    backend = LocalEncryptedBackend()
+    backend.store_session(
+        "example.test", "dostal@example.test", _session_state(), ttl_seconds=3600,
+    )
+    inspection = backend.inspect_session("example.test", "dostal@example.test")
+    assert inspection["expired"] is False
+
+
+def test_load_session_not_yet_expired_succeeds_normally(home):
+    """Regression: a valid, non-expired session must load unchanged."""
+    backend = LocalEncryptedBackend()
+    backend.store_session(
+        "example.test", "dostal@example.test", _session_state(), ttl_seconds=3600,
+    )
+    record = backend.load_session("example.test", "dostal@example.test")
+    assert record["session"] == _session_state()
