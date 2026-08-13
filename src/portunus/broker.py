@@ -52,11 +52,19 @@ class Broker:
         """
         ref = self.registry.require(name)
         state = ref.state or "enabled"
-        if state in ("dropped", "revoked"):
+        # Positive allowlist, not a denylist: any state other than
+        # enabled/locked fails closed by default, including states added
+        # after this check was written (e.g. "requested"). A denylist would
+        # silently treat an unrecognized future state as injectable.
+        if state not in ("enabled", "locked"):
             self.audit.append("resolve", ref.sm_name, f"denied-{state}")
+            hints = {
+                "dropped": "re-enable it",
+                "requested": "a human must fulfill it via `portunus drop`",
+            }
             raise NotInjectable(
                 f"{ref.sm_name} is {state} — not injectable "
-                f"({'re-enable it' if state == 'dropped' else 'contact the owner'})"
+                f"({hints.get(state, 'contact the owner')})"
             )
         if ref.approval == "required" and not self._has_valid_approval(name):
             self.audit.append("resolve", ref.sm_name, "pending-approval")

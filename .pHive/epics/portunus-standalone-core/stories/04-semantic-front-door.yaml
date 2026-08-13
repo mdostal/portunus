@@ -1,7 +1,9 @@
 id: 04-semantic-front-door
 epic: portunus-standalone-core
 title: Semantic agent-facing front door (portunus ask + Claude skill)
-status: completed
+status: shipped
+shipped_at: "2026-08-13T04:16:44Z"
+release_id: "v0.2.0"
 complexity: medium
 methodology: tdd
 depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters"]

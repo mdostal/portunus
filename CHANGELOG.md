@@ -4,6 +4,29 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-13
+
+### Added
+
+- **Agent-initiated add/rotate requests.** `portunus ask` now recognizes add/rotate language
+  (`intent_kind`, `intent.py`) and routes to a *request*, never a fulfillment — an agent can
+  ask for a secret to be added (`--name`/`--tags` required — free text can't safely name
+  something brand new) or flag an existing one for rotation, without ever supplying or seeing
+  a value. Add creates a `state=requested` placeholder (`Registry.request()`); rotate sets a
+  metadata marker (`Registry.retag()`) on the existing reference. Fulfillment still requires a
+  human running `portunus drop`.
+- **Move/re-tag.** `portunus retag <name> --provider/--project/--env/--tags` updates a
+  reference's tags in place, rejecting any change that would collide with a different existing
+  reference. A Move action in the UI's DetailDrawer does the same via a new `/api/retag` route.
+- **`requested` lifecycle state** — fails closed via `Broker.check_injectable` exactly like
+  `dropped`/`revoked`. Found and fixed a related gap: `check_injectable` used a
+  dropped/revoked *denylist* that would have silently treated `requested` (or any future new
+  state) as injectable; flipped to an enabled/locked *allowlist* so new states fail closed by
+  default.
+- **`--home <path>`** — explicit, per-invocation vault override for `PORTUNUS_HOME` (cross-repo
+  targeting). Not automatic multi-vault federated search, which remains out of scope.
+- UI: a distinct `requested` state pill in Console/Vault Map.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added

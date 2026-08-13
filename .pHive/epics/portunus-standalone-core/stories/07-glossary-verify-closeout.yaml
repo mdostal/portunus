@@ -1,7 +1,9 @@
 id: 07-glossary-verify-closeout
 epic: portunus-standalone-core
 title: CONTEXT.md update, full-chain verify, session-vault reconciliation
-status: completed
+status: shipped
+shipped_at: "2026-08-13T04:16:44Z"
+release_id: "v0.2.0"
 complexity: low
 methodology: classic
 depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door", "05-http-adapters", "06-ui-v1"]

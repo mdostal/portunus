@@ -133,6 +133,38 @@ portunus ask "the vercel secret for mdostal.com in prod"   # resolve-only previe
 on stderr instead of a pick. A thin Claude skill at `.claude/skills/portunus-ask/` wraps `ask`
 for agent tool-call use.
 
+`ask` also recognizes add/rotate language ("add"/"create"/"new secret", "rotate"/"roll"/
+"regenerate") and routes to a **request**, not a fulfillment — an agent never supplies or sees
+a value at any point:
+
+```bash
+# Requires explicit --name/--tags -- free text can't safely name/tag something brand new:
+portunus ask "add a new secret" --name gh-ci-token --tags provider=github,project=portunus,env=prod
+
+# Flags an existing reference for rotation (metadata only, value untouched):
+portunus ask "rotate the vercel secret for mdostal.com in prod"
+```
+
+### Move a reference (re-tag in place)
+
+```bash
+portunus retag vercel-mdostal --env staging
+portunus retag vercel-mdostal --tags team=platform
+```
+
+Rejects any change that would collide with a different existing reference's tag combination —
+fails closed, same contract as `resolve_by_tags`.
+
+### Target a different vault (`--home`)
+
+```bash
+portunus --home /path/to/other-repo/.portunus reg show
+```
+
+Explicit, per-invocation vault override — not automatic multi-vault search across repos (that's
+still out of scope). Omit it and `PORTUNUS_HOME`/`DOSTAL_SECRETS_HOME`/`~/.portunus` resolve as
+before.
+
 ### Resolve at the boundary
 
 Exec mode — plaintext exists only in the child process argv, nothing is written to disk:
