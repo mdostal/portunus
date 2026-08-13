@@ -7,22 +7,33 @@ methodology: tdd
 depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door"]
 
 description: |
-  A localhost-only Next.js/React UI: a reference list (tags + state, never values), a
-  reference detail view (audit trail), an add-secret form, and a rotate action. This is the
-  biggest single new surface in the epic and the one place the design discussion identified a
-  real boundary decision (Grill U1): the add-secret form is the deliberate human-plaintext-entry
-  point, exactly analogous to `portunus drop --stdin` today — it submits to the same
-  harness-side-only local drop path, never through an LLM/agent, must be localhost-only, and
-  must never log/cache the value. Every other UI operation is strictly read-only-for-values.
-  All writes route through the existing Broker.check_injectable gate — no second privileged
-  path.
+  A localhost-only Next.js/React UI combining all three wireframe directions reviewed at
+  .pHive/design/portunus-standalone-core/vault-blueprint.html (user decision, 2026-08-12):
+  Console is the default/primary tab (faceted reference table + detail drawer with audit
+  trail), Vault Map is a second tab (cards grouped by provider -> project), and Ask Bar is a
+  persistent side panel/drawer available from either tab -- a semantic input (backed by
+  portunus ask / parse_intent) that resolves a request and drives the same widgets
+  (inject/add) the tabbed views use, rather than being its own separate screen. v1 ships as
+  plain tabs (Console default, Vault Map second); the Ask Bar panel is not a separate route.
+
+  This is the biggest single new surface in the epic and the one place the design discussion
+  identified a real boundary decision (Grill U1): the add-secret form (reachable from any
+  view) is the deliberate human-plaintext-entry point, exactly analogous to
+  `portunus drop --stdin` today — it submits to the same harness-side-only local drop path,
+  never through an LLM/agent, must be localhost-only, and must never log/cache the value.
+  Every other UI operation (Console table/drawer, Vault Map cards, Ask Bar's resolved-match
+  display) is strictly read-only-for-values. All writes, from any of the three views, route
+  through the same Broker.check_injectable gate — no second privileged path, and no
+  per-view exception to that rule.
 
 acceptance_criteria:
-  - "Given the UI is running, when a user views the reference list, then only tags/state/metadata are shown, never a value"
-  - "Given a user submits the add-secret form, when the submission completes, then it lands in state=dropped via the same local drop path the CLI uses, and no request/response/log anywhere in the UI's stack contains the value"
-  - "Given a user triggers a rotate action, when it completes, then it either generates the new value server-side or falls back to the add-secret form's human-entry path — never a hidden shortcut that bypasses the gate"
-  - "Given any UI write operation, when it is inspected, then it is provably routed through Broker.check_injectable (backend integration test, not just UI-level trust)"
-  - "Given a UI action occurs (view/add/rotate), when it completes, then a ui_action audit entry is written"
+  - "Given the UI is running, when it loads, then Console is the default tab and Vault Map is reachable as a second tab"
+  - "Given either tab is active, when a user opens the Ask Bar panel, then it accepts a natural-language request and resolves it via the same parse_intent/resolve_by_tags path portunus ask uses, never a separate/looser matcher"
+  - "Given the reference list (Console table or Vault Map cards), when a user views it, then only tags/state/metadata are shown, never a value"
+  - "Given a user submits the add-secret form (from Console, Vault Map, or the Ask Bar's no-match state), when the submission completes, then it lands in state=dropped via the same local drop path the CLI uses, and no request/response/log anywhere in the UI's stack contains the value"
+  - "Given a user triggers a rotate action from any view, when it completes, then it either generates the new value server-side or falls back to the add-secret form's human-entry path — never a hidden shortcut that bypasses the gate"
+  - "Given any UI write operation from any of the three views, when it is inspected, then it is provably routed through Broker.check_injectable (backend integration test, not just UI-level trust)"
+  - "Given a UI action occurs (view/add/rotate/ask) from any view, when it completes, then a ui_action audit entry is written"
 
 methodology: tdd
 steps:
@@ -30,22 +41,25 @@ steps:
     description: Confirm the CLI's drop path and Broker.check_injectable call sites the UI's backend route must reuse, not reimplement.
     agent: researcher
   - id: ui-design
-    description: Delegate to /design for wireframes (atomic external call; see skills/design/SKILL.md). Covers the reference list, detail/audit view, add-secret form, and rotate action screens, plus the UI's exact backend-route mechanism (left open by the structured outline).
+    description: >
+      Wireframes reviewed and combined by the user (2026-08-12) at
+      .pHive/design/portunus-standalone-core/vault-blueprint.html: Console (default tab),
+      Vault Map (second tab), Ask Bar (persistent side panel across both, not its own route).
+      Status: DONE -- decision recorded, no further /design delegation needed for the IA.
+      Backend-route mechanism still resolved by the developer at implement time (Next.js API
+      route calling directly into the existing Python CLI/Broker via subprocess, or a small
+      local sidecar process -- pick whichever keeps the Broker.check_injectable gate as the
+      single source of truth; do not reimplement gating logic in TypeScript).
     agent: ui-designer
-    delegates_to: design
-    depends_on: [research]
+    status: done
   - id: test-spec
     description: Write failing backend integration tests asserting the UI's write route calls Broker.check_injectable and cannot bypass it, plus a boundary-invariant test that the add-secret path never logs the value.
     agent: tester
     depends_on: [ui-design]
   - id: implement
-    description: Implement the UI (per the /design wireframe brief) and its backend route, wired through the existing gated path.
+    description: Implement the tabbed UI (Console default, Vault Map second, Ask Bar side panel) per vault-blueprint.html and its backend route, wired through the existing gated path.
     agent: developer
     depends_on: [test-spec]
-    inputs:
-      - source: step_output
-        step: ui-design
-        key: wireframe_brief
   - id: review
     description: Review specifically for a second privileged write path — the exact risk flagged in the design discussion.
     agent: reviewer
@@ -65,13 +79,15 @@ context:
 
 files_to_modify:
   - file: ui/**
-    change: New Next.js/React app — exact file tree owned by the /design delegation
+    change: New Next.js/React app — tabbed shell (Console default, Vault Map second) + Ask Bar side panel component, per vault-blueprint.html
   - file: src/portunus/audit.py
     change: Add ui_action entry type
   - file: tests/test_ui_gate.py
     change: New test file — backend-side gating + boundary-invariant tests
 
 design_decisions:
+  - decision: All three reviewed wireframe directions ship together, not as a single chosen winner
+    rationale: "User decision 2026-08-12: Console is the core/default view; Ask Bar is a persistent side panel (not a separate route) that drives the same widgets Console/Vault Map use; Vault Map is a second tab. v1 implementation is plain tabs, no fancy transition."
   - decision: The UI's add-secret form is the designated human-plaintext-entry point, analogous to `portunus drop --stdin`
     rationale: "Grill U1 resolution in design-discussion.md: a human has to originate the value somewhere; this is the one boundary-adjacent surface allowed to see it, with explicit localhost-only + no-logging constraints"
   - decision: Localhost-only for v1, no remote deployment
@@ -97,3 +113,9 @@ references:
       cached, or sent to any analytics/telemetry inside the UI app itself.
   - path: .pHive/epics/portunus-standalone-core/docs/structured-outline.md
     relevant_excerpt: "Phase 6's exact UI backend-route mechanism and automated test tooling are left open for the /design delegation."
+  - path: .pHive/design/portunus-standalone-core/vault-blueprint.html
+    relevant_excerpt: |
+      Three plates reviewed: 01 Ask Bar (command-first), 02 Console (table-first ops
+      console), 03 Vault Map (grouped card gallery). User decision: combine all three --
+      Console default tab, Vault Map second tab, Ask Bar as a persistent side panel across
+      both driving the same widgets.

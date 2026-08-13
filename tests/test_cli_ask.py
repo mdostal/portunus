@@ -60,6 +60,19 @@ def test_ask_unrecognizable_request_fails_closed(home, capsys):
     assert "specify" in err.lower() or "could not" in err.lower()
 
 
+def test_ask_without_target_resolves_only_and_succeeds(home, capsys):
+    """No --target is a preview, not a failure (story 06 prep: the UI's Ask
+    Bar resolves before committing to an injection target)."""
+    _register()
+    rc = main(["ask", "the vercel secret for mdostal.com in prod", "--json"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    data = json.loads(out)
+    assert data["name"] == "vercel-mdostal"
+    assert SECRET not in out
+
+
 def test_ask_never_writes_raw_request_text_to_audit(home):
     _register()
     request = "the vercel secret for mdostal.com in prod, please inject it now"

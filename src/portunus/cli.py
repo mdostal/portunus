@@ -199,8 +199,18 @@ def cmd_ask(args) -> int:
         return EXIT_NO_MATCH
 
     if not args.target:
-        broker.audit.append("semantic_op", ref.sm_name, "no-target-specified")
-        return _err("resolved a reference, but --target (env|file) is required to inject it")
+        # Resolve-only: a legitimate success case, not a failure -- lets a
+        # caller (e.g. the UI's Ask Bar) preview the match before committing
+        # to an injection target. Metadata only, same as `find`.
+        broker.audit.append("semantic_op", ref.sm_name, "resolved-only")
+        if args.json:
+            import json
+            print(json.dumps(ref.to_dict()))
+        else:
+            print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
+                  f"(provider={ref.provider}, project={ref.project}, env={ref.env}, "
+                  f"state={ref.state}) -- add --target to inject")
+        return 0
 
     return _inject_resolved_ref(resolver, broker, ref, args, "semantic_op")
 
@@ -314,7 +324,14 @@ def cmd_status(args) -> int:
 
 def cmd_audit(args) -> int:
     audit = AuditChain()
-    entries = audit.entries()[-args.n:]
+    entries = audit.entries()
+    if args.secret:
+        entries = [e for e in entries if e["secret"] == args.secret]
+    entries = entries[-args.n:]
+    if args.json:
+        import json
+        print(json.dumps(entries, indent=2))
+        return 0
     print(f"{'seq':<4} {'actor':<14} {'action':<10} {'secret':<28} result")
     for e in entries:
         print(f"{e['seq']:<4} {e['actor'][:14]:<14} {e['action']:<10} "
@@ -374,6 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--format", dest="format", default="", choices=("", "env", "json", "yaml"),
                       help="target file format (--target file)")
     ask.add_argument("--key", default="", help="key to template the value under (--target file)")
+    ask.add_argument("--json", action="store_true", help="machine-readable output for resolve-only calls (UI consumer)")
     ask.set_defaults(func=cmd_ask)
 
     dr = sub.add_parser(
@@ -422,6 +440,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     au = sub.add_parser("audit", help="view the tamper-evident access log")
     au.add_argument("n", nargs="?", type=int, default=25)
+    au.add_argument("--json", action="store_true", help="machine-readable output (UI consumer)")
+    au.add_argument("--secret", default="", help="filter to one SM name (metadata only, never a value)")
     au.set_defaults(func=cmd_audit)
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")

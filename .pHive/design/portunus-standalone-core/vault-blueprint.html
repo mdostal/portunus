@@ -1,0 +1,812 @@
+<title>Vault Blueprint</title>
+<style>
+  :root {
+    --paper: #eaecec;
+    --paper-raised: #f4f5f5;
+    --ink: #1e2225;
+    --ink-soft: #454c51;
+    --steel: #6b7580;
+    --steel-faint: #b7bfc4;
+    --hair: #c7cdd0;
+    --brass: #a8783a;
+    --brass-soft: #c99a5c;
+    --verdigris: #4c7a72;
+    --verdigris-soft: #dbe6e3;
+    --ok: #3e8464;
+    --ok-bg: #e3ede7;
+    --warn: #b8842a;
+    --warn-bg: #f1e6d2;
+    --neutral-state: #7c848b;
+    --neutral-state-bg: #e4e6e8;
+    --crit: #b4453c;
+    --crit-bg: #f2e0de;
+    --shadow: 0 1px 0 rgba(30, 34, 37, 0.06);
+    --font-display: "Futura", "Century Gothic", "Avenir Next", "Avenir", sans-serif;
+    --font-body: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14171a;
+      --paper-raised: #1b1f22;
+      --ink: #e7e9ea;
+      --ink-soft: #b6bcc0;
+      --steel: #838d95;
+      --steel-faint: #3a4046;
+      --hair: #30363b;
+      --brass: #c99a5c;
+      --brass-soft: #a8783a;
+      --verdigris: #6fa89d;
+      --verdigris-soft: #202b29;
+      --ok: #62b18c;
+      --ok-bg: #1d2b24;
+      --warn: #d6a94d;
+      --warn-bg: #2c2517;
+      --neutral-state: #9aa2a8;
+      --neutral-state-bg: #23272a;
+      --crit: #d97b72;
+      --crit-bg: #2c1e1c;
+      --shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #14171a;
+    --paper-raised: #1b1f22;
+    --ink: #e7e9ea;
+    --ink-soft: #b6bcc0;
+    --steel: #838d95;
+    --steel-faint: #3a4046;
+    --hair: #30363b;
+    --brass: #c99a5c;
+    --brass-soft: #a8783a;
+    --verdigris: #6fa89d;
+    --verdigris-soft: #202b29;
+    --ok: #62b18c;
+    --ok-bg: #1d2b24;
+    --warn: #d6a94d;
+    --warn-bg: #2c2517;
+    --neutral-state: #9aa2a8;
+    --neutral-state-bg: #23272a;
+    --crit: #d97b72;
+    --crit-bg: #2c1e1c;
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.55;
+  }
+
+  a { color: var(--verdigris); }
+  a:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--steel);
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-wrap: balance;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  /* ---------- header ---------- */
+  .dossier-head {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--paper);
+    border-bottom: 1px solid var(--hair);
+    box-shadow: var(--shadow);
+  }
+  .dossier-head-inner {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 0.85rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .dossier-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+  .dossier-title h1 { font-size: 1rem; }
+  .dossier-nav {
+    display: flex;
+    gap: 1.3rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+  }
+  .dossier-nav a {
+    text-decoration: none;
+    color: var(--ink-soft);
+    border-bottom: 1px solid transparent;
+    padding-bottom: 2px;
+  }
+  .dossier-nav a:hover { color: var(--brass); border-bottom-color: var(--brass); }
+
+  /* ---------- brief ---------- */
+  .brief {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 3.2rem 1.5rem 2.4rem;
+  }
+  .brief h2 {
+    font-size: clamp(1.6rem, 3vw, 2.3rem);
+    max-width: 40rem;
+    margin-top: 0.6rem;
+  }
+  .brief p {
+    max-width: 42rem;
+    color: var(--ink-soft);
+    font-size: 1.02rem;
+  }
+  .brief-specs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--hair);
+    border: 1px solid var(--hair);
+    margin-top: 2rem;
+    max-width: 52rem;
+  }
+  .brief-specs div {
+    background: var(--paper-raised);
+    padding: 0.9rem 1.1rem;
+  }
+  .brief-specs .k {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--steel);
+    display: block;
+    margin-bottom: 0.3rem;
+  }
+  .brief-specs .v { font-family: var(--font-mono); font-size: 0.85rem; }
+
+  /* ---------- plates ---------- */
+  .plate {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 1rem;
+    border-top: 1px solid var(--hair);
+  }
+  .plate-head {
+    display: flex;
+    gap: 1.6rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-bottom: 2.1rem;
+  }
+  .plate-number {
+    font-family: var(--font-mono);
+    font-size: 2.4rem;
+    color: var(--steel-faint);
+    line-height: 1;
+    min-width: 3.4rem;
+  }
+  .plate-head h2 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+  .plate-tagline {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--brass);
+    letter-spacing: 0.02em;
+    margin-bottom: 0.7rem;
+  }
+  .plate-desc { max-width: 46rem; color: var(--ink-soft); }
+  .plate-fit {
+    margin-top: 0.9rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--verdigris);
+  }
+  .plate-fit b { color: var(--ink); font-weight: 600; }
+
+  .screens {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(17.5rem, 1fr));
+    gap: 1.6rem;
+    align-items: start;
+  }
+
+  .sheet {
+    position: relative;
+    background: var(--paper-raised);
+    border: 1px solid var(--hair);
+    padding: 0.9rem;
+  }
+  .sheet::before, .sheet::after,
+  .sheet .tick-br, .sheet .tick-bl {
+    content: "";
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border: 1px solid var(--verdigris);
+    opacity: 0.55;
+  }
+  .sheet::before { top: 6px; left: 6px; border-right: none; border-bottom: none; }
+  .sheet::after { top: 6px; right: 6px; border-left: none; border-bottom: none; }
+  .sheet .tick-bl { bottom: 6px; left: 6px; border-right: none; border-top: none; }
+  .sheet .tick-br { bottom: 6px; right: 6px; border-left: none; border-top: none; }
+
+  .sheet-screen {
+    border: 1px solid var(--hair);
+    background: var(--paper);
+    padding: 0.7rem;
+    min-height: 15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .sheet-caption {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--steel);
+    margin-top: 0.55rem;
+    text-align: center;
+  }
+
+  /* generic UI-mock atoms */
+  .win-bar {
+    display: flex;
+    gap: 0.3rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed var(--hair);
+  }
+  .win-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--steel-faint); }
+
+  .mock-input {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    border: 1px solid var(--steel-faint);
+    background: var(--paper-raised);
+    color: var(--ink);
+    padding: 0.45rem 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .mock-input .caret { color: var(--brass); }
+
+  .mock-btn {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    border: 1px solid var(--brass);
+    color: var(--brass);
+    background: transparent;
+    padding: 0.32rem 0.6rem;
+    align-self: flex-start;
+  }
+  .mock-btn.solid { background: var(--brass); color: var(--paper-raised); border-color: var(--brass); }
+  .mock-btn.quiet { border-color: var(--steel-faint); color: var(--steel); }
+
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.02em;
+    padding: 0.14rem 0.42rem;
+    border: 1px solid var(--hair);
+    color: var(--ink-soft);
+    background: var(--paper-raised);
+  }
+  .state-pill {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .state-enabled { color: var(--ok); background: var(--ok-bg); }
+  .state-locked { color: var(--warn); background: var(--warn-bg); }
+  .state-dropped { color: var(--neutral-state); background: var(--neutral-state-bg); }
+  .state-revoked { color: var(--crit); background: var(--crit-bg); }
+
+  .ref-name { font-family: var(--font-mono); font-size: 0.78rem; }
+
+  .result-card {
+    border: 1px solid var(--verdigris);
+    background: var(--verdigris-soft);
+    padding: 0.6rem 0.7rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .result-card.amb { border-color: var(--warn); background: var(--warn-bg); }
+  .result-card .tags-row { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+  .result-row-head { display: flex; justify-content: space-between; align-items: center; gap: 0.4rem; }
+
+  .list-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--hair);
+    font-size: 0.72rem;
+  }
+  .list-row:last-child { border-bottom: none; }
+
+  /* console table */
+  .console-wrap { display: flex; gap: 0.6rem; height: 100%; }
+  .console-rail {
+    flex: 0 0 6.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    border-right: 1px dashed var(--hair);
+    padding-right: 0.55rem;
+  }
+  .rail-group .k {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--steel);
+    display: block;
+    margin-bottom: 0.2rem;
+  }
+  .rail-facet {
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+  }
+  .rail-facet.active { color: var(--brass); }
+  .console-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .console-table-head {
+    display: grid;
+    grid-template-columns: 1.3fr 0.8fr 0.9fr 0.6fr 0.7fr;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--steel);
+    border-bottom: 1px solid var(--hair);
+    padding-bottom: 0.3rem;
+  }
+  .console-table-row {
+    display: grid;
+    grid-template-columns: 1.3fr 0.8fr 0.9fr 0.6fr 0.7fr;
+    align-items: center;
+    font-size: 0.66rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--hair);
+  }
+  .console-table-row.sel { background: var(--verdigris-soft); }
+
+  .drawer {
+    border-left: 1px dashed var(--verdigris);
+    padding-left: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.68rem;
+  }
+  .audit-line { font-family: var(--font-mono); font-size: 0.62rem; color: var(--ink-soft); display: flex; gap: 0.4rem; }
+  .audit-line .t { color: var(--steel); }
+
+  .form-field { display: flex; flex-direction: column; gap: 0.2rem; }
+  .form-field label {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--steel);
+  }
+  .form-field .box {
+    border: 1px solid var(--steel-faint);
+    background: var(--paper-raised);
+    padding: 0.32rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+    min-height: 1.1rem;
+  }
+  .form-field .box.masked { letter-spacing: 0.2em; }
+
+  /* card gallery */
+  .gallery-group { margin-bottom: 0.7rem; }
+  .gallery-group-head {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--brass);
+    margin-bottom: 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .gallery-group-head::after { content: ""; flex: 1; border-top: 1px dashed var(--hair); }
+  .gallery-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem; }
+  .gallery-card {
+    border: 1px solid var(--hair);
+    background: var(--paper);
+    padding: 0.4rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.64rem;
+  }
+  .gallery-card.add {
+    align-items: center;
+    justify-content: center;
+    color: var(--steel);
+    border-style: dashed;
+    font-family: var(--font-mono);
+    min-height: 3.4rem;
+  }
+  .gallery-card .tags-row { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+
+  .expand-panel {
+    border: 1px solid var(--verdigris);
+    background: var(--verdigris-soft);
+    padding: 0.5rem 0.6rem;
+    margin-top: 0.5rem;
+    font-size: 0.64rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  /* ---------- verdict ---------- */
+  .verdict {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 3.4rem 1.5rem 4.5rem;
+    border-top: 1px solid var(--hair);
+  }
+  .verdict h2 { font-size: 1.3rem; margin-bottom: 0.8rem; }
+  .verdict-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--hair);
+    border: 1px solid var(--hair);
+    margin-top: 1.4rem;
+  }
+  .verdict-grid > div {
+    background: var(--paper-raised);
+    padding: 1rem 1.1rem;
+    font-size: 0.85rem;
+  }
+  .verdict-grid .name {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--brass);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: block;
+    margin-bottom: 0.4rem;
+  }
+  .verdict p.note { color: var(--ink-soft); max-width: 40rem; }
+
+  footer {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 0 1.5rem 3rem;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    color: var(--steel);
+  }
+
+  @media (max-width: 640px) {
+    .console-wrap { flex-direction: column; }
+    .console-rail { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px dashed var(--hair); padding-right: 0; padding-bottom: 0.5rem; }
+    .verdict-grid, .brief-specs { grid-template-columns: 1fr; }
+    .console-table-head, .console-table-row { grid-template-columns: 1.2fr 0.8fr 0.8fr; }
+    .console-table-head span:nth-child(4), .console-table-head span:nth-child(5),
+    .console-table-row span:nth-child(4), .console-table-row span:nth-child(5) { display: none; }
+  }
+</style>
+
+<header class="dossier-head">
+  <div class="dossier-head-inner">
+    <div class="dossier-title">
+      <span class="eyebrow">Portunus · Story 06</span>
+      <h1>Vault Interface — Three Plates</h1>
+    </div>
+    <nav class="dossier-nav">
+      <a href="#plate-a">01 Ask Bar</a>
+      <a href="#plate-b">02 Console</a>
+      <a href="#plate-c">03 Vault Map</a>
+      <a href="#verdict">Verdict</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="brief">
+    <span class="eyebrow">Brief</span>
+    <h2>Three information architectures for the standalone Portunus UI</h2>
+    <p>
+      A human needs to see, add, move, and roll secrets — tags and state, never values —
+      without becoming a second privileged path around the broker. Each plate below is a
+      genuinely different shape for that job, not a re-skin: pick the one whose workflow
+      matches how you'll actually use this day to day.
+    </p>
+    <div class="brief-specs">
+      <div><span class="k">Subject</span><span class="v">Portunus Vault, localhost UI v1</span></div>
+      <div><span class="k">Audience</span><span class="v">You — single operator</span></div>
+      <div><span class="k">Job</span><span class="v">view · add · rotate, never a value</span></div>
+    </div>
+  </section>
+
+  <!-- ============================================================= -->
+  <!-- PLATE A — ASK BAR                                              -->
+  <!-- ============================================================= -->
+  <section class="plate" id="plate-a">
+    <div class="plate-head">
+      <span class="plate-number">01</span>
+      <div>
+        <h2>Ask Bar</h2>
+        <div class="plate-tagline">command-first · leads with <code>portunus ask</code></div>
+        <p class="plate-desc">
+          One line at the top of the screen, always focused: describe what you need in plain
+          language and the match (or the disambiguation) appears beneath it. Browsing the full
+          registry is a secondary, collapsed view. This is the UI equivalent of the semantic
+          front door — retrieval is the whole point, not a feature bolted onto a table.
+        </p>
+        <p class="plate-fit"><b>Best for</b> — fast, in-the-moment retrieval; leans hardest into the north-star "just ask" workflow.</p>
+      </div>
+    </div>
+
+    <div class="screens">
+      <div class="sheet">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen">
+          <div class="win-bar"><span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span></div>
+          <div class="mock-input"><span class="caret">›</span> the vercel secret for mdostal.com in prod</div>
+          <div class="result-card">
+            <div class="result-row-head">
+              <span class="ref-name">{{secret:vercel-mdostal}}</span>
+              <span class="state-pill state-enabled">enabled</span>
+            </div>
+            <div class="tags-row">
+              <span class="chip">provider=vercel</span><span class="chip">project=mdostal.com</span><span class="chip">env=prod</span>
+            </div>
+            <button class="mock-btn solid">Inject → env var</button>
+          </div>
+          <div class="sheet-caption" style="margin-top:auto">browse all (12) ▾</div>
+        </div>
+        <p class="sheet-caption">Ask — unambiguous match</p>
+      </div>
+
+      <div class="sheet">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen">
+          <div class="win-bar"><span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span></div>
+          <div class="mock-input"><span class="caret">›</span> the vercel secret for mdostal.com</div>
+          <div class="result-card amb">
+            <span class="ref-name" style="color:var(--warn)">2 matches — which one?</span>
+            <div class="list-row"><span class="ref-name">vercel-mdostal-prod</span><span class="chip">env=prod</span></div>
+            <div class="list-row"><span class="ref-name">vercel-mdostal-staging</span><span class="chip">env=staging</span></div>
+          </div>
+          <span class="sheet-caption" style="margin-top:auto">never guesses — you pick, or add "in prod"</span>
+        </div>
+        <p class="sheet-caption">Ask — fails closed on ambiguity</p>
+      </div>
+
+      <div class="sheet">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen">
+          <div class="win-bar"><span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span></div>
+          <div class="mock-input"><span class="caret">›</span> linear api key for portunus</div>
+          <div class="result-card amb" style="border-color:var(--steel-faint);background:var(--paper)">
+            <span class="ref-name">no match — add it?</span>
+          </div>
+          <div class="form-field"><label>name</label><div class="box">linear-portunus</div></div>
+          <div class="form-field"><label>provider / project / env</label><div class="box">linear / portunus / prod</div></div>
+          <div class="form-field"><label>value</label><div class="box masked">••••••••••••••</div></div>
+          <button class="mock-btn solid" style="margin-top:auto">Drop into Arca</button>
+        </div>
+        <p class="sheet-caption">No match → inline add-secret</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================= -->
+  <!-- PLATE B — CONSOLE                                              -->
+  <!-- ============================================================= -->
+  <section class="plate" id="plate-b">
+    <div class="plate-head">
+      <span class="plate-number">02</span>
+      <div>
+        <h2>Console</h2>
+        <div class="plate-tagline">table-first · ops-console density</div>
+        <p class="plate-desc">
+          A filterable table of every reference — provider, project, env, state — with a
+          faceted rail on the left and a detail drawer on the right. Nothing is more than one
+          click away. This is the shape for bulk visibility: scanning everything you hold,
+          spotting a stale <span class="chip" style="display:inline">state=dropped</span> entry,
+          reviewing the audit trail for one row without losing your place in the rest.
+        </p>
+        <p class="plate-fit"><b>Best for</b> — management at scale, audit review, "what do I have and is it healthy."</p>
+      </div>
+    </div>
+
+    <div class="screens">
+      <div class="sheet" style="grid-column: span 2">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen" style="min-height:17rem">
+          <div class="win-bar"><span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span></div>
+          <div class="console-wrap">
+            <div class="console-rail">
+              <div class="rail-group"><span class="k">Provider</span>
+                <div class="rail-facet active"><span>vercel</span><span>3</span></div>
+                <div class="rail-facet"><span>github</span><span>4</span></div>
+                <div class="rail-facet"><span>anthropic</span><span>2</span></div>
+              </div>
+              <div class="rail-group"><span class="k">State</span>
+                <div class="rail-facet"><span>enabled</span><span>9</span></div>
+                <div class="rail-facet"><span>dropped</span><span>2</span></div>
+                <div class="rail-facet"><span>revoked</span><span>1</span></div>
+              </div>
+            </div>
+            <div class="console-main">
+              <div class="console-table-head"><span>reference</span><span>provider</span><span>project</span><span>env</span><span>state</span></div>
+              <div class="console-table-row sel"><span class="ref-name">vercel-mdostal</span><span>vercel</span><span>mdostal.com</span><span>prod</span><span class="state-pill state-enabled">enabled</span></div>
+              <div class="console-table-row"><span class="ref-name">vercel-staging</span><span>vercel</span><span>mdostal.com</span><span>staging</span><span class="state-pill state-enabled">enabled</span></div>
+              <div class="console-table-row"><span class="ref-name">gh-ci-token</span><span>github</span><span>portunus</span><span>prod</span><span class="state-pill state-locked">locked</span></div>
+              <div class="console-table-row"><span class="ref-name">shared-anthropic</span><span>anthropic</span><span>—</span><span>—</span><span class="state-pill state-enabled">enabled</span></div>
+              <div class="console-table-row"><span class="ref-name">legacy-slack-hook</span><span>slack</span><span>—</span><span>—</span><span class="state-pill state-revoked">revoked</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="sheet-caption">Console — faceted table, row selected</p>
+      </div>
+
+      <div class="sheet">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen">
+          <div class="drawer">
+            <div class="result-row-head">
+              <span class="ref-name">vercel-mdostal</span>
+              <span class="state-pill state-enabled">enabled</span>
+            </div>
+            <div class="tags-row"><span class="chip">provider=vercel</span><span class="chip">project=mdostal.com</span><span class="chip">env=prod</span></div>
+            <span class="eyebrow" style="margin-top:0.2rem">Audit trail</span>
+            <div class="audit-line"><span class="t">14:02</span> adapter_resolution ok:env:VERCEL_TOKEN</div>
+            <div class="audit-line"><span class="t">09:41</span> resolve ok</div>
+            <div class="audit-line"><span class="t">Aug 09</span> reg add</div>
+            <button class="mock-btn quiet" style="margin-top:auto">Rotate…</button>
+          </div>
+        </div>
+        <p class="sheet-caption">Detail drawer — tags + audit, never a value</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================= -->
+  <!-- PLATE C — VAULT MAP                                            -->
+  <!-- ============================================================= -->
+  <section class="plate" id="plate-c">
+    <div class="plate-head">
+      <span class="plate-number">03</span>
+      <div>
+        <h2>Vault Map</h2>
+        <div class="plate-tagline">grouped gallery · browse by provider → project</div>
+        <p class="plate-desc">
+          Cards clustered by provider, then project — a spatial map of what you hold rather
+          than a query or a spreadsheet. Good for skimming ("what do I have for GitHub?") and
+          for a UI that still reads clearly to someone who isn't reaching for exact tag syntax.
+          A middle ground between Ask Bar's precision and Console's density.
+        </p>
+        <p class="plate-fit"><b>Best for</b> — visual browsing, onboarding a second person, "show me the shape of the vault."</p>
+      </div>
+    </div>
+
+    <div class="screens">
+      <div class="sheet">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen">
+          <div class="win-bar"><span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span></div>
+          <div class="gallery-group">
+            <div class="gallery-group-head">vercel</div>
+            <div class="gallery-cards">
+              <div class="gallery-card"><span class="ref-name">mdostal.com</span><div class="tags-row"><span class="chip">prod</span><span class="state-pill state-enabled">enabled</span></div></div>
+              <div class="gallery-card"><span class="ref-name">mdostal.com</span><div class="tags-row"><span class="chip">staging</span><span class="state-pill state-enabled">enabled</span></div></div>
+            </div>
+          </div>
+          <div class="gallery-group">
+            <div class="gallery-group-head">github</div>
+            <div class="gallery-cards">
+              <div class="gallery-card"><span class="ref-name">portunus</span><div class="tags-row"><span class="chip">prod</span><span class="state-pill state-locked">locked</span></div></div>
+              <div class="gallery-card add">+ add</div>
+            </div>
+          </div>
+        </div>
+        <p class="sheet-caption">Vault Map — grouped by provider</p>
+      </div>
+
+      <div class="sheet">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen">
+          <div class="win-bar"><span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span></div>
+          <div class="gallery-group">
+            <div class="gallery-group-head">vercel</div>
+            <div class="gallery-cards">
+              <div class="gallery-card"><span class="ref-name">mdostal.com</span><div class="tags-row"><span class="chip">prod</span><span class="state-pill state-enabled">enabled</span></div></div>
+              <div class="gallery-card"><span class="ref-name">mdostal.com</span><div class="tags-row"><span class="chip">staging</span><span class="state-pill state-enabled">enabled</span></div></div>
+            </div>
+          </div>
+          <div class="expand-panel">
+            <div class="result-row-head"><span class="ref-name">vercel-mdostal (prod)</span><span class="state-pill state-enabled">enabled</span></div>
+            <div class="audit-line"><span class="t">14:02</span> adapter_resolution ok:env:VERCEL_TOKEN</div>
+            <div class="audit-line"><span class="t">09:41</span> resolve ok</div>
+            <button class="mock-btn quiet">Rotate…</button>
+          </div>
+        </div>
+        <p class="sheet-caption">Card expands in place — audit + rotate</p>
+      </div>
+
+      <div class="sheet">
+        <span class="tick-bl"></span><span class="tick-br"></span>
+        <div class="sheet-screen">
+          <div class="win-bar"><span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span></div>
+          <div class="gallery-group">
+            <div class="gallery-group-head">github — new</div>
+            <div class="gallery-cards" style="grid-template-columns:1fr">
+              <div class="gallery-card">
+                <div class="form-field"><label>name</label><div class="box">gh-deploy-key</div></div>
+                <div class="form-field"><label>project / env</label><div class="box">pantheon-dashboard / prod</div></div>
+                <div class="form-field"><label>value</label><div class="box masked">••••••••••••</div></div>
+                <button class="mock-btn solid">Drop into Arca</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="sheet-caption">"+ add" card → inline form, same visual language</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="verdict" id="verdict">
+    <span class="eyebrow">Your call</span>
+    <h2>Tell me which plate — or mix elements across them</h2>
+    <p class="note">
+      All three sit on the same backend contract (Broker-gated writes, localhost-only,
+      add-secret is the one human-plaintext-entry point) — the choice only changes the
+      information architecture, not the safety invariants. Reasonable to mix, too: Ask Bar's
+      input as the primary entry point with Console's drawer for detail, for instance.
+    </p>
+    <div class="verdict-grid">
+      <div><span class="name">01 · Ask Bar</span>Fastest for "get me X now." Weakest for seeing everything at once.</div>
+      <div><span class="name">02 · Console</span>Best overview and audit review. Busiest screen, most engineering.</div>
+      <div><span class="name">03 · Vault Map</span>Most approachable to skim. Least precise for exact retrieval.</div>
+    </div>
+  </section>
+</main>
+
+<footer>Portunus — .pHive/epics/portunus-standalone-core/stories/06-ui-v1.yaml — wireframe fidelity, not final visual design</footer>
