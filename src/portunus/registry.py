@@ -243,15 +243,21 @@ class Registry:
         project: Optional[str] = None,
         env: Optional[str] = None,
         tags: Optional[dict] = None,
+        description: Optional[str] = None,
+        purpose: Optional[str] = None,
+        injected_as: Optional[dict] = None,
     ) -> Reference:
-        """Update a reference's provider/project/env/tags in place.
+        """Update a reference's provider/project/env/tags/description/purpose/
+        injected_as in place.
 
-        Only fields explicitly passed (non-None) change. Rejects any update
-        whose resulting tag combination would collide with a DIFFERENT
-        existing reference -- reuses matches_tag(), the same exact-match
-        logic resolve_by_tags() uses, so there is one collision definition,
-        not two. Retagging to a reference's own current tags always
-        succeeds (never collides with itself).
+        Only fields explicitly passed (non-None) change. provider/project/
+        env/tags are collision-checked against every other reference (reuses
+        matches_tag(), the same exact-match logic resolve_by_tags() uses, so
+        there is one collision definition, not two; retagging to a
+        reference's own current tags always succeeds). description/purpose/
+        injected_as are deliberately NOT collision-checked -- they're not in
+        _STRUCTURED_TAG_FIELDS, so two references can never collide over
+        them by definition.
         """
         with self._locked():
             ref = self.require(name)
@@ -259,6 +265,9 @@ class Registry:
             new_project = project if project is not None else ref.project
             new_env = env if env is not None else ref.env
             new_tags_dict = tags if tags is not None else ref.tags
+            new_description = description if description is not None else ref.description
+            new_purpose = purpose if purpose is not None else ref.purpose
+            new_injected_as = injected_as if injected_as is not None else ref.injected_as
 
             full_tags: Dict[str, str] = {}
             for field_name, val in (
@@ -280,6 +289,9 @@ class Registry:
             ref.project = new_project
             ref.env = new_env
             ref.tags = dict(new_tags_dict)
+            ref.description = new_description
+            ref.purpose = new_purpose
+            ref.injected_as = dict(new_injected_as)
         return ref
 
     # --- lookup ----------------------------------------------------------

@@ -4,6 +4,23 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-13
+
+### Added
+
+- **Metadata write support.** `portunus reg add`/`drop` gain `--description`/`--purpose`/
+  `--injected-as`; `Registry.retag()` can now update all three in place (no collision check --
+  they're not tag-matchable). `--injected-as` reuses the existing `_parse_tags()` helper.
+- **UI: metadata display + edit.** Console/Vault Map/DetailDrawer show description/purpose/
+  injected_as when set; DetailDrawer's existing Move form gains the same three fields,
+  editing through the same `portunus retag` path -- no second write surface.
+- **`portunus discover --json`**, plus a new `wif_configured` boolean field (from
+  `load_gcp_bindings()` -- never the WIF audience string itself).
+- **UI: Project Explorer** (new third tab) -- a GCP-project-scoped view combining what's
+  already registered (`/api/list`), what's discoverable in live GCP Secret Manager
+  (`/api/discover`) with a single "Register all" action (the CLI's `--register` has no
+  per-secret selection, so the UI never implies one), and a GCP-WIF-configured indicator.
+
 ## [0.7.0] - 2026-08-13
 
 ### Added
