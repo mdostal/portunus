@@ -12,6 +12,12 @@
 registry.json
 audit.log
 
+# Hive session-runtime state (harness-generated, not source)
+.pHive/agent-complete/
+.pHive/interrupts/
+.pHive/metrics/
+.pHive/session-effort.txt
+
 # python build / runtime
 .venv/
 venv/

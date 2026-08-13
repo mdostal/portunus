@@ -1,7 +1,7 @@
 id: 05-playwright-integration-tests
 epic: portunus-session-vault
 title: Playwright Integration and End-to-End Tests
-status: pending
+status: needs-replanning  # see epic.yaml -> reconciliation: valid, unstarted capability, but this story's file paths target a different (wrong) codebase
 complexity: high
 methodology: bdd
 depends_on:

@@ -1,0 +1,121 @@
+"use client";
+
+import { useState } from "react";
+import type { AddSecretDraft } from "../types";
+
+// The deliberate human-plaintext-entry point (Grill U1 resolution). The
+// value lives only in this component's local state and the single POST
+// body to /api/drop -- never logged, never stored elsewhere in the app,
+// cleared from state immediately after a successful submit.
+export default function AddSecretForm({
+  initial,
+  onClose,
+  onAdded,
+}: {
+  initial?: Partial<AddSecretDraft>;
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const [draft, setDraft] = useState<AddSecretDraft>({
+    name: initial?.name || "",
+    sm_name: initial?.sm_name || "",
+    provider: initial?.provider || "",
+    project: initial?.project || "",
+    env: initial?.env || "",
+    tags: initial?.tags || "",
+  });
+  const [value, setValue] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  function field<K extends keyof AddSecretDraft>(key: K) {
+    return {
+      value: draft[key],
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+        setDraft((d) => ({ ...d, [key]: e.target.value })),
+    };
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setStatus(null);
+    try {
+      const res = await fetch("/api/drop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...draft, value }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(`✗ ${data.error}`);
+        return;
+      }
+      setValue(""); // scrub locally the moment we're done with it
+      setStatus(`✓ ${data.message}`);
+      onAdded();
+    } catch (err) {
+      setStatus(`✗ ${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="modal-head">
+          <h3>Add secret</h3>
+          <button type="button" className="btn quiet" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <p className="modal-note">
+          Lands in <code>state=dropped</code> (fail closed) — enable it separately once you've
+          confirmed it. The value never leaves this form except to <code>portunus drop</code>.
+        </p>
+        <label className="form-field">
+          <span>name</span>
+          <input className="field" required {...field("name")} placeholder="vercel-mdostal" />
+        </label>
+        <label className="form-field">
+          <span>sm_name</span>
+          <input className="field" required {...field("sm_name")} placeholder="sm-vercel-mdostal" />
+        </label>
+        <div className="form-row">
+          <label className="form-field">
+            <span>provider</span>
+            <input className="field" {...field("provider")} placeholder="vercel" />
+          </label>
+          <label className="form-field">
+            <span>project</span>
+            <input className="field" {...field("project")} placeholder="mdostal.com" />
+          </label>
+          <label className="form-field">
+            <span>env</span>
+            <input className="field" {...field("env")} placeholder="prod" />
+          </label>
+        </div>
+        <label className="form-field">
+          <span>tags (k=v,k2=v2)</span>
+          <input className="field" {...field("tags")} placeholder="team=platform" />
+        </label>
+        <label className="form-field">
+          <span>value</span>
+          <input
+            className="field"
+            required
+            type="password"
+            autoComplete="off"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </label>
+        <button className="btn solid" type="submit" disabled={busy}>
+          {busy ? "Dropping…" : "Drop into Arca"}
+        </button>
+        {status && <p className="inline-status">{status}</p>}
+      </form>
+    </div>
+  );
+}

@@ -1,0 +1,77 @@
+id: 05-http-adapters
+epic: portunus-standalone-core
+title: HTTP header and body injection adapters
+status: completed
+complexity: low
+methodology: tdd
+depends_on: ["03-env-file-adapters"]
+
+description: |
+  Extends the adapter set from story 03 to outbound HTTP requests: HttpHeaderAdapter sets a
+  header on a caller-provided headers mapping, HttpBodyAdapter sets a nested JSON field by
+  path on a caller-provided dict. Library-agnostic (accepts dict-like objects, not a specific
+  HTTP client) to avoid a new hard dependency. Same boundary-invariant and audit-entry
+  discipline as story 03, applied to two more target kinds.
+
+acceptance_criteria:
+  - "Given a resolved reference and --target http-header, when portunus inject runs, then the named header is set on the provided headers mapping and the value is never printed, returned, or logged"
+  - "Given a resolved reference and --target http-body with a JSON path, when portunus inject runs, then the value is set at that nested path in the provided body dict, never logged"
+  - "Given either adapter's injection is exercised, when it completes, then an adapter_resolution audit entry is written matching story 03's shape"
+  - "Given a chain containing these new adapter_resolution entries, when portunus verify runs, then it passes"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm story 03's SecretAdapter protocol and adapter_resolution audit shape to extend, not reinvent.
+    agent: researcher
+  - id: test-spec
+    description: Write failing boundary-invariant and functional tests for both new adapters, mirroring story 03's test structure.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add HttpHeaderAdapter and HttpBodyAdapter to adapters.py; extend the inject CLI subcommand's --target options.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Same failure-path leak review as story 03, applied to the two new adapters.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/adapters.py
+      purpose: SecretAdapter protocol and existing adapters this story extends
+
+files_to_modify:
+  - file: src/portunus/adapters.py
+    change: Add HttpHeaderAdapter, HttpBodyAdapter
+  - file: src/portunus/cli.py
+    change: Extend inject --target with http-header|http-body options
+  - file: tests/test_adapters.py
+    change: Extend with HTTP adapter tests
+
+design_decisions:
+  - decision: Library-agnostic adapters (accept dict-like headers/body, not a specific HTTP client)
+    rationale: "Structured-outline Part 2 Phase 5: avoids a new hard dependency"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Applies — same boundary-invariant test pattern as story 03, including failure paths."
+  - concern: audit-chain-integrity
+    action: "Reuses adapter_resolution entry type from story 03 — no new type needed, but new instances must still pass portunus verify."
+  - concern: documentation
+    action: "README.md Usage section gains http-header/http-body examples (tracked in story 07)."
+
+risks:
+  - severity: low
+    description: Same failure-path leak risk as story 03, applied to two more adapters
+    mitigation: Reuse story 03's boundary-invariant test harness rather than writing new ad-hoc tests
+
+references:
+  - path: .pHive/epics/portunus-standalone-core/docs/structured-outline.md
+    relevant_excerpt: "Phase 5: HTTP header + body adapters — same shape as Phase 3, applied to two more target types."

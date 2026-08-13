@@ -18,8 +18,15 @@ from .audit import AuditChain
 from .backend import BackendError, GcloudBackend, MockBackend
 from .localvault import LocalEncryptedBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
-from .registry import Registry
+from .adapters import AdapterError, EnvVarAdapter, FileAdapter
+from .intent import AmbiguousIntent, parse_intent
+from .registry import AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
+
+# Distinct exit codes so scripts can branch on the failure mode without
+# parsing stderr text. 1 is the pre-existing generic-error code (_err()).
+EXIT_NO_MATCH = 3
+EXIT_AMBIGUOUS = 4
 
 
 def _err(msg: str) -> int:
@@ -75,6 +82,139 @@ def cmd_reg(args) -> int:
     return _err(f"unknown reg action: {args.action}")
 
 
+def _parse_tags(raw: str) -> dict:
+    """Parse "k=v,k2=v2" into {"k": "v", "k2": "v2"}."""
+    tags = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise ValueError(f"invalid --tags entry (want k=v): {pair!r}")
+        k, v = pair.split("=", 1)
+        tags[k.strip()] = v.strip()
+    return tags
+
+
+def cmd_find(args) -> int:
+    """Find a reference by tags. Metadata-only -- never builds a Resolver or
+    touches a backend, since no value is ever fetched here."""
+    try:
+        partial_tags = _parse_tags(args.tags)
+    except ValueError as exc:
+        return _err(str(exc))
+    registry = Registry()
+    try:
+        ref = registry.resolve_by_tags(**partial_tags)
+    except AmbiguousMatch as exc:
+        _err(f"ambiguous match for {partial_tags!r}: {', '.join(exc.candidates)}")
+        return EXIT_AMBIGUOUS
+    except NoMatch:
+        _err(f"no reference matches tags: {partial_tags!r}")
+        return EXIT_NO_MATCH
+    print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
+          f"(provider={ref.provider}, project={ref.project}, env={ref.env}, "
+          f"scope={ref.scope}, kind={ref.kind}, tags={ref.tags}, state={ref.state})")
+    return 0
+
+
+def _adapter_from_args(args):
+    """Build (adapter, adapter_kwargs, target_desc) from --target/--var/--path/
+    --format/--key. Adapters validate their own params (empty var_name/path/
+    key) and raise AdapterError -- no redundant pre-check here."""
+    if args.target == "env":
+        return EnvVarAdapter(), {"var_name": args.var}, f"env:{args.var}"
+    return FileAdapter(), {"path": args.path, "fmt": args.format, "key": args.key}, f"file:{args.path}"
+
+
+def _inject_resolved_ref(resolver, broker, ref, args, audit_action: str) -> int:
+    """Shared boundary-injection dispatch for cmd_inject and cmd_ask: resolve
+    an adapter from args, inject via Resolver.resolve_call's boundary-callable
+    sink (value never returned/printed/logged), and write one audit_action
+    entry (ref, target descriptor -- never the value) on success or failure."""
+    adapter, adapter_kwargs, target_desc = _adapter_from_args(args)
+    template = f"{{{{secret:{ref.name}}}}}"
+    try:
+        resolver.resolve_call(template, boundary=lambda v: adapter.inject(v, **adapter_kwargs))
+    except (UnknownReference, NotInjectable, ApprovalRequired, BackendError, AdapterError) as exc:
+        broker.audit.append(audit_action, ref.sm_name, f"error:{target_desc}")
+        return _err(str(exc))
+    broker.audit.append(audit_action, ref.sm_name, f"ok:{target_desc}")
+    print(f"injected {{{{secret:{ref.name}}}}} -> {target_desc}")
+    return 0
+
+
+def cmd_inject(args) -> int:
+    """Resolve a reference by tags and inject its value at a boundary target.
+
+    The value only ever flows resolver -> adapter -> target via
+    Resolver.resolve_call's boundary-callable sink -- it is never returned,
+    printed, or logged here, on either the success or failure path.
+    """
+    try:
+        partial_tags = _parse_tags(args.tags)
+    except ValueError as exc:
+        return _err(str(exc))
+
+    registry, _audit, broker, resolver = _build()
+    try:
+        ref = registry.resolve_by_tags(**partial_tags)
+    except AmbiguousMatch as exc:
+        _err(f"ambiguous match for {partial_tags!r}: {', '.join(exc.candidates)}")
+        return EXIT_AMBIGUOUS
+    except NoMatch:
+        _err(f"no reference matches tags: {partial_tags!r}")
+        return EXIT_NO_MATCH
+
+    return _inject_resolved_ref(resolver, broker, ref, args, "adapter_resolution")
+
+
+def cmd_ask(args) -> int:
+    """Semantic front door: natural-language request -> parse_intent -> a tag
+    set -> resolve_by_tags -> the same boundary-injection dispatch as inject.
+
+    Fails closed at BOTH layers: parse_intent() on an unrecognizable/
+    conflicting request, resolve_by_tags() on an under-specified-but-
+    recognized request that still matches more than one reference. Neither
+    layer ever guesses. The raw request text is never written to the audit
+    log -- only the resolved tag set / outcome.
+    """
+    registry, _audit, broker, resolver = _build()
+    try:
+        tag_set = parse_intent(args.request, registry)
+    except AmbiguousIntent as exc:
+        broker.audit.append("semantic_op", "-", f"ambiguous-intent:{','.join(exc.candidates)}")
+        return _err(exc.clarifying_question)
+
+    try:
+        ref = registry.resolve_by_tags(**tag_set)
+    except AmbiguousMatch as exc:
+        broker.audit.append("semantic_op", "-", f"ambiguous-resolve:{','.join(exc.candidates)}")
+        _err(f"request resolves to more than one reference ({', '.join(exc.candidates)}); "
+             f"please specify more (e.g. env)")
+        return EXIT_AMBIGUOUS
+    except NoMatch:
+        broker.audit.append("semantic_op", "-", f"no-match:{tag_set!r}")
+        _err(f"no reference matches the inferred tags: {tag_set!r}")
+        return EXIT_NO_MATCH
+
+    if not args.target:
+        # Resolve-only: a legitimate success case, not a failure -- lets a
+        # caller (e.g. the UI's Ask Bar) preview the match before committing
+        # to an injection target. Metadata only, same as `find`.
+        broker.audit.append("semantic_op", ref.sm_name, "resolved-only")
+        if args.json:
+            import json
+            print(json.dumps(ref.to_dict()))
+        else:
+            print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
+                  f"(provider={ref.provider}, project={ref.project}, env={ref.env}, "
+                  f"state={ref.state}) -- add --target to inject")
+        return 0
+
+    return _inject_resolved_ref(resolver, broker, ref, args, "semantic_op")
+
+
 def cmd_drop(args) -> int:
     """Put a secret INTO Arca. Harness-side only: the value never enters the
     LLM chat, ~/.claude, or a provider — it comes from stdin or a local file
@@ -99,8 +239,13 @@ def cmd_drop(args) -> int:
             return _err(f"cannot read --value-file: {exc}")
     if not value:
         return _err("empty secret value; nothing dropped")
+    try:
+        extra_tags = _parse_tags(args.tags) if args.tags else {}
+    except ValueError as exc:
+        return _err(str(exc))
     ref = registry.add(
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
+        provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -184,7 +329,14 @@ def cmd_status(args) -> int:
 
 def cmd_audit(args) -> int:
     audit = AuditChain()
-    entries = audit.entries()[-args.n:]
+    entries = audit.entries()
+    if args.secret:
+        entries = [e for e in entries if e["secret"] == args.secret]
+    entries = entries[-args.n:]
+    if args.json:
+        import json
+        print(json.dumps(entries, indent=2))
+        return 0
     print(f"{'seq':<4} {'actor':<14} {'action':<10} {'secret':<28} result")
     for e in entries:
         print(f"{e['seq']:<4} {e['actor'][:14]:<14} {e['action']:<10} "
@@ -219,6 +371,34 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
 
+    fd = sub.add_parser("find", help="find a reference by tags (metadata only, never a value)")
+    fd.add_argument("--tags", required=True,
+                     help="comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
+    fd.set_defaults(func=cmd_find)
+
+    inj = sub.add_parser("inject", help="resolve by tags and inject at a boundary target")
+    inj.add_argument("--tags", required=True,
+                      help="comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
+    inj.add_argument("--target", required=True, choices=("env", "file"))
+    inj.add_argument("--var", default="", help="target env var name (--target env)")
+    inj.add_argument("--path", default="", help="target file path (--target file)")
+    inj.add_argument("--format", dest="format", default="", choices=("", "env", "json", "yaml"),
+                      help="target file format (--target file)")
+    inj.add_argument("--key", default="", help="key to template the value under (--target file)")
+    inj.set_defaults(func=cmd_inject)
+
+    ask = sub.add_parser("ask", help="semantic front door: natural-language request -> injection")
+    ask.add_argument("request", help='e.g. "the vercel secret for mdostal.com"')
+    ask.add_argument("--target", choices=("env", "file"), default="",
+                      help="required to actually inject; omit to only resolve+report")
+    ask.add_argument("--var", default="", help="target env var name (--target env)")
+    ask.add_argument("--path", default="", help="target file path (--target file)")
+    ask.add_argument("--format", dest="format", default="", choices=("", "env", "json", "yaml"),
+                      help="target file format (--target file)")
+    ask.add_argument("--key", default="", help="key to template the value under (--target file)")
+    ask.add_argument("--json", action="store_true", help="machine-readable output for resolve-only calls (UI consumer)")
+    ask.set_defaults(func=cmd_ask)
+
     dr = sub.add_parser(
         "drop",
         help="put a secret INTO Arca (local-encrypted); lands state=dropped",
@@ -227,6 +407,10 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("sm_name", help="vault key, e.g. dostal-shared-anthropic")
     dr.add_argument("--scope", default="")
     dr.add_argument("--kind", default="")
+    dr.add_argument("--provider", default="")
+    dr.add_argument("--project", default="")
+    dr.add_argument("--env", default="")
+    dr.add_argument("--tags", default="", help="comma-separated k=v pairs, e.g. team=platform")
     src = dr.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument("--value-file", help="read the value from this local file")
@@ -265,6 +449,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     au = sub.add_parser("audit", help="view the tamper-evident access log")
     au.add_argument("n", nargs="?", type=int, default=25)
+    au.add_argument("--json", action="store_true", help="machine-readable output (UI consumer)")
+    au.add_argument("--secret", default="", help="filter to one SM name (metadata only, never a value)")
     au.set_defaults(func=cmd_audit)
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")
