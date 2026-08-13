@@ -1,0 +1,85 @@
+id: 07-closeout
+epic: portunus-secret-tree
+title: Build a real 2-3-level tree, verify, README/CONTEXT.md, version bump, changelog
+status: pending
+complexity: low
+methodology: classic
+depends_on:
+  - 02-cli-write-support
+  - 03-tree-command
+  - 05-detaildrawer-display-edit
+  - 06-project-explorer-tree-view
+
+description: |
+  Full pytest suite green, npm run build clean, then a real end-to-end verification: build an
+  actual 2-3-level group hierarchy across a handful of the real references now in the vault
+  (e.g. group personalsites-487021-resend_api_key and personalsites-487021-resend_audience_id
+  under "personalsites-487021/resend", note a related link between two secrets that serve the
+  same integration), confirm `portunus tree` and the Project Explorer UI both render it
+  identically (same normalization), and confirm the ungrouped bucket correctly holds the
+  remaining 380 references. README/CONTEXT.md document group/related/portunus tree. Version
+  bump and CHANGELOG entry.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given npm run build, when run, then it completes cleanly"
+  - "Given a real 2-3-level group hierarchy built across real references in the actual vault, when `portunus tree` and the Project Explorer UI both render it, then they agree (same grouping, same ungrouped bucket)"
+  - "Given README.md, when read, then it documents group/related and the portunus tree command with a real worked example"
+  - "Given .pHive/CONTEXT.md, when read, then it documents group/related and portunus tree vocabulary"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped version number in lockstep"
+  - "Given CHANGELOG.md, when read, then it has a new entry describing this epic"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest + npm run build; build a real group hierarchy in the actual vault and cross-verify CLI vs UI rendering; update README/CONTEXT.md; apply version bump; write CHANGELOG entry.
+    agent: developer
+  - id: review
+    description: Confirm version lockstep and that the CLI/UI cross-verification actually used real vault data, not just mocked tests.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: Metadata section this story extends with group/related/portunus tree
+    - path: .pHive/CONTEXT.md
+      purpose: Terminology section this story extends
+
+files_to_modify:
+  - file: README.md
+    change: Document group/related and portunus tree with a real worked example
+  - file: .pHive/CONTEXT.md
+    change: Add group/related/tree vocabulary
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Cross-verify CLI and UI tree rendering against real vault data, not just each tool's own tests
+    rationale: "Design-discussion §4 medium risk -- the two independent tree-building implementations (Python, TypeScript) could drift on edge cases; closeout is where that gets checked against something real, not just each side's own mocked test fixtures"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- documentation/verification-only story; the real vault data touched (group/related fields) is non-secret metadata."
+  - concern: audit-chain-integrity
+    action: "N/A -- documentation/verification-only story."
+
+risks:
+  - severity: low
+    description: Building a real group hierarchy on real vault data could be forgotten/undone inconsistently between a demo state and a real one
+    mitigation: Use clearly-labeled real references already in the vault (e.g. the resend_api_key/resend_audience_id pair) rather than inventing throwaway demo entries -- keeps the vault state coherent rather than adding noise
+
+references:
+  - path: .pHive/epics/portunus-secret-tree/docs/design-discussion.md
+    relevant_excerpt: "Slice G -- Closeout"

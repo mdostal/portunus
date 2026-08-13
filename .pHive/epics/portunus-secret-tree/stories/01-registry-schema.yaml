@@ -1,0 +1,78 @@
+id: 01-registry-schema
+epic: portunus-secret-tree
+title: Reference gains group/related; Registry.add()/retag() extended
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  Add group: str = "" (a hierarchical path, e.g. "project-y/supabase/auth") and
+  related: List[str] = [] (explicit cross-references to other reference names) to Reference.
+  Neither joins _STRUCTURED_TAG_FIELDS (informational, not tag-matchable identity -- same
+  precedent as description/purpose). Registry.add()/retag() gain group/related kwargs,
+  additive, no collision check (same reasoning as description/purpose: not part of
+  tag-matching, can never collide). related names are NOT validated against the registry at
+  write time -- forward-declaration is allowed; resolution happens read-side (story 03/06).
+
+acceptance_criteria:
+  - "Given a Reference constructed with no group/related, when to_dict() is called, then group=='' and related==[]"
+  - "Given Registry.add(name, sm_name, group='project-y/supabase/auth', related=['mongo-key']), when called, then the resulting Reference has both fields set"
+  - "Given an existing reference, when Registry.retag(name, group='new/path') is called, then only group changes -- related and every other field are untouched"
+  - "Given Registry.retag() is called with group/related, when it completes, then it does NOT run the collision-check logic used for provider/project/env/tags"
+  - "Given an existing registry.json written before this story (no group/related keys), when Registry loads it, then every Reference loads with group='' related=[]"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Reference's current field list and Registry.add()/retag()'s additive-kwarg pattern (most recently extended for description/purpose/injected_as) to mirror exactly.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for field defaults, add()/retag() extension, no-collision-check, and legacy-file backward compatibility.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add group/related to Reference; extend Registry.add()/retag() with the two new kwargs.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm group/related are NOT added to _STRUCTURED_TAG_FIELDS and retag's collision check still only evaluates provider/project/env/tags.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Reference dataclass, Registry.add()/retag() this story extends
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: Add group/related fields to Reference; extend add()/retag() with the two kwargs
+  - file: tests/test_reference_metadata.py
+    change: Add group/related tests, mirroring the existing description/purpose/injected_as tests
+
+design_decisions:
+  - decision: related is List[str], not a dict -- a different shape from tags/injected_as
+    rationale: "Design-discussion Slice A/B -- related names other references by name, no key/value pairing makes sense here"
+  - decision: related names not validated against the registry at write time
+    rationale: "Design-discussion research-brief scope decision -- forward-declaration allowed (you can describe a relationship to a secret that doesn't exist yet); resolution is a read-side concern (unresolved marking in stories 03/06), not a write-time fail-closed boundary"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- pure metadata fields (a path string, a list of names), no value-handling code introduced."
+  - concern: audit-chain-integrity
+    action: "N/A -- flows through the existing retag audit action, unchanged mechanism, wider field set."
+
+risks:
+  - severity: low
+    description: A future accidental addition of group/related to _STRUCTURED_TAG_FIELDS would change resolve_by_tags's matching surface unexpectedly
+    mitigation: Explicit review-step check and a dedicated test asserting group/related are absent from the tuple
+
+references:
+  - path: .pHive/epics/portunus-secret-tree/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- Registry schema"

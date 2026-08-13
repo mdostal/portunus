@@ -46,7 +46,11 @@ nested dict keyed by path segment, and renders either an ASCII tree (default) or
 (`--json`, the UI/LLM format). Each leaf shows the reference name + a `related` line when
 non-empty; a `related` entry naming a reference that isn't in the current result set is marked
 `(unresolved)` rather than silently dropped or hard-failed — metadata consistency is
-informational, not a fail-closed boundary concern.
+informational, not a fail-closed boundary concern. *(Grill H1)* Every reference with an empty
+`group` renders under an `(ungrouped)` bucket at the root, listed flat — never silently
+dropped. This is not hypothetical: 382 real references exist in the vault right now (registered
+live via `portunus-gcp-multi-account`'s discovery this session), none with a `group` set — the
+tree command has to handle that as the common case on day one, not an edge case.
 
 **Slice D — UI plumbing.** `group`/`related` added to both `PortunusReference` copies and to
 `/api/retag`'s forwarded fields (mirroring Slice B's flags exactly, `related` joined/split as
@@ -57,11 +61,12 @@ a comma string the same way `injected_as` uses the `k=v,k2=v2` string convention
 input) and `related` (comma-separated names input) fields, same one-form-one-handler pattern
 used for every prior metadata extension.
 
-**Slice F — Project Explorer tree view.** The "Registered" list renders as a nested tree
-(grouped by `group` path) instead of a flat list whenever at least one reference in the result
-has a non-empty `group`; falls back to today's flat rendering when none do (no behavior change
-for projects that haven't adopted grouping yet). Built client-side from the same `/api/list`
-data already fetched — no new route. `related` names render as small inline chips; a chip for
+**Slice F — Project Explorer tree view.** The "Registered" list always renders as a nested tree
+now (replacing the flat list) — grouped references nest by `group` path, ungrouped ones render
+under an `(ungrouped)` node at the root *(Grill H1 — same resolution as Slice C, one code path:
+an all-ungrouped project is just the degenerate case of a tree that's entirely one bucket, not
+a separate flat-vs-tree special case)*. Built client-side from the same `/api/list` data already
+fetched — no new route. `related` names render as small inline chips; a chip for
 an unresolved name (not in the current project's result set) is visually distinct
 (`related (unresolved)`), matching Slice C's CLI behavior.
 

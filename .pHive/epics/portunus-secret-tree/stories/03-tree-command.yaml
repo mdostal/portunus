@@ -1,0 +1,82 @@
+id: 03-tree-command
+epic: portunus-secret-tree
+title: portunus tree [--project X] [--json] -- ungrouped bucket, unresolved-related marking
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-registry-schema]
+
+description: |
+  The LLM-facing query surface. `portunus tree [--project X] [--json]` fetches references
+  (all, or filtered to --project), splits each non-empty group on "/", builds a nested
+  structure, and renders either an ASCII tree (default) or nested JSON (--json). Every
+  reference with an empty group renders under an "(ungrouped)" bucket at the root, listed
+  flat -- never silently dropped (Grill H1; the real vault has 382 currently-ungrouped
+  references as of this session, so this is the common case, not an edge case). Each leaf
+  shows related entries; a related name not present in the current result set is marked
+  "(unresolved)" rather than dropped or erroring.
+
+acceptance_criteria:
+  - "Given three references with group='a/b', 'a/c', '' respectively, when `portunus tree` runs, then output shows a nested a/{b,c} subtree AND an (ungrouped) bucket containing the third"
+  - "Given `portunus tree --project X`, when run, then only references with project==X are included in the tree"
+  - "Given a reference with related=['other-ref'] where other-ref IS in the current result set, when tree renders, then it's shown as a plain related link"
+  - "Given a reference with related=['missing-ref'] where missing-ref is NOT in the current result set, when tree renders, then it's marked (unresolved), not silently dropped or errored"
+  - "Given `portunus tree --json`, when run, then output is valid JSON with a nested structure matching the ASCII tree's grouping, including an ungrouped bucket key"
+  - "Given a registry with zero references, when `portunus tree` runs, then it prints an empty-tree message, not an error"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Registry's iteration protocol and list_by_project()'s project-filtering pattern to reuse for the --project flag.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the six acceptance criteria above, covering both text and --json output modes.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement tree-building (path-split, nested-dict construction, ungrouped bucket, unresolved-related marking) and both render modes; wire the `tree` CLI subcommand.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no reference is ever silently omitted from tree output regardless of its group/related state (the core correctness guarantee this story exists to provide).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Registry iteration + list_by_project()'s filtering pattern this story's --project flag mirrors
+    - path: src/portunus/discover.py
+      purpose: --json output convention (report dataclasses -> json.dumps) this story's --json mode follows
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add tree-building logic, cmd_tree, and the `tree` subcommand parser
+  - file: tests/test_cli_tree.py
+    change: New test file
+
+design_decisions:
+  - decision: "(ungrouped)" bucket at the root, not a dropped/hidden set
+    rationale: "Grill H1 -- resolved in design discussion: 382 real references exist with no group right now; the tree command has to handle that as the default case on day one"
+  - decision: unresolved related names are marked, not dropped or errored
+    rationale: "Design-discussion Slice C -- metadata consistency is informational, not a fail-closed boundary concern; forward-declared relationships (story 01) must render visibly, not silently"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "portunus tree is a pure metadata read (group/related/name fields only) -- no path to a backend or value anywhere in this command."
+  - concern: audit-chain-integrity
+    action: "N/A -- read-only metadata browse, matching the existing unaudited-read convention (find/list/reg show already don't write audit entries)."
+
+risks:
+  - severity: medium
+    description: A bug in the ungrouped-bucket logic could silently drop references again, defeating the whole point of this story
+    mitigation: Acceptance criterion 1 and the review step both explicitly test/verify the ungrouped case, not just the grouped happy path
+
+references:
+  - path: .pHive/epics/portunus-secret-tree/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- portunus tree command / Grill H1"

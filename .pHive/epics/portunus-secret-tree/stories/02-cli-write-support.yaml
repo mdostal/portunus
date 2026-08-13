@@ -1,0 +1,73 @@
+id: 02-cli-write-support
+epic: portunus-secret-tree
+title: --group/--related on reg add/drop/retag
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [01-registry-schema]
+
+description: |
+  --group/--related flags on reg add, drop, retag. related is list-shaped (not dict-shaped
+  like tags/injected_as), so it gets a small sibling parser, _parse_related(): "name1,name2"
+  -> ["name1", "name2"] (trim, drop empties) -- deliberately not reusing _parse_tags(), which
+  assumes k=v pairs and would reject a bare name.
+
+acceptance_criteria:
+  - "Given `portunus reg add x sm-x --group project-y/supabase/auth`, when run, then the resulting Reference has group='project-y/supabase/auth'"
+  - "Given `portunus drop x sm-x --related mongo-key,other-key --stdin`, when run, then the resulting Reference has related==['mongo-key', 'other-key']"
+  - "Given `portunus retag x --related ' name1 , name2 '` (extra whitespace), when run, then related==['name1', 'name2'] (trimmed)"
+  - "Given `portunus retag x --related ''` (empty string), when run, then related==[] (not a parse error)"
+  - "Given _parse_related('a,,b') (a blank entry in the middle), when parsed, then it returns ['a', 'b'] (empties dropped, not a parse error)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm _parse_tags()'s exact split/trim behavior to mirror in the new _parse_related() sibling helper.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the three subcommands' new flags and _parse_related()'s parsing rules.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add _parse_related() helper; add --group/--related to reg add/drop/retag parsers and their cmd_ handlers.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm _parse_related() is used consistently across all three subcommands (no divergent parsing).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: _parse_tags(), reg add/drop/retag parsers and handlers this story extends
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add _parse_related() helper; wire --group/--related into reg add, drop, retag
+  - file: tests/test_reference_metadata.py
+    change: Add CLI-level group/related round-trip tests
+
+design_decisions:
+  - decision: _parse_related() is a new, separate helper, not a reuse of _parse_tags()
+    rationale: "Design-discussion Slice B -- related is a bare comma-separated name list, not k=v pairs; reusing _parse_tags() would reject valid input"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- group/related are non-secret metadata (a path string, reference names), no new value-handling path."
+  - concern: audit-chain-integrity
+    action: "N/A for reg add/drop's flag additions (existing audit points cover them); retag's audit entry is unchanged, now covering a wider field set."
+
+risks:
+  - severity: low
+    description: A malformed --related value (e.g. containing an '=' by mistake, confusing it with tags syntax) could silently produce a single weird name
+    mitigation: _parse_related() just splits on comma and trims -- no special-casing needed; a name containing '=' is still a valid (if unusual) reference name, not a parse error, matching the tool's general no-hidden-validation posture for free-text fields
+
+references:
+  - path: .pHive/epics/portunus-secret-tree/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- CLI write support"
