@@ -25,6 +25,11 @@ export async function POST(req: NextRequest) {
     const injectedAs = tagsToArg(body.injected_as);
     if (injectedAs) args.push("--injected-as", injectedAs);
   }
+  if (body.group !== undefined) args.push("--group", String(body.group));
+  if (body.related !== undefined) {
+    const related = Array.isArray(body.related) ? body.related.join(",") : String(body.related);
+    if (related) args.push("--related", related);
+  }
 
   const result = await runPortunus(args);
   if (result.code !== 0) {

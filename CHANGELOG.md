@@ -4,6 +4,29 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-13
+
+### Added
+
+- **`group`/`related` metadata.** `Reference` gains a hierarchical `group` path (e.g.
+  `project-y/supabase/auth`) and explicit `related` cross-references to other reference names
+  -- additive, excluded from tag-matching, same precedent as description/purpose. `--group`/
+  `--related` on `reg add`/`drop`/`retag`.
+- **`portunus tree [--project X] [--json]`** -- the LLM-facing hierarchy/relationship query.
+  Renders every reference's group as a real tree; a reference with no group renders under an
+  `(ungrouped)` bucket rather than disappearing (the common case for freshly-discovered
+  projects). `related` entries not in the current result set are marked `(unresolved)`, never
+  dropped or erroring.
+- **UI: DetailDrawer** shows and edits group/related through the same Move form/retag path.
+- **UI: Project Explorer's Registered list now renders as a nested tree**, built client-side
+  from the same data already fetched -- an independent TypeScript implementation of the same
+  grouping rule as the Python CLI, verified to agree exactly against real data.
+- Applied to the real vault: `personalsites-487021`'s Resend key pair grouped and
+  cross-linked; **all 342 real `ffe-cicd` secrets organized into ~20 real application groups**
+  (event-api/dev+prod, social-engine/dev+prod, shindig, game-library, monitoring,
+  orchestration, venues, stripe, and more) by naming convention, replacing an undifferentiated
+  flat list with a real navigable structure in both the CLI and the live UI.
+
 ## [0.9.0] - 2026-08-13
 
 ### Fixed

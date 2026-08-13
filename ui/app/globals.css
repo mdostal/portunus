@@ -334,6 +334,16 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   cursor: pointer;
 }
 .explorer-row:hover { background: var(--verdigris-soft); }
+
+.tree-branch { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; }
+.tree-branch-label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  color: var(--brass);
+  padding: 0.1rem 0;
+}
+.chip-unresolved { color: var(--crit); border-color: var(--crit); }
 .gallery-card.add {
   align-items: center;
   justify-content: center;

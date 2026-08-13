@@ -1,0 +1,64 @@
+name: portunus-secret-tree
+title: Secret Relationship Graph — group + related Metadata, portunus tree, UI Tree View
+description: >
+  Gives Portunus's metadata real structure: a hierarchical `group` path per secret and
+  explicit `related` cross-references between secrets, plus `portunus tree` (the LLM-facing
+  query surface) and a UI tree rendering in Project Explorer, so an agent can navigate
+  relationships between secrets (auth vs. database, dev vs. staging vs. personal-test) rather
+  than reading isolated flat descriptions. Design confirmed via AskUserQuestion. Handles the
+  real, non-hypothetical case of 382 currently-ungrouped references already in the vault
+  (Grill H1).
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [backend, cli, ui]
+  roster: [researcher, technical-writer]
+  per_tag_reasoning:
+    backend: "Registry schema extension (group/related), CLI write support"
+    cli: "New portunus tree command -- the LLM-facing query surface"
+    ui: "DetailDrawer display/edit, Project Explorer tree view"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1 converged after revision -- 1/1 finding resolved: H1, ungrouped-reference handling)
+    scale: medium, H/V skipped per design-discussion.md Scale Assessment
+
+stories:
+  - id: 01-registry-schema
+    title: Reference gains group/related; Registry.add()/retag() extended
+    complexity: low
+    depends_on: []
+  - id: 02-cli-write-support
+    title: --group/--related on reg add/drop/retag
+    complexity: low
+    depends_on: ["01-registry-schema"]
+  - id: 03-tree-command
+    title: portunus tree [--project X] [--json] -- ungrouped bucket, unresolved-related marking
+    complexity: medium
+    depends_on: ["01-registry-schema"]
+  - id: 04-ui-plumbing
+    title: UI types + /api/retag forward group/related
+    complexity: low
+    depends_on: ["02-cli-write-support"]
+  - id: 05-detaildrawer-display-edit
+    title: DetailDrawer shows and edits group/related
+    complexity: low
+    depends_on: ["04-ui-plumbing"]
+  - id: 06-project-explorer-tree-view
+    title: Project Explorer's Registered list renders as a nested tree
+    complexity: high
+    depends_on: ["04-ui-plumbing"]
+  - id: 07-closeout
+    title: Build a real 2-3-level tree, verify, README/CONTEXT.md, version bump, changelog
+    complexity: low
+    depends_on:
+      - "02-cli-write-support"
+      - "03-tree-command"
+      - "05-detaildrawer-display-edit"
+      - "06-project-explorer-tree-view"
