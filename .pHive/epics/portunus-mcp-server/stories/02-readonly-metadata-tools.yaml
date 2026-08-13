@@ -1,0 +1,86 @@
+id: 02-readonly-metadata-tools
+epic: portunus-mcp-server
+title: portunus_list/tree/ask_preview/bindings_show MCP tools
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-mcp-scaffold]
+
+description: |
+  Four read-only tools, each calling the library directly (in-process, same package -- not a
+  subprocess shell-out): portunus_list(project) wraps Registry.list_by_project();
+  portunus_tree(project=None) wraps the tree-building logic (reuses cli.py's _build_tree/
+  _render_tree_text, returns the --json shape); portunus_ask_preview(request) wraps
+  parse_intent()+resolve_by_tags() but ONLY when intent_kind=='fetch' -- explicitly rejects
+  add/rotate/list intents with a clear "not a fetch request" message rather than silently
+  executing a different kind's behavior (design-discussion §4 medium risk);
+  portunus_bindings_show(project=None) wraps load_gcp_bindings(). All four are safe by the
+  same structural guarantee already proven for these underlying functions -- no path to
+  SecretBackend.access() anywhere.
+
+acceptance_criteria:
+  - "Given a registry with references for project X, when portunus_list(X) is called, then it returns their metadata (name/description/purpose/state/etc), never a value"
+  - "Given a mix of grouped and ungrouped references, when portunus_tree() is called, then it returns the same {ungrouped, tree, refs} shape as `portunus tree --json`"
+  - "Given a fetch-classified request, when portunus_ask_preview(request) is called and resolves to exactly one reference, then it returns that reference's metadata"
+  - "Given a request that classifies as intent_kind=='add'/'rotate'/'list', when portunus_ask_preview is called, then it returns a clear 'not a fetch request' message, never silently executing that other intent's behavior"
+  - "Given gcp-bindings.json has entries, when portunus_bindings_show() is called, then it returns the same data as `portunus bindings show --json`"
+  - "Given any of these four tools, when its source is inspected, then it contains no call to any SecretBackend.access() method"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Registry.list_by_project()'s signature, cli.py's _build_tree/_render_tree_text (or the JSON-shape equivalent), parse_intent()/classify_intent_kind()'s exact contract, and load_gcp_bindings()'s return shape -- all to be called directly, not shelled to.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for all four tools' happy paths, portunus_ask_preview's intent_kind rejection, and the structural no-backend-access guarantee for all four.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement the four tools in mcp_server.py, calling the library directly.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm portunus_ask_preview never routes to _cmd_ask_add/_cmd_ask_rotate/list_by_project's write-adjacent paths -- fetch-only, metadata-only.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: list_by_project(), resolve_by_tags() this story's tools call directly
+    - path: src/portunus/cli.py
+      purpose: _build_tree()/_render_tree_text(), classify_intent_kind() usage pattern this story mirrors
+    - path: src/portunus/intent.py
+      purpose: parse_intent()/classify_intent_kind() this story's ask_preview tool reuses
+    - path: src/portunus/backend.py
+      purpose: load_gcp_bindings() this story's bindings_show tool wraps
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_list, portunus_tree, portunus_ask_preview, portunus_bindings_show tools
+  - file: tests/test_mcp_server.py
+    change: Add tests for all four tools
+
+design_decisions:
+  - decision: portunus_ask_preview explicitly rejects non-fetch intent kinds rather than routing to them
+    rationale: "Design-discussion §4 medium risk -- a 'preview' tool silently executing an add/rotate/list request would surprise the calling agent; explicit rejection with a clear message is the fail-closed choice"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "All four tools are structurally incapable of reaching a value -- verified via the same AST/source-inspection test pattern already used for discover.py/list_by_project()."
+  - concern: audit-chain-integrity
+    action: "N/A -- read-only metadata browse, matching the existing unaudited-read convention (find/list/tree/reg show already don't write audit entries)."
+
+risks:
+  - severity: low
+    description: Reusing cli.py's "private" (underscore-prefixed) tree-building helpers from mcp_server.py is a minor layering smell
+    mitigation: Acceptable for this pass -- Python has no real privacy enforcement and this avoids duplicating tree-building logic a third time (Python CLI, TypeScript UI, now MCP); flagged in code comments as intentional reuse, not accidental coupling
+
+references:
+  - path: .pHive/epics/portunus-mcp-server/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- Read-only metadata tools"

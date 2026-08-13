@@ -1,0 +1,65 @@
+name: portunus-mcp-server
+title: Portunus MCP Server — Cross-Agent Secret Access + Auth Lifecycle
+description: >
+  A new `portunus mcp` subcommand starts a local MCP stdio server exposing Portunus's
+  metadata queries and boundary-safe injection as MCP tools, so other agents/harnesses (any
+  MCP-capable one, not just this Claude Code session) can find and use secrets through
+  Portunus directly -- "give them the personal gemini key" without the value ever entering
+  their context. Also adds a bounded `portunus auth login/status` surface so GCP account
+  lifecycle goes through Portunus as the single control surface. Explicitly prioritized by
+  the user ("i'd love to start there").
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [backend, cli, security, infra]
+  roster: [researcher, technical-writer]
+  per_tag_reasoning:
+    backend: "New mcp_server.py module, resolve_exec runner threading"
+    security: "resolve_exec is new territory for the secret-boundary-invariant -- an MCP tool's return value flows directly into the calling agent's context"
+    infra: "MCP registration mechanics, third OSTIARIUS entry point alongside cli.py and the UI's API routes"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1 converged after revision -- 1/1 finding resolved: H1, injection-tool addressing shape)
+    scale: medium, H/V skipped per design-discussion.md Scale Assessment
+
+stories:
+  - id: 01-mcp-scaffold
+    title: portunus mcp subcommand + FastMCP stdio server + health tool
+    complexity: medium
+    depends_on: []
+  - id: 02-readonly-metadata-tools
+    title: portunus_list/tree/ask_preview/bindings_show MCP tools
+    complexity: medium
+    depends_on: ["01-mcp-scaffold"]
+  - id: 03-discovery-tool
+    title: portunus_discover MCP tool
+    complexity: low
+    depends_on: ["01-mcp-scaffold"]
+  - id: 04-resolve-to-tempfile-tool
+    title: portunus_resolve_to_tempfile MCP tool
+    complexity: medium
+    depends_on: ["01-mcp-scaffold"]
+  - id: 05-resolve-exec-tool
+    title: portunus_resolve_exec MCP tool -- the highest-scrutiny story
+    complexity: high
+    depends_on: ["01-mcp-scaffold"]
+  - id: 06-auth-lifecycle-cli
+    title: portunus auth login/status
+    complexity: low
+    depends_on: []
+  - id: 07-closeout
+    title: Register in this environment, live JSON-RPC verification, real Gemini-key proof
+    complexity: medium
+    depends_on:
+      - "02-readonly-metadata-tools"
+      - "03-discovery-tool"
+      - "04-resolve-to-tempfile-tool"
+      - "05-resolve-exec-tool"
+      - "06-auth-lifecycle-cli"

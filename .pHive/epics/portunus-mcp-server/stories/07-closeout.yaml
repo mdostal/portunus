@@ -1,0 +1,93 @@
+id: 07-closeout
+epic: portunus-mcp-server
+title: Register in this environment, live JSON-RPC verification, real Gemini-key proof
+status: pending
+complexity: medium
+methodology: classic
+depends_on:
+  - 02-readonly-metadata-tools
+  - 03-discovery-tool
+  - 04-resolve-to-tempfile-tool
+  - 05-resolve-exec-tool
+  - 06-auth-lifecycle-cli
+
+description: |
+  Full pytest suite green. Register `portunus mcp` in this Claude Code environment via
+  `claude mcp add` (matching the exact registration shape already observed in ~/.claude.json
+  for qdrant-nomic). Verify via a raw stdio JSON-RPC test script -- this session cannot attach
+  to a server started mid-conversation, so verification is a standalone script sending
+  tools/list and tools/call messages and checking responses, not a live in-session tool call.
+  The real proof: promote personalsites-487021-google_generative_ai_api_key to state=enabled
+  (human decision, made live in conversation), call portunus_resolve_exec with a real curl
+  against the Google Generative AI API, confirm a real API response comes back and the key
+  never appears anywhere in the tool's response or this session's own output. README/
+  CONTEXT.md document the new MCP surface and auth commands; the existing Claude skill gets a
+  cross-reference note (kept, not replaced). Version bump and CHANGELOG entry.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given `claude mcp list` after registration, when run, then portunus appears as a connected stdio server"
+  - "Given a raw JSON-RPC tools/list request, when sent to the running `portunus mcp` process, then all tools from stories 02-06 are listed"
+  - "Given a raw JSON-RPC tools/call for portunus_list against a temp PORTUNUS_HOME, when sent, then it returns correct metadata"
+  - "Given the real Gemini-key proof, when portunus_resolve_exec is called with a real curl command against the live Generative AI API, then a real, valid API response is returned AND the raw key string never appears in the tool's response, this session's tool output, or any log"
+  - "Given README.md, when read, then it documents `portunus mcp`, the tool list, and `portunus auth login/status`, with the real Gemini-key example as a worked case"
+  - "Given .pHive/CONTEXT.md, when read, then it documents the MCP server as a third OSTIARIUS entry point"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped version number in lockstep"
+  - "Given CHANGELOG.md, when read, then it has a new entry describing this epic"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest; register via claude mcp add; write and run the raw JSON-RPC verification script; promote the real Gemini key and run the real resolve_exec proof; update README/CONTEXT.md; apply version bump; write CHANGELOG entry.
+    agent: developer
+  - id: review
+    description: Confirm the real Gemini-key proof's own output (this session's tool results) never contains the raw key string -- re-check the actual conversation output, not just the code's intent.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: New MCP section this story adds
+    - path: .pHive/CONTEXT.md
+      purpose: OSTIARIUS terminology entry this story extends with the MCP server as a third entry point
+    - path: .claude/skills/portunus-ask/SKILL.md
+      purpose: Existing skill this story cross-references, not replaces
+
+files_to_modify:
+  - file: README.md
+    change: Document portunus mcp, the tool list, and auth login/status with a real worked example
+  - file: .pHive/CONTEXT.md
+    change: Document the MCP server as a third OSTIARIUS entry point
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Verification is a standalone JSON-RPC script, not a live in-session tool call
+    rationale: "This Claude Code session's own tool list is fixed for the conversation -- a newly `claude mcp add`ed server isn't attachable mid-session without a restart, so structural verification (does the protocol handshake/tool list/tool call work correctly) is the honest, available verification method"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The closeout's own real-world proof is the final, highest-stakes check of this entire epic's central risk -- explicitly re-verified against actual conversation output, not just test assertions."
+  - concern: audit-chain-integrity
+    action: "N/A -- documentation/verification-only story beyond the real resolve_exec call, which already goes through the existing audit mechanism."
+
+risks:
+  - severity: low
+    description: The real Gemini API call could fail for reasons unrelated to Portunus (quota, API changes) -- must not be treated as proving Portunus is broken
+    mitigation: If the real API call fails, verify the failure reason is external (check the actual HTTP status/error) before concluding anything about Portunus's own correctness; the mocked/unit-tested behavior (stories 04/05) is the primary correctness evidence, the live call is a bonus real-world proof, not the sole verification
+
+references:
+  - path: .pHive/epics/portunus-mcp-server/docs/design-discussion.md
+    relevant_excerpt: "Slice G -- Closeout"

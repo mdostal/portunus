@@ -1,0 +1,81 @@
+id: 05-resolve-exec-tool
+epic: portunus-mcp-server
+title: portunus_resolve_exec MCP tool -- the highest-scrutiny story
+status: pending
+complexity: high
+methodology: tdd
+depends_on: [01-mcp-scaffold]
+
+description: |
+  The "make the call for me" tool -- directly satisfies "give them the personal gemini key."
+  portunus_resolve_exec(argv, name="", tags=None): same dual addressing as story 04, then
+  calls Resolver.resolve_exec(resolved_argv_template, runner=capturing_runner) where
+  capturing_runner is subprocess.run(resolved_argv, capture_output=True, text=True,
+  timeout=30). Returns ONLY {stdout, stderr, returncode} from that subprocess -- never the
+  resolved argv itself (which contains the secret value substituted into one element), never
+  on any path including exceptions/timeouts.
+
+acceptance_criteria:
+  - "Given argv=['echo', '{{secret:x}}'] resolving to a mocked value, when portunus_resolve_exec runs (mocked runner), then the tool's return object contains only stdout/stderr/returncode keys -- never a resolved_argv key or any key containing the mocked value"
+  - "Given the subprocess exits non-zero, when portunus_resolve_exec runs, then stderr/returncode are returned normally (not treated as a tool-level error) -- the caller decides what a non-zero exit means for their own command"
+  - "Given the subprocess times out, when portunus_resolve_exec runs, then the tool returns a timeout error message that does NOT include the resolved argv"
+  - "Given the same addressing failure modes as story 04 (ambiguous, no match, neither name nor tags, non-injectable state), when they occur, then the same clean error messages are returned, never a resolved value"
+  - "Given portunus_resolve_exec's full source (every branch), when inspected via AST, then no return statement or exception handler references a variable that ever held the resolved/substituted argv -- only the subprocess.CompletedProcess's own stdout/stderr/returncode fields, or pre-resolution safe fields (reference name, exception type)"
+  - "Given a real (non-mocked) resolve_exec call with a template like `curl ... {{secret:x}}`, when the underlying command itself would echo its own argv (e.g. `echo`), then this is documented explicitly in the tool's docstring as the caller's responsibility, not a Portunus guarantee -- Portunus cannot control what a caller-supplied command chooses to print"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Resolver.resolve_exec()'s exact runner-injection contract (already used this way in existing tests) and subprocess.run()'s CompletedProcess/TimeoutExpired shapes to build the capturing_runner and its own exception handling correctly.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the happy path, non-zero exit, timeout, all four addressing failure modes, and the AST-level never-leaks-argv guarantee.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement portunus_resolve_exec with the capturing_runner and careful, itemized boundary-safe error handling.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Line-by-line review of every return statement and except-clause -- this is the epic's designated highest-scrutiny story per the design discussion's dominant secret-boundary-invariant constraint.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/resolver.py
+      purpose: resolve_exec()'s existing runner-injection contract this tool uses (already tested with a fake runner in the existing test suite)
+    - path: tests/test_backend_gcp_wif.py
+      purpose: The runner-injection test pattern (capture cmd via a fake runner) this story's tests mirror for capturing subprocess.run's own call
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_resolve_exec tool with capturing_runner
+  - file: tests/test_mcp_server.py
+    change: Add tests including the AST-level source-inspection guarantee
+
+design_decisions:
+  - decision: capturing_runner uses subprocess.run() with a 30s timeout, never os.execvp
+    rationale: "Design-discussion Slice E -- an MCP tool must return a result to the calling agent; process-replacing the MCP server itself (the CLI's default resolve --exec behavior) is not viable for a long-running server"
+  - decision: Non-zero exit code is NOT treated as a tool-level error -- returned normally
+    rationale: "The wrapped command's own success/failure semantics belong to the caller's interpretation, not Portunus's -- Portunus's only job is the boundary-safe injection, not judging the command's outcome"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The single highest-risk code path in this entire epic. AST-level source inspection (acceptance criterion 5) plus line-by-line human review (per the story's review step) plus explicit documentation of the caller-command-echo limitation (acceptance criterion 6) -- three independent layers of scrutiny, not just one test."
+  - concern: audit-chain-integrity
+    action: "Goes through the existing resolve audit entry via Resolver._fetch()'s existing mechanism inside resolve_exec() -- unchanged, just a new caller with a capturing runner instead of process-replace."
+
+risks:
+  - severity: critical
+    description: This is the one tool in the entire epic where a coding mistake could directly leak a real secret value into an agent's conversation context
+    mitigation: Three-layer scrutiny (AST test + line-by-line review + explicit caller-responsibility documentation) per cross_cutting above; the tool's implementation is kept as small and simple as possible specifically to make this review tractable -- no cleverness, no shortcuts
+
+references:
+  - path: .pHive/epics/portunus-mcp-server/docs/design-discussion.md
+    relevant_excerpt: "Slice E -- resolve_exec injection tool (the make the call for me tool)"

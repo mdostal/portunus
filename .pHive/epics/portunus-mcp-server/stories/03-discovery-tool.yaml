@@ -1,0 +1,74 @@
+id: 03-discovery-tool
+epic: portunus-mcp-server
+title: portunus_discover MCP tool
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [01-mcp-scaffold]
+
+description: |
+  portunus_discover(project, register=False) wraps list_gcp_secrets()/register_discovered()/
+  diff_against_registry() directly (in-process library calls, same functions the CLI's
+  cmd_discover already uses) -- still metadata-only, same structural guarantee as the
+  CLI/UI versions. register=True mirrors the CLI's --register flag exactly, including the
+  wif_configured field and never-overwrite/naming-conflict behavior -- no reimplementation.
+
+acceptance_criteria:
+  - "Given a mocked gcloud runner, when portunus_discover(project) is called (register=False), then it returns the same {already_registered, not_yet_registered, wif_configured} shape as `portunus discover --json`"
+  - "Given the same mock, when portunus_discover(project, register=True) is called, then it returns the same {registered, conflicts, already_registered, wif_configured} shape as `portunus discover --register --json`"
+  - "Given portunus_discover's source, when inspected, then it contains no call to any SecretBackend.access() method"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm cmd_discover's exact call sequence (list_gcp_secrets -> diff_against_registry or register_discovered -> _wif_configured) to mirror directly as a library call, not a subprocess shell-out to the CLI.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for both register=False and register=True modes, using the same mocked-runner pattern already established in test_discover.py.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement portunus_discover in mcp_server.py.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the tool's register=True path has identical never-overwrite/naming-conflict semantics to the CLI's --register (no drift between the two entry points).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_discover's exact call sequence this story's tool mirrors
+    - path: src/portunus/discover.py
+      purpose: list_gcp_secrets()/register_discovered()/diff_against_registry() this story calls directly
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_discover tool
+  - file: tests/test_mcp_server.py
+    change: Add discovery tool tests
+
+design_decisions:
+  - decision: Mirrors cmd_discover's call sequence exactly rather than introducing new discovery logic
+    rationale: "One safety-reviewed implementation of discovery semantics (never-overwrite, naming-conflict handling), called from three entry points (CLI, UI route, now MCP tool) -- not three separate implementations"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Structural: reuses discover.py's already-proven no-backend-access guarantee; explicit test coverage for this tool specifically, not just inherited by assumption."
+  - concern: audit-chain-integrity
+    action: "N/A -- discovery's register path already goes through Registry.add()'s existing (unaudited-read-adjacent) conventions, unchanged by this story."
+
+risks:
+  - severity: low
+    description: A future change to discover.py's return shapes could silently break this tool's JSON contract
+    mitigation: Tests assert exact key names, not just "valid response" -- a field rename fails the test suite
+
+references:
+  - path: .pHive/epics/portunus-mcp-server/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- Discovery tool"
