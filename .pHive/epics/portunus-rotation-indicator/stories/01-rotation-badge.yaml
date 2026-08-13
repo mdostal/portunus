@@ -1,0 +1,80 @@
+id: 01-rotation-badge
+epic: portunus-rotation-indicator
+title: RotationBadge component in Console, Vault Map, DetailDrawer
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  New RotationBadge component rendered whenever reference.tags.rotation_requested === "true":
+  a small badge next to the state pill in Console's table row and Vault Map's card, and a more
+  prominent banner-style note near the top of DetailDrawer (where a human actually acts on it).
+  Uses the existing --warn token family, visually distinct from --request (the requested-state
+  pill color) so the two signals don't collide.
+
+acceptance_criteria:
+  - "Given a reference with tags.rotation_requested=true, when viewed in Console, then a rotation badge is visible next to its state pill"
+  - "Given the same reference, when viewed in Vault Map, then the badge is visible on its card"
+  - "Given the same reference, when its DetailDrawer is open, then a prominent rotation-needed note is visible near the top"
+  - "Given a reference without the rotation_requested tag (or with it set to any other value), when viewed anywhere, then no badge is rendered"
+  - "Given `npm run build`, when run after this story, then it passes with zero TypeScript errors"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm StatePill/chip rendering conventions in Console.tsx, VaultMap.tsx, DetailDrawer.tsx, and the --warn token pair in globals.css.
+    agent: researcher
+  - id: implement
+    description: Add RotationBadge component and wire it into the three call sites.
+    agent: developer
+    depends_on: [research]
+  - id: review
+    description: Confirm the badge never renders for any tags.rotation_requested value other than the exact string "true", and that npm run build is clean.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/StatePill.tsx
+      purpose: existing small-badge component pattern to mirror
+    - path: ui/app/components/Console.tsx
+      purpose: table row call site
+    - path: ui/app/components/VaultMap.tsx
+      purpose: card call site
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: banner call site
+
+files_to_modify:
+  - file: ui/app/components/RotationBadge.tsx
+    change: New component
+  - file: ui/app/components/Console.tsx
+    change: Render RotationBadge next to StatePill in each row
+  - file: ui/app/components/VaultMap.tsx
+    change: Render RotationBadge on each card
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Render a prominent RotationBadge note near the top
+  - file: ui/app/globals.css
+    change: Badge styling reusing --warn tokens
+
+design_decisions:
+  - decision: No new backend/API changes -- this is a pure display change over already-flowing data
+    rationale: "The registry API already returns the full tags dict; the flag is already self-clearing via the existing Rotate-then-drop flow (verified in design-discussion.md)"
+
+cross_cutting:
+  - concern: documentation
+    action: "None needed -- rotation_requested is already documented in CONTEXT.md from the prior epic."
+
+risks:
+  - severity: low
+    description: Badge fails to disappear once the flag is cleared (stale UI state)
+    mitigation: Badge derives directly from the fetched reference.tags on every registry refresh, no separate client-side state to go stale
+
+references:
+  - path: .pHive/epics/portunus-rotation-indicator/docs/design-discussion.md
+    relevant_excerpt: "RotationBadge... rendered whenever reference.tags.rotation_requested === \"true\""
