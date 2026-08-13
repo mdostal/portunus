@@ -1,7 +1,7 @@
 id: 02-list-sessions-and-closeout
 epic: portunus-session-ttl-and-list
 title: list_sessions() + CONTEXT.md session vocabulary
-status: pending
+status: completed
 complexity: low
 methodology: tdd
 depends_on: ["01-session-ttl-enforcement"]
