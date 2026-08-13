@@ -172,3 +172,54 @@ def test_legacy_registry_file_without_group_related_keys_still_loads(home):
 def test_group_and_related_are_not_structured_tag_fields():
     assert "group" not in _STRUCTURED_TAG_FIELDS
     assert "related" not in _STRUCTURED_TAG_FIELDS
+
+
+def test_cli_reg_add_accepts_group(home):
+    rc = main(["reg", "add", "x", "sm-x", "--group", "project-y/supabase/auth"])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.group == "project-y/supabase/auth"
+
+
+def test_cli_drop_accepts_group_and_related(home):
+    value_file = home / "value.txt"
+    value_file.write_text("s3kr3t\n")
+    rc = main([
+        "drop", "x", "sm-x",
+        "--group", "project-y/mongodb",
+        "--related", "project-y-supabase-auth,project-y-other",
+        "--value-file", str(value_file),
+    ])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.group == "project-y/mongodb"
+    assert ref.related == ["project-y-supabase-auth", "project-y-other"]
+
+
+def test_cli_retag_group_and_related(home):
+    reg = Registry()
+    reg.add("x", "sm-x")
+    rc = main(["retag", "x", "--related", " name1 , name2 "])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.related == ["name1", "name2"]
+
+
+def test_cli_retag_related_empty_string_is_empty_list_not_error(home):
+    reg = Registry()
+    reg.add("x", "sm-x", related=["old"])
+    rc = main(["retag", "x", "--related", ""])
+    assert rc == 0
+    ref = Registry().require("x")
+    # empty --related means "not passed" (argparse default ""), same as --tags
+    assert ref.related == ["old"]
+
+
+def test_parse_related_drops_blank_entries():
+    from portunus.cli import _parse_related
+    assert _parse_related("a,,b") == ["a", "b"]
+
+
+def test_parse_related_trims_whitespace():
+    from portunus.cli import _parse_related
+    assert _parse_related(" name1 , name2 ") == ["name1", "name2"]

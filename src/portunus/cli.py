@@ -86,12 +86,13 @@ def cmd_reg(args) -> int:
     if args.action == "add":
         try:
             injected_as = _parse_tags(args.injected_as) if args.injected_as else None
+            related = _parse_related(args.related) if args.related else None
         except ValueError as exc:
             return _err(str(exc))
         ref = registry.add(args.name, args.sm_name, scope=args.scope,
                            kind=args.kind, project=args.project or "",
                            description=args.description or "", purpose=args.purpose or "",
-                           injected_as=injected_as)
+                           injected_as=injected_as, group=args.group or "", related=related)
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
         return 0
     if args.action == "rm":
@@ -116,6 +117,13 @@ def _parse_tags(raw: str) -> dict:
         k, v = pair.split("=", 1)
         tags[k.strip()] = v.strip()
     return tags
+
+
+def _parse_related(raw: str) -> list:
+    """Parse "name1,name2" into ["name1", "name2"] -- trims whitespace, drops
+    blank entries. Deliberately not _parse_tags(): related is a bare name
+    list, not k=v pairs."""
+    return [name.strip() for name in raw.split(",") if name.strip()]
 
 
 def cmd_find(args) -> int:
@@ -371,6 +379,7 @@ def cmd_retag(args) -> int:
     try:
         tags = _parse_tags(args.tags) if args.tags else None
         injected_as = _parse_tags(args.injected_as) if args.injected_as else None
+        related = _parse_related(args.related) if args.related else None
     except ValueError as exc:
         return _err(str(exc))
 
@@ -389,6 +398,10 @@ def cmd_retag(args) -> int:
         kwargs["purpose"] = args.purpose
     if injected_as is not None:
         kwargs["injected_as"] = injected_as
+    if args.group:
+        kwargs["group"] = args.group
+    if related is not None:
+        kwargs["related"] = related
 
     try:
         ref = registry.retag(args.name, **kwargs)
@@ -565,12 +578,14 @@ def cmd_drop(args) -> int:
     try:
         extra_tags = _parse_tags(args.tags) if args.tags else {}
         injected_as = _parse_tags(args.injected_as) if args.injected_as else {}
+        related = _parse_related(args.related) if args.related else []
     except ValueError as exc:
         return _err(str(exc))
     ref = registry.add(
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
         provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
+        group=args.group, related=related,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -834,6 +849,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--purpose", default="", help="what this secret is for")
     a.add_argument("--injected-as", default="",
                     help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
+    a.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
+    a.add_argument("--related", default="", help="comma-separated reference names")
     rm = rs.add_parser("rm", help="remove a reference")
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
@@ -890,6 +907,8 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--purpose", default="", help="what this secret is for")
     rt.add_argument("--injected-as", default="",
                      help="comma-separated env=target pairs, replaces the injected_as dict")
+    rt.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
+    rt.add_argument("--related", default="", help="comma-separated reference names, replaces the related list")
     rt.set_defaults(func=cmd_retag)
 
     ses = sub.add_parser("session", help="browser/login session storage (local-encrypted backend only)")
@@ -942,6 +961,8 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--purpose", default="", help="what this secret is for")
     dr.add_argument("--injected-as", default="",
                      help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
+    dr.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
+    dr.add_argument("--related", default="", help="comma-separated reference names")
     src = dr.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument("--value-file", help="read the value from this local file")
