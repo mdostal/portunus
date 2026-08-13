@@ -18,8 +18,13 @@ from .audit import AuditChain
 from .backend import BackendError, GcloudBackend, MockBackend
 from .localvault import LocalEncryptedBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
-from .registry import Registry
+from .registry import AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
+
+# Distinct exit codes so scripts can branch on the failure mode without
+# parsing stderr text. 1 is the pre-existing generic-error code (_err()).
+EXIT_NO_MATCH = 3
+EXIT_AMBIGUOUS = 4
 
 
 def _err(msg: str) -> int:
@@ -73,6 +78,42 @@ def cmd_reg(args) -> int:
         print(json.dumps({r.name: r.to_dict() for r in registry}, indent=2))
         return 0
     return _err(f"unknown reg action: {args.action}")
+
+
+def _parse_tags(raw: str) -> dict:
+    """Parse "k=v,k2=v2" into {"k": "v", "k2": "v2"}."""
+    tags = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise ValueError(f"invalid --tags entry (want k=v): {pair!r}")
+        k, v = pair.split("=", 1)
+        tags[k.strip()] = v.strip()
+    return tags
+
+
+def cmd_find(args) -> int:
+    """Find a reference by tags. Metadata-only -- never builds a Resolver or
+    touches a backend, since no value is ever fetched here."""
+    try:
+        partial_tags = _parse_tags(args.tags)
+    except ValueError as exc:
+        return _err(str(exc))
+    registry = Registry()
+    try:
+        ref = registry.resolve_by_tags(**partial_tags)
+    except AmbiguousMatch as exc:
+        _err(f"ambiguous match for {partial_tags!r}: {', '.join(exc.candidates)}")
+        return EXIT_AMBIGUOUS
+    except NoMatch:
+        _err(f"no reference matches tags: {partial_tags!r}")
+        return EXIT_NO_MATCH
+    print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
+          f"(provider={ref.provider}, project={ref.project}, env={ref.env}, "
+          f"scope={ref.scope}, kind={ref.kind}, tags={ref.tags}, state={ref.state})")
+    return 0
 
 
 def cmd_drop(args) -> int:
@@ -218,6 +259,11 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
+
+    fd = sub.add_parser("find", help="find a reference by tags (metadata only, never a value)")
+    fd.add_argument("--tags", required=True,
+                     help="comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
+    fd.set_defaults(func=cmd_find)
 
     dr = sub.add_parser(
         "drop",
