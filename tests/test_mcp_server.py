@@ -146,3 +146,39 @@ def test_portunus_bindings_show_single_project(home):
     })
     result = mcp_server.portunus_bindings_show("a")
     assert list(result.keys()) == ["a"]
+
+
+# --- story 03: discovery tool ------------------------------------------
+
+def _mock_gcloud_list(monkeypatch, secrets):
+    import json
+    from types import SimpleNamespace
+
+    def fake_run(cmd, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=json.dumps(secrets), stderr="")
+
+    monkeypatch.setattr("portunus.discover._default_runner", fake_run)
+    monkeypatch.setattr("portunus.discover.shutil.which", lambda name: "/bin/gcloud")
+
+
+def test_portunus_discover_diff_only(home, monkeypatch):
+    from portunus import mcp_server
+    _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
+    result = mcp_server.portunus_discover("demo")
+    assert result["already_registered"] == []
+    assert result["not_yet_registered"][0]["sm_name"] == "API_KEY"
+    assert "wif_configured" in result
+
+
+def test_portunus_discover_register(home, monkeypatch):
+    from portunus import mcp_server
+    _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
+    result = mcp_server.portunus_discover("demo", register=True)
+    assert result["registered"] == ["demo-api_key"]
+    assert result["conflicts"] == []
+
+
+def test_portunus_discover_no_backend_access():
+    from portunus import mcp_server
+    code = _no_backend_access(mcp_server.portunus_discover)
+    assert ".access(" not in code

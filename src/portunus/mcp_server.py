@@ -14,7 +14,8 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from .backend import load_gcp_bindings
-from .cli import _build_tree
+from .cli import _build_tree, _wif_configured
+from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import AmbiguousMatch, NoMatch, Registry
 
@@ -94,6 +95,41 @@ def portunus_bindings_show(project: str = "") -> dict:
             return {}
         bindings = {project: binding}
     return {p: {"account": b.account, "wif_audience": b.wif_audience} for p, b in bindings.items()}
+
+
+@mcp.tool()
+def portunus_discover(project: str, register: bool = False) -> dict:
+    """Read-only: list what already exists in a live GCP Secret Manager
+    project (names + labels + create-time only, never a value). With
+    register=True, writes not-yet-registered secrets as state=requested
+    placeholders (never overwrites an existing reference -- a naming
+    collision is reported, not silently replaced). Mirrors `portunus
+    discover [--register] --json` exactly -- one safety-reviewed
+    implementation, three entry points (CLI, UI, MCP)."""
+    registry = Registry()
+    try:
+        discovered = list_gcp_secrets(project)
+    except DiscoverError as exc:
+        return {"error": str(exc)}
+
+    if register:
+        report = register_discovered(registry, project, discovered)
+        return {
+            "registered": report.registered,
+            "conflicts": report.conflicts,
+            "already_registered": report.already_registered,
+            "wif_configured": _wif_configured(project),
+        }
+
+    already, not_yet = diff_against_registry(registry, project, discovered)
+    return {
+        "already_registered": already,
+        "not_yet_registered": [
+            {"sm_name": d.sm_name, "labels": d.labels, "create_time": d.create_time}
+            for d in not_yet
+        ],
+        "wif_configured": _wif_configured(project),
+    }
 
 
 def run_server() -> None:
