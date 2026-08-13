@@ -33,6 +33,7 @@ export default function VaultMap({
             {group.map((r) => (
               <button className="gallery-card" key={r.name} onClick={() => onSelect(r)}>
                 <span className="ref-name">{r.project || r.name}</span>
+                {r.description && <span className="card-desc">{r.description}</span>}
                 <div className="tags-row">
                   {r.env && <span className="chip">{r.env}</span>}
                   <StatePill state={r.state} />

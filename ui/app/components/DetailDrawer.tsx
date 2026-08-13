@@ -92,6 +92,27 @@ export default function DetailDrawer({
         ))}
       </div>
 
+      {(reference.description || reference.purpose || Object.keys(reference.injected_as || {}).length > 0) && (
+        <div className="metadata-block">
+          {reference.description && (
+            <p className="metadata-line">
+              <span className="k">description</span> {reference.description}
+            </p>
+          )}
+          {reference.purpose && (
+            <p className="metadata-line">
+              <span className="k">purpose</span> {reference.purpose}
+            </p>
+          )}
+          {Object.keys(reference.injected_as || {}).length > 0 && (
+            <p className="metadata-line">
+              <span className="k">injected_as</span>{" "}
+              {Object.entries(reference.injected_as).map(([env, target]) => `${env}=${target}`).join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+
       <InjectControls reference={reference} />
 
       {/* Rotate falls back to the add-secret human-entry path rather than a

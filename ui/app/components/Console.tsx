@@ -77,7 +77,10 @@ export default function Console({
         </div>
         {filtered.map((r) => (
           <button className="console-table-row" key={r.name} onClick={() => onSelect(r)}>
-            <span className="ref-name">{r.name}</span>
+            <span className="ref-cell">
+              <span className="ref-name">{r.name}</span>
+              {r.description && <span className="ref-desc">{r.description}</span>}
+            </span>
             <span>{r.provider || "—"}</span>
             <span>{r.project || "—"}</span>
             <span>{r.env || "—"}</span>
