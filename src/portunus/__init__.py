@@ -21,7 +21,7 @@ Public surface:
     LocalEncryptedBackend  ARCA, Stage 1 local-encrypted tier (default backend)
     GcloudBackend   ARCA, GCP Secret Manager backend (shells to gcloud; Stage 2+)
 """
-from .registry import Registry, Reference
+from .registry import Registry, Reference, NoMatch, AmbiguousMatch, RegistryLocked
 from .audit import AuditChain
 from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
 from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
@@ -33,6 +33,9 @@ __version__ = "0.1.0"
 __all__ = [
     "Registry",
     "Reference",
+    "NoMatch",
+    "AmbiguousMatch",
+    "RegistryLocked",
     "AuditChain",
     "SecretBackend",
     "MockBackend",
