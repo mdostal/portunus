@@ -1,0 +1,81 @@
+id: 07-closeout
+epic: portunus-vault-metadata-ui
+title: Build/smoke verification, CHANGELOG, version bump, README note
+status: shipped
+shipped_at: "2026-08-13T20:15:00Z"
+release_id: "v0.8.0"
+complexity: low
+methodology: classic
+depends_on:
+  - 01-cli-metadata-write-support
+  - 02-ui-types-and-retag-route
+  - 03-display-metadata
+  - 04-edit-metadata
+  - 05-discover-and-list-routes
+  - 06-project-explorer-panel
+
+description: |
+  Final full-suite pytest run + npm run build + static-asset copy + a fresh end-to-end live
+  smoke test of the UAT server (seed a temp PORTUNUS_HOME, exercise: view/edit metadata,
+  Project Explorer's list + discover + register against a stubbed gcloud runner, GCP-binding
+  indicator). README's "Standalone UI" section gains a one-line mention of the Project
+  Explorer tab. Version bump and CHANGELOG entry per this epic's version_bump field.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given `npm run build`, when run, then it completes cleanly and .next/static is copied to .next/standalone/.next/static"
+  - "Given a fresh server start against a seeded temp PORTUNUS_HOME, when smoke-tested, then metadata view/edit and the Project Explorer tab (list/discover/register/wif indicator) all work end to end"
+  - "Given README.md's Standalone UI section, when read, then it mentions the Project Explorer tab"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped version number in lockstep"
+  - "Given CHANGELOG.md, when read, then it has a new entry describing this epic's shipped UI capabilities"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest + npm run build + static-asset copy; fix any integration gaps found; update README/CHANGELOG; apply version bump.
+    agent: developer
+  - id: review
+    description: Confirm version lockstep and that the live smoke test actually exercised every new UI surface (not just a build-success check).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: Standalone UI section this story extends with a Project Explorer mention
+
+files_to_modify:
+  - file: README.md
+    change: Add a one-line Project Explorer mention to the Standalone UI section
+  - file: CHANGELOG.md
+    change: New entry for this epic
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Live smoke test required, not just build-success
+    rationale: "Established session convention (grill-caught gap in an earlier epic: a standalone build silently omitted static assets, only caught by an actual curl/screenshot, not a green build) -- this epic's closeout follows the same discipline"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- documentation/verification-only story."
+  - concern: audit-chain-integrity
+    action: "N/A -- documentation/verification-only story."
+
+risks:
+  - severity: low
+    description: A stale UAT server process from a prior session could still be bound to the smoke-test port
+    mitigation: Check for and stop any existing process on the UI's port before starting a fresh one, matching the established pattern from the original UAT standup
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata-ui/docs/design-discussion.md
+    relevant_excerpt: "Slice G -- Closeout"

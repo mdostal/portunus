@@ -1,0 +1,62 @@
+name: portunus-vault-metadata-ui
+title: Surface v0.7.0's Metadata, Discovery, and List Query in the Standalone UI
+description: >
+  Deepens portunus-vault-metadata (shipped v0.7.0) by making its new capabilities visible and
+  usable in the standalone UI, the user's primary UAT surface. Fixes a real prerequisite gap
+  found during research: the CLI itself couldn't write description/purpose/injected_as yet.
+  Explicitly scoped to this repo only -- no pantheon-v2 or other-repo/L2 work.
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [backend, cli, ui]
+  roster: [researcher, technical-writer]
+  per_tag_reasoning:
+    backend: "CLI flags + Registry.retag() extension (Slice A) are a hard prerequisite"
+    ui: "New Project Explorer tab, extended DetailDrawer form, new API routes"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1 converged after revision -- 1/1 finding resolved: H1 dict-shaped field UI convention)
+    scale: medium, H/V skipped per design-discussion.md Scale Assessment
+
+stories:
+  - id: 01-cli-metadata-write-support
+    title: reg add/drop --description/--purpose/--injected-as; Registry.retag() extended
+    complexity: medium
+    depends_on: []
+  - id: 02-ui-types-and-retag-route
+    title: PortunusReference gains metadata fields (both copies); /api/retag forwards them
+    complexity: low
+    depends_on: ["01-cli-metadata-write-support"]
+  - id: 03-display-metadata
+    title: Console/VaultMap/DetailDrawer show description/purpose/injected_as
+    complexity: low
+    depends_on: ["02-ui-types-and-retag-route"]
+  - id: 04-edit-metadata
+    title: DetailDrawer's Move form gains metadata fields
+    complexity: medium
+    depends_on: ["02-ui-types-and-retag-route"]
+  - id: 05-discover-and-list-routes
+    title: /api/discover (GET diff + POST register) and /api/list routes
+    complexity: medium
+    depends_on: ["01-cli-metadata-write-support"]
+  - id: 06-project-explorer-panel
+    title: New "Project Explorer" tab -- list + discover + GCP-binding presence indicator
+    complexity: high
+    depends_on: ["05-discover-and-list-routes"]
+  - id: 07-closeout
+    title: Build/smoke verification, CHANGELOG, version bump, README note
+    complexity: low
+    depends_on:
+      - "01-cli-metadata-write-support"
+      - "02-ui-types-and-retag-route"
+      - "03-display-metadata"
+      - "04-edit-metadata"
+      - "05-discover-and-list-routes"
+      - "06-project-explorer-panel"

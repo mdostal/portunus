@@ -37,3 +37,45 @@ def test_discover_register_writes_requested_state(home, monkeypatch, capsys):
     ref = Registry().require("demo-api_key")
     assert ref.state == "requested"
     assert ref.description == "billing"
+
+
+def test_discover_json_diff_only(home, monkeypatch, capsys):
+    _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
+    rc = main(["discover", "--provider", "gcp", "--project", "demo", "--json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    data = json.loads(out)
+    assert data["already_registered"] == []
+    assert data["not_yet_registered"][0]["sm_name"] == "API_KEY"
+    assert "wif_configured" in data
+
+
+def test_discover_json_register(home, monkeypatch, capsys):
+    _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
+    rc = main(["discover", "--provider", "gcp", "--project", "demo", "--register", "--json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    data = json.loads(out)
+    assert data["registered"] == ["demo-api_key"]
+    assert data["conflicts"] == []
+    assert data["already_registered"] == []
+
+
+def test_discover_json_wif_configured_true_when_binding_has_audience(home, monkeypatch, capsys):
+    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    save_gcp_bindings({"demo": GcpProjectBinding("demo", "//iam.googleapis.com/some/audience")})
+    _mock_gcloud_list(monkeypatch, [])
+    rc = main(["discover", "--provider", "gcp", "--project", "demo", "--json"])
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["wif_configured"] is True
+    assert "some/audience" not in out
+    assert "iam.googleapis.com" not in out
+
+
+def test_discover_json_wif_configured_false_with_no_binding(home, monkeypatch, capsys):
+    _mock_gcloud_list(monkeypatch, [])
+    rc = main(["discover", "--provider", "gcp", "--project", "demo", "--json"])
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["wif_configured"] is False

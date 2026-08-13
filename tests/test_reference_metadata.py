@@ -2,6 +2,7 @@
 import json
 
 from portunus import Registry, Reference
+from portunus.cli import main
 from portunus.registry import _STRUCTURED_TAG_FIELDS
 
 
@@ -61,3 +62,58 @@ def test_resolve_by_tags_does_not_match_on_description_or_purpose(home):
     from portunus.registry import NoMatch
     with pytest.raises(NoMatch):
         reg.resolve_by_tags(description="matches nothing")
+
+
+def test_cli_reg_add_accepts_description_and_purpose(home):
+    rc = main(["reg", "add", "x", "sm-x", "--description", "a key", "--purpose", "billing"])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.description == "a key"
+    assert ref.purpose == "billing"
+
+
+def test_cli_drop_accepts_description_purpose_and_injected_as(home, capsys):
+    value_file = home / "value.txt"
+    value_file.write_text("s3kr3t\n")
+    rc = main([
+        "drop", "x", "sm-x",
+        "--description", "a key",
+        "--injected-as", "prod=env:STRIPE_KEY,staging=file:.env.staging",
+        "--value-file", str(value_file),
+    ])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.description == "a key"
+    assert ref.injected_as == {"prod": "env:STRIPE_KEY", "staging": "file:.env.staging"}
+
+
+def test_registry_retag_updates_description_purpose_injected_as_only(home):
+    reg = Registry()
+    reg.add("x", "sm-x", provider="vercel", project="mdostal.com")
+    ref = reg.retag("x", description="new desc", purpose="new purpose",
+                     injected_as={"prod": "env:X"})
+    assert ref.description == "new desc"
+    assert ref.purpose == "new purpose"
+    assert ref.injected_as == {"prod": "env:X"}
+    assert ref.provider == "vercel"
+    assert ref.project == "mdostal.com"
+
+
+def test_registry_retag_metadata_fields_never_trigger_collision_check(home):
+    """description/purpose/injected_as are not in _STRUCTURED_TAG_FIELDS -- retagging
+    them on one reference must never raise AmbiguousMatch against another reference
+    that happens to share the same description text."""
+    reg = Registry()
+    reg.add("a", "sm-a", description="shared text")
+    reg.add("b", "sm-b")
+    ref = reg.retag("b", description="shared text")
+    assert ref.description == "shared text"
+
+
+def test_cli_retag_injected_as_flag_parses_colon_containing_values(home):
+    reg = Registry()
+    reg.add("x", "sm-x")
+    rc = main(["retag", "x", "--injected-as", "prod=env:STRIPE_KEY"])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.injected_as == {"prod": "env:STRIPE_KEY"}
