@@ -59,6 +59,13 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   targeting, not automatic multi-vault federation — that's still out of scope). Implemented as
   a save/set/restore of the env var around dispatch in `cli.py::main()`, not a threaded
   parameter, so every `Registry()`/`AuditChain()` construction site is covered automatically.
+- **Session storage** (`localvault.py`, `SESSION_SCHEMA = "portunus.session.v1"`) — Arca can
+  persist a Playwright-style `storageState` or other JSON-serializable session object under a
+  `session:<site>:<account>` namespace (`LocalEncryptedBackend.store_session()`), with TTL and
+  rotation metadata. `load_session()` fails closed with `SessionExpired` once the TTL elapses
+  (`allow_expired=True` opts out for metadata-only callers). `inspect_session()`/
+  `list_sessions()` return namespace/TTL/rotation/`expired` metadata only, never the session
+  payload. No CLI/UI exposure exists yet — library API only.
 
 ## Key paths
 

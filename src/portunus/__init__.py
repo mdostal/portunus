@@ -28,7 +28,7 @@ from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "Registry",
