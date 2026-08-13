@@ -1,0 +1,79 @@
+id: 03-ask-agent-requests
+epic: portunus-agent-ops-federation
+title: portunus ask routes add/rotate intents to Registry.request()
+status: completed
+complexity: medium
+methodology: tdd
+depends_on: ["01-registry-request-and-retag", "02-intent-kind-classification"]
+
+description: |
+  Wires intent_kind (story 02) into cmd_ask: a 'fetch' intent behaves exactly as it does today
+  (unchanged); an 'add' or 'rotate' intent calls Registry.request() instead of resolve_by_tags,
+  writes a semantic_op audit entry ("requested:add"/"requested:rotate" -- never the raw request
+  text, matching story 04's original semantic_op convention), and prints a human-actionable
+  notice. The agent never supplies or sees a value at any point in this flow -- fulfillment
+  still requires a human running portunus drop or using the UI's add-secret form.
+
+acceptance_criteria:
+  - "Given a fetch-intent request, when portunus ask runs, then behavior is byte-identical to before this story (regression, not new)"
+  - "Given an add-intent request naming new tags, when portunus ask runs, then a state=requested placeholder reference is created via Registry.request() and a semantic_op audit entry records 'requested:add' (never the raw request text)"
+  - "Given a rotate-intent request naming an existing reference's tags, when portunus ask runs, then the existing reference is flagged for rotation (state or a rotation marker -- implementer's call, but must not touch the existing value) and a semantic_op audit entry records 'requested:rotate'"
+  - "Given a rotate-intent request whose tags match no existing reference, when portunus ask runs, then it fails closed (NoMatch/AmbiguousMatch) exactly like a fetch would -- rotate only ever applies to something that already exists"
+  - "Given any add/rotate request outcome, when the audit chain is inspected, then no value ever appears, and portunus verify still passes"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm cmd_ask's current control flow in cli.py and Registry.request()'s exact signature from story 01.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for fetch-unchanged regression, add-creates-placeholder, rotate-flags-existing, rotate-no-match-fails-closed, and audit-entry-never-leaks-text.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Wire intent_kind into cmd_ask's routing; implement the rotate-flag mechanism on an existing reference (reuse Registry.retag() from story 01 if it lands first, or a minimal rotation marker otherwise).
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the fetch path is provably unchanged (diff cmd_ask's fetch branch against pre-story behavior) and no value ever enters this code path.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_ask, the function this story extends
+    - path: .claude/skills/portunus-ask/SKILL.md
+      purpose: agent-facing skill doc that needs an add/rotate usage note once this ships
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Route intent_kind add/rotate to Registry.request()/rotation-flag instead of resolve_by_tags+inject
+  - file: .claude/skills/portunus-ask/SKILL.md
+    change: Document the new add/rotate request capability and the "agent never supplies a value" invariant explicitly
+  - file: tests/test_cli_ask.py
+    change: Extend with add/rotate routing tests
+
+design_decisions:
+  - decision: Rotate-intent only applies to an already-existing reference; a rotate request for unknown tags fails closed like a fetch
+    rationale: "'Rotate' inherently means 'this already exists and needs a new value' -- there's nothing to rotate if resolve_by_tags can't find it first"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Core to this story -- the entire point is proving an agent can request add/rotate without ever touching a value. Explicit test asserts no value-shaped content anywhere in this code path (there is none to leak, but the invariant is tested, not assumed)."
+  - concern: audit-chain-integrity
+    action: "New semantic_op result strings (requested:add, requested:rotate). portunus verify test against a chain including them is required."
+
+risks:
+  - severity: high
+    description: fetch-path regression -- wiring in the new routing accidentally changes existing fetch/inject behavior
+    mitigation: Explicit fetch-unchanged regression test runs first in the test-spec step, before any add/rotate tests are written
+
+references:
+  - path: .pHive/epics/portunus-agent-ops-federation/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- portunus ask routes add/rotate intents to Registry.request() instead of resolve_by_tags"

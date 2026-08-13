@@ -1,0 +1,73 @@
+id: 02-intent-kind-classification
+epic: portunus-agent-ops-federation
+title: parse_intent gains intent_kind (fetch/add/rotate), fail-closed to fetch
+status: completed
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  Extends parse_intent()'s contract with an explicit intent_kind classification (fetch | add |
+  rotate), inferred from a narrow, explicit keyword set ("add"/"create"/"new secret" -> add;
+  "rotate"/"roll"/"regenerate" -> rotate; absence of either -> fetch, the existing safe
+  default). False-negative-to-fetch is the accepted failure mode (per design-discussion §6.3);
+  false-positive-to-add/rotate is what must stay rare, so the keyword match requires a whole-word
+  hit, same discipline as the existing tag-value matching.
+
+acceptance_criteria:
+  - "Given a request containing no add/rotate keywords, when parse_intent runs, then intent_kind is 'fetch' (unchanged default)"
+  - "Given a request containing an add keyword ('add', 'create', 'new secret'), when parse_intent runs, then intent_kind is 'add'"
+  - "Given a request containing a rotate keyword ('rotate', 'roll', 'regenerate'), when parse_intent runs, then intent_kind is 'rotate'"
+  - "Given a request containing both an add and a rotate keyword, when parse_intent runs, then it raises AmbiguousIntent rather than picking one"
+  - "Given the existing resolve-only/inject call sites in cli.py's cmd_ask, when this story ships, then they still work unchanged (intent_kind defaults to 'fetch' for all existing behavior)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm parse_intent's current return shape and every call site in cli.py that consumes it.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for intent_kind classification (fetch default, add, rotate, conflicting-keywords ambiguity).
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Extend parse_intent to also return intent_kind; update its callers to accept the new shape without changing existing fetch behavior.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the keyword match is whole-word (not substring) and that ambiguous/conflicting keywords fail closed rather than picking the first match.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/intent.py
+      purpose: parse_intent() and AmbiguousIntent this story extends
+
+files_to_modify:
+  - file: src/portunus/intent.py
+    change: Add intent_kind classification alongside the existing tag-set output
+  - file: tests/test_intent.py
+    change: Extend with intent_kind tests
+
+design_decisions:
+  - decision: False-negative-to-fetch is the accepted failure mode; false-positive-to-add/rotate must stay rare
+    rationale: "Grill H1: fetch is the existing, already-safe path -- misclassifying an add/rotate request as fetch just means nothing new happens, not a wrong-action safety bug"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- classification only produces a kind label + tag dict, never touches a value."
+
+risks:
+  - severity: high
+    description: A fetch request gets misclassified as add/rotate (false positive), triggering an unwanted request-creation side effect
+    mitigation: Whole-word keyword matching only, narrow keyword list, explicit conflicting-keyword test
+
+references:
+  - path: .pHive/epics/portunus-agent-ops-federation/docs/design-discussion.md
+    relevant_excerpt: "(Grill H1) false-negative-to-fetch is the safe failure mode... Ship narrow, widen from real usage later."

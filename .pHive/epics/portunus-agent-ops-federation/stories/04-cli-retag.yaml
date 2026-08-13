@@ -1,0 +1,70 @@
+id: 04-cli-retag
+epic: portunus-agent-ops-federation
+title: portunus retag subcommand
+status: completed
+complexity: low
+methodology: tdd
+depends_on: ["01-registry-request-and-retag"]
+
+description: |
+  Thin CLI wrapper over Registry.retag() (story 01): `portunus retag <name> --provider ...
+  --project ... --env ... --tags ...`. Metadata-only, never touches a value. This is also the
+  command the UI's Move action (story 06) shells out to, same pattern as every other UI write.
+
+acceptance_criteria:
+  - "Given an existing reference and new non-colliding tags, when portunus retag runs, then the reference's tags update and the command prints the new tag set (metadata only)"
+  - "Given new tags that would collide with a different existing reference, when portunus retag runs, then it fails with a clear error naming the colliding reference, and exits non-zero with a distinct code from find/inject's existing NoMatch/AmbiguousMatch codes"
+  - "Given a retag audit entry, when written, then it uses the 'retag' action string (per design-discussion Open Question 2) and portunus verify passes on a chain including it"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Registry.retag()'s exact signature/exceptions from story 01, and the find/inject exit-code conventions to stay consistent with (EXIT_NO_MATCH=3, EXIT_AMBIGUOUS=4).
+    agent: researcher
+  - id: test-spec
+    description: Write failing CLI integration tests for success, collision, and audit-entry cases.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add the retag subcommand and its audit entry.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm exit codes are consistent with find/inject's existing convention, not a new ad-hoc scheme.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: EXIT_NO_MATCH/EXIT_AMBIGUOUS convention and subcommand-wiring pattern this story follows
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add retag subcommand
+  - file: tests/test_cli_retag.py
+    change: New test file
+
+design_decisions:
+  - decision: New "retag" audit action string, not a reuse of adapter_resolution/semantic_op
+    rationale: "Design-discussion Open Question 2: a distinct, auditable metadata change, not a value-adjacent event"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- metadata-only command, same as find."
+  - concern: audit-chain-integrity
+    action: "New 'retag' action string. portunus verify test against a chain including it required."
+
+risks:
+  - severity: low
+    description: Exit code collision with existing subcommands
+    mitigation: Reuse EXIT_NO_MATCH/EXIT_AMBIGUOUS constants already defined in cli.py rather than inventing new codes
+
+references:
+  - path: .pHive/epics/portunus-agent-ops-federation/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- new portunus retag <name> ... CLI subcommand"

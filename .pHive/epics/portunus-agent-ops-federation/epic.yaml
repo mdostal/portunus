@@ -1,0 +1,57 @@
+name: portunus-agent-ops-federation
+title: Agent Requests, Move/Re-tag, Explicit Vault Targeting
+description: >
+  Deepens portunus-standalone-core along three gaps from its own traceability check: agent-
+  initiated add/rotate requests via portunus ask (request only, never value-supplying),
+  a move/re-tag action for references, and an explicit --home vault override for cross-repo
+  use. Cross-vault federated search is explicitly out of scope for this pass.
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [backend, cli, ui, security]
+  roster: [researcher, technical-writer, tpm]
+  per_tag_reasoning:
+    backend: "Registry/intent.py extensions"
+    ui: "requested-state display + move action"
+    security: "agent-request boundary must never become a value-supplying path"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1 converged after revision -- 3/3 findings resolved)
+    scale: medium, H/V skipped per design-discussion.md Scale Assessment
+
+stories:
+  - id: 01-registry-request-and-retag
+    title: Registry.request() and Registry.retag()
+    complexity: medium
+    depends_on: []
+  - id: 02-intent-kind-classification
+    title: parse_intent gains intent_kind (fetch/add/rotate), fail-closed to fetch
+    complexity: medium
+    depends_on: []
+  - id: 03-ask-agent-requests
+    title: portunus ask routes add/rotate intents to Registry.request()
+    complexity: medium
+    depends_on: ["01-registry-request-and-retag", "02-intent-kind-classification"]
+  - id: 04-cli-retag
+    title: portunus retag subcommand
+    complexity: low
+    depends_on: ["01-registry-request-and-retag"]
+  - id: 05-home-override-flag
+    title: --home global CLI flag for explicit vault targeting
+    complexity: low
+    depends_on: []
+  - id: 06-ui-requested-and-move
+    title: UI requested-state display + Move action
+    complexity: medium
+    depends_on: ["01-registry-request-and-retag", "03-ask-agent-requests", "04-cli-retag"]
+  - id: 07-closeout
+    title: CONTEXT.md update, full suite verify
+    complexity: low
+    depends_on: ["01-registry-request-and-retag", "02-intent-kind-classification", "03-ask-agent-requests", "04-cli-retag", "05-home-override-flag", "06-ui-requested-and-move"]

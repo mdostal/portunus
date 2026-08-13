@@ -86,6 +86,10 @@ export default function Home() {
               setRotateDraft(ref);
               setSelected(null);
             }}
+            onMoved={() => {
+              setSelected(null);
+              refresh();
+            }}
           />
         )}
       </div>

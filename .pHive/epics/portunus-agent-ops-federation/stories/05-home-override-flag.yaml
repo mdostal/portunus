@@ -1,0 +1,89 @@
+id: 05-home-override-flag
+epic: portunus-agent-ops-federation
+title: --home global CLI flag for explicit vault targeting
+status: completed
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  A `--home <path>` global flag on the portunus CLI that overrides PORTUNUS_HOME for that one
+  invocation, threaded through paths.home() as an optional override parameter. Explicit,
+  per-invocation vault selection -- not automatic multi-vault federated search (out of scope,
+  see design-discussion.md "Scope decision for this pass"). Lowest-risk slice: no new registry
+  format, no new state, purely a resolution-order change.
+
+acceptance_criteria:
+  - "Given portunus --home /path/to/other/vault reg show, when run, then it reads/writes that vault instead of PORTUNUS_HOME"
+  - "Given no --home flag, when any command runs, then behavior is byte-identical to today (PORTUNUS_HOME -> DOSTAL_SECRETS_HOME -> ~/.portunus, unchanged precedence)"
+  - "Given --home is combined with an existing PORTUNUS_HOME env var, when a command runs, then --home wins (explicit invocation-level override beats ambient environment)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm paths.home()'s current signature and every _build()/AuditChain()/Registry() call site that would need the override threaded through.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for --home overriding PORTUNUS_HOME, and for unchanged behavior when --home is absent.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add an optional override param to paths.home(), a --home top-level argparse argument, and thread it through cli.py's _build() and every direct Registry()/AuditChain() construction site.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm every CLI subcommand (not just reg/find) respects --home -- grep for any Registry()/AuditChain() call that bypasses the override.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/paths.py
+      purpose: home() resolution this story extends with an override param
+    - path: src/portunus/cli.py
+      purpose: _build() and every subcommand handler that constructs Registry/AuditChain directly
+
+files_to_modify:
+  - file: src/portunus/paths.py
+    change: home() gains an optional override parameter
+  - file: src/portunus/cli.py
+    change: Add top-level --home argument; thread through _build() and any direct Registry()/AuditChain() construction
+  - file: tests/test_cli_home_override.py
+    change: New test file
+
+design_decisions:
+  - decision: Explicit per-invocation override only, no automatic cross-vault search
+    rationale: "Design-discussion 'Scope decision for this pass': federated multi-vault search is a real Large-scope epic on its own; this slice unlocks explicit cross-repo targeting cheaply without that scope"
+  - decision: >
+      Implemented as a save/set/restore of the PORTUNUS_HOME env var around
+      args.func(args) dispatch in main(), NOT as an override parameter threaded
+      through paths.home()/_build()/every Registry()/AuditChain() call site (the
+      originally planned approach in this story's description).
+    rationale: >
+      paths.home() already reads PORTUNUS_HOME fresh on every call with no
+      caching, so mutating the env var for the duration of one invocation (and
+      restoring it in a finally block) achieves the identical effect while
+      structurally eliminating this story's own top risk: "a subcommand handler
+      constructs Registry()/AuditChain() directly instead of through _build(),
+      silently bypassing --home." There is no per-site threading to forget --
+      every construction site, present or future, is covered automatically.
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- pure path-resolution change, no value handling."
+  - concern: documentation
+    action: "README gets a --home example (tracked in story 07 closeout)."
+
+risks:
+  - severity: low
+    description: A subcommand handler constructs Registry()/AuditChain() directly instead of through _build(), silently bypassing --home
+    mitigation: Review step explicitly greps for every construction site, not just the obvious ones
+
+references:
+  - path: .pHive/epics/portunus-agent-ops-federation/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- Explicit vault targeting... paths.home() gains an optional override param threaded through _build()"

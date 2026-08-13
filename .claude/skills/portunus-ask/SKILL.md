@@ -24,8 +24,26 @@ value.
 
 - You already know the exact reference name — use `portunus inject --tags <exact tags>` or
   `portunus resolve` directly; `ask` exists for when you don't.
-- You need to *add* or *rotate* a secret — that stays human-only via `portunus drop` or the
-  UI's add-secret form, never through this skill.
+
+## Requesting an add or rotate (you still never see the value)
+
+`ask` also recognizes add/rotate language ("add", "create", "new secret" / "rotate", "roll",
+"regenerate") and routes to a *request*, not a fulfillment:
+
+```bash
+# Ask for a brand-new secret to be added -- free text alone can't safely name/tag
+# something new, so this requires explicit --name and --tags:
+portunus ask "add a new secret" --name gh-ci-token --tags provider=github,project=portunus,env=prod
+
+# Ask for an existing secret to be rotated -- this only flags it (metadata only,
+# never touches the current value):
+portunus ask "rotate the vercel secret for mdostal.com in prod"
+```
+
+Both are requests, not actions you complete. An "add" request creates a `state=requested`
+placeholder that a human must fulfill via `portunus drop`. A "rotate" request flags the
+existing reference; a human performs the actual rotation. You never supply, generate, or see a
+value at any point in either flow.
 
 ## Usage
 

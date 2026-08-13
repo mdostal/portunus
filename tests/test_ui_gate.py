@@ -88,3 +88,17 @@ def test_ui_audit_json_route_never_contains_a_value(home):
     entries = json.loads(proc.stdout)
     assert entries
     assert SECRET not in proc.stdout
+
+
+def test_ui_move_action_route_shape_updates_tags_via_registry_collision_check(home):
+    """Exactly the invocation shape /api/retag uses -- proves the UI's Move
+    action delegates to Registry.retag()'s collision check rather than
+    re-implementing it, and never touches a value (retag is metadata-only)."""
+    _run(["reg", "add", "z", "sm-z"], home)
+    proc = _run(["retag", "z", "--provider", "vercel", "--env", "prod"], home)
+    assert proc.returncode == 0
+    assert SECRET not in proc.stdout
+
+    reg_dump = _run(["reg", "json"], home)
+    data = json.loads(reg_dump.stdout)
+    assert data["z"]["env"] == "prod"

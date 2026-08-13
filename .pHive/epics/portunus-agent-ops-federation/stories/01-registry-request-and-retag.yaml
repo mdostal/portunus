@@ -1,0 +1,74 @@
+id: 01-registry-request-and-retag
+epic: portunus-agent-ops-federation
+title: Registry.request() and Registry.retag()
+status: completed
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  Foundation for both agent-requests (Slice A) and move/re-tag (Slice B). Add "requested" to
+  VALID_STATES (fail-closed like dropped/revoked -- never injectable). Registry.request(name,
+  tags, kind) creates a value-less placeholder reference in state=requested. Registry.retag(name,
+  **new_tags) updates provider/project/env/tags in place through the existing write lock,
+  rejecting any update that would collide with a different existing reference's tag combination
+  (reuses resolve_by_tags's ambiguity-checking logic rather than duplicating it).
+
+acceptance_criteria:
+  - "Given Registry.request() is called with a name and tags, when it completes, then a Reference exists in state=requested with no value stored anywhere"
+  - "Given a requested reference, when check_injectable (Broker) is called against it, then it fails closed exactly like dropped/revoked"
+  - "Given Registry.retag() changes a reference's tags to a combination that does not collide with any other reference, when called, then the reference's tags update in place and its name/sm_name/state are unchanged"
+  - "Given Registry.retag() would produce a tag combination that already resolves to a different existing reference, when called, then it raises AmbiguousMatch and makes no change"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm VALID_STATES, the _locked() write-lock pattern, and resolve_by_tags's matching logic in registry.py to reuse, not duplicate.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for request() (placeholder creation, non-injectable) and retag() (in-place update, collision rejection).
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement request() and retag() on Registry; add "requested" to VALID_STATES.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm retag's collision check reuses resolve_by_tags's exact-match logic (no separate, potentially-inconsistent matcher).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Registry class and VALID_STATES this story extends directly
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: Add "requested" to VALID_STATES; add Registry.request(), Registry.retag()
+  - file: tests/test_registry_tags.py
+    change: Extend with request()/retag() tests (or a new tests/test_registry_request_retag.py)
+
+design_decisions:
+  - decision: retag() reuses resolve_by_tags's exact-match logic for collision detection
+    rationale: "Design-discussion §4 risk: retag colliding two references into the same tag combination silently is the highest risk in this story -- one matcher implementation, not two"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- no value-handling code introduced (metadata/placeholder only)."
+  - concern: audit-chain-integrity
+    action: "N/A for this story -- audit entries for request()/retag() usage land in stories 03/04 where they're actually invoked from CLI paths."
+
+risks:
+  - severity: medium
+    description: retag() collision check has a gap the exact resolve_by_tags matcher doesn't cover (e.g. comparing against the reference's own pre-update tags)
+    mitigation: Test explicitly excludes the reference being retagged from its own collision check, and includes a test for retagging to identical-to-self (must succeed, not collide with itself)
+
+references:
+  - path: .pHive/epics/portunus-agent-ops-federation/docs/design-discussion.md
+    relevant_excerpt: "Slice A / Slice B -- Registry.request() and Registry.retag()"
