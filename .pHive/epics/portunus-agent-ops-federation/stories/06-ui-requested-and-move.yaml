@@ -1,0 +1,84 @@
+id: 06-ui-requested-and-move
+epic: portunus-agent-ops-federation
+title: UI requested-state display + Move action
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: ["01-registry-request-and-retag", "03-ask-agent-requests", "04-cli-retag"]
+
+description: |
+  Incremental addition to the already-shipped, already-approved UI (Console/Vault Map/
+  DetailDrawer from portunus-standalone-core) -- no new /design delegation needed, this reuses
+  the existing visual language (StatePill, chip, drawer patterns) rather than introducing a new
+  screen. Two additions: (1) a "requested" state pill (StatePill already takes a state string;
+  needs a color mapping for the new state) so agent-initiated requests (story 03) are visible
+  in Console/Vault Map, and (2) a Move action in DetailDrawer that opens a small inline re-tag
+  form, backed by a new /api/retag route shelling out to `portunus retag` (story 04) -- same
+  zero-gating-logic-in-TypeScript pattern as every other UI write.
+
+acceptance_criteria:
+  - "Given a reference in state=requested, when viewed in Console or Vault Map, then it shows a distinct 'requested' pill (not confused with enabled/locked/dropped/revoked)"
+  - "Given the DetailDrawer's Move action, when submitted with new tags, then it POSTs to /api/retag which shells out to `portunus retag` (never reimplements the collision check in TypeScript)"
+  - "Given a Move submission that would collide with another reference, when it completes, then the UI surfaces the CLI's error message (naming the colliding reference) rather than a generic failure"
+  - "Given any Move action, when it completes, then it is recorded via the 'retag' audit entry the CLI itself writes (same double-log-avoidance decision as story 06 of the prior epic)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm StatePill's current state-to-class mapping and the existing /api/inject route's pattern (story 06 of portunus-standalone-core) to mirror for /api/retag.
+    agent: researcher
+  - id: test-spec
+    description: Write failing backend integration tests for /api/retag (success, collision-error-surfaced, never bypasses the CLI).
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add the 'requested' state color to StatePill/globals.css, the Move action UI (DetailDrawer + a small form), and the /api/retag route.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm /api/retag shells out to the CLI exactly like every other write route -- no re-implemented collision logic in TypeScript.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/StatePill.tsx
+      purpose: state-to-color mapping this story extends with "requested"
+    - path: ui/app/api/inject/route.ts
+      purpose: existing subprocess-dispatch pattern to mirror for the new /api/retag route
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: where the Move action is added, alongside the existing Rotate button
+
+files_to_modify:
+  - file: ui/app/globals.css
+    change: Add .state-requested color token (light+dark, per the existing pattern)
+  - file: ui/app/api/retag/route.ts
+    change: New route -- shells out to `portunus retag`
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Add a Move action (inline re-tag form)
+  - file: tests/test_ui_gate.py
+    change: Extend with a subprocess-level test for the retag invocation shape
+
+design_decisions:
+  - decision: No new /design delegation for this story
+    rationale: "Incremental addition to already-approved UI (vault-blueprint.html), reusing existing visual language -- not a new screen or information architecture"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- retag never touches a value, same as find/reg show."
+  - concern: audit-chain-integrity
+    action: "Reuses the 'retag' action from story 04 -- no new entry type, but new instances via the UI must still pass portunus verify."
+
+risks:
+  - severity: low
+    description: /api/retag reimplements collision-checking logic instead of delegating to the CLI
+    mitigation: Review step explicitly checks for this, mirroring the prior epic's Risk #3/#5 pattern
+
+references:
+  - path: .pHive/epics/portunus-standalone-core/stories/06-ui-v1.yaml
+    relevant_excerpt: "Zero gating logic duplicated in TypeScript: every API route spawns the exact same portunus console script"

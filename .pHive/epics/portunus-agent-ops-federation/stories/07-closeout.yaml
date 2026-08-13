@@ -1,0 +1,69 @@
+id: 07-closeout
+epic: portunus-agent-ops-federation
+title: CONTEXT.md update, full suite verify
+status: pending
+complexity: low
+methodology: classic
+depends_on: ["01-registry-request-and-retag", "02-intent-kind-classification", "03-ask-agent-requests", "04-cli-retag", "05-home-override-flag", "06-ui-requested-and-move"]
+
+description: |
+  Epic closeout. Updates CONTEXT.md's Terminology for the vocabulary this epic introduces
+  (requested state, retag, intent_kind, --home override -- per Grill C1), adds a README
+  section for retag/--home, and runs the full test suite once more to confirm no interaction
+  issues between the six prior stories.
+
+acceptance_criteria:
+  - "Given the epic's shipped code, when CONTEXT.md is read, then requested state, retag, intent_kind, and --home are defined"
+  - "Given README.md, when read, then it documents portunus retag and --home usage"
+  - "Given the full pytest suite, when run, then all tests (existing + new) pass together"
+
+methodology: classic
+steps:
+  - id: research
+    description: Read the final shipped state of stories 01-06.
+    agent: researcher
+  - id: implement
+    description: Update CONTEXT.md and README.md.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Run the full suite once more.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no vocabulary from this epic is left undocumented.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: Glossary this story updates
+
+files_to_modify:
+  - file: .pHive/CONTEXT.md
+    change: Add Terminology entries for requested state, retag, intent_kind, --home
+  - file: README.md
+    change: Add retag/--home usage examples
+
+design_decisions:
+  - decision: No full-chain audit test beyond what stories 03/04 already add
+    rationale: "Unlike the prior epic's closeout, this epic doesn't introduce entry types that interact in a new combined chain -- retag/semantic_op are independent action strings, already covered per-story"
+
+cross_cutting:
+  - concern: documentation
+    action: "This story is the documentation cross-cutting concern's discharge point for the epic."
+
+risks:
+  - severity: low
+    description: None significant -- pure bookkeeping closeout
+    mitigation: n/a
+
+references:
+  - path: .pHive/CONTEXT.md
+    relevant_excerpt: "Update triggers: A new domain term enters the codebase... Update CONTEXT.md."
