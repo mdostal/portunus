@@ -60,6 +60,9 @@ class Reference:
     project: str = ""    # e.g. a project/site slug such as "mdostal.com"
     env: str = ""        # e.g. "prod" | "staging" | "dev"
     tags: dict = field(default_factory=dict)  # open, forward-compat key/value tags
+    description: str = ""  # what this secret is, e.g. "Stripe billing API key"
+    purpose: str = ""      # what it's for, e.g. "Charges customers for subscriptions"
+    injected_as: dict = field(default_factory=dict)  # {env_name: "env:VAR" | "file:path"}
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -149,6 +152,9 @@ class Registry:
         provider: str = "",
         env: str = "",
         tags: Optional[dict] = None,
+        description: str = "",
+        purpose: str = "",
+        injected_as: Optional[dict] = None,
     ) -> Reference:
         """Register (or overwrite) a reference. Value is never accepted here."""
         if state not in VALID_STATES:
@@ -159,6 +165,8 @@ class Registry:
                 name=name, sm_name=sm_name, scope=scope, kind=kind,
                 state=state, approval=approval, sm_path=sm_path,
                 provider=provider, project=project, env=env, tags=dict(tags or {}),
+                description=description, purpose=purpose,
+                injected_as=dict(injected_as or {}),
             )
             self._data[name] = ref
         return ref
