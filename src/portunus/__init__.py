@@ -27,6 +27,17 @@ from .backend import SecretBackend, MockBackend, GcloudBackend, BackendError
 from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
 from .broker import Broker, NotInjectable, ApprovalRequired
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
+from .auth import (
+    AuthError,
+    OIDCToken,
+    OIDCTokenSource,
+    EnvOIDCTokenSource,
+    GCPAccessToken,
+    AWSSessionCredentials,
+    GCPWorkloadIdentityAuth,
+    AWSWebIdentityAuth,
+    assert_no_long_lived_cloud_keys,
+)
 
 __version__ = "0.6.0"
 
@@ -49,5 +60,14 @@ __all__ = [
     "Resolver",
     "UnknownReference",
     "PLACEHOLDER_RE",
+    "AuthError",
+    "OIDCToken",
+    "OIDCTokenSource",
+    "EnvOIDCTokenSource",
+    "GCPAccessToken",
+    "AWSSessionCredentials",
+    "GCPWorkloadIdentityAuth",
+    "AWSWebIdentityAuth",
+    "assert_no_long_lived_cloud_keys",
     "__version__",
 ]
