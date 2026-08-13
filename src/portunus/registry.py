@@ -20,8 +20,9 @@ from typing import Dict, Iterator, List, Optional
 from .paths import home
 
 # Lifecycle states, mirroring bin/secrets. "enabled"/"locked" are injectable;
-# "dropped"/"revoked" fail closed.
-VALID_STATES = ("enabled", "locked", "dropped", "revoked")
+# "dropped"/"revoked"/"requested" fail closed. "requested" is an agent-initiated
+# placeholder (no value stored yet) -- see Registry.request().
+VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested")
 
 # Tag keys resolved against Reference's own fields; anything else is looked
 # up in the open `tags` dict. Keep in sync with Reference's structured fields.
@@ -199,6 +200,79 @@ class Registry:
                     ref.tags = new_tags
                     migrated += 1
         return migrated
+
+    def request(
+        self,
+        name: str,
+        sm_name: str = "",
+        *,
+        provider: str = "",
+        project: str = "",
+        env: str = "",
+        tags: Optional[dict] = None,
+    ) -> Reference:
+        """Create a value-less placeholder reference in state=requested.
+
+        This is an agent-initiated ASK for a secret to be added -- never a
+        way to supply one. No value is stored anywhere; state=requested
+        fails closed via Broker.check_injectable exactly like dropped/
+        revoked, so a placeholder can never accidentally become injectable
+        on its own.
+        """
+        with self._locked():
+            ref = Reference(
+                name=name, sm_name=sm_name, state="requested",
+                provider=provider, project=project, env=env, tags=dict(tags or {}),
+            )
+            self._data[name] = ref
+        return ref
+
+    def retag(
+        self,
+        name: str,
+        *,
+        provider: Optional[str] = None,
+        project: Optional[str] = None,
+        env: Optional[str] = None,
+        tags: Optional[dict] = None,
+    ) -> Reference:
+        """Update a reference's provider/project/env/tags in place.
+
+        Only fields explicitly passed (non-None) change. Rejects any update
+        whose resulting tag combination would collide with a DIFFERENT
+        existing reference -- reuses matches_tag(), the same exact-match
+        logic resolve_by_tags() uses, so there is one collision definition,
+        not two. Retagging to a reference's own current tags always
+        succeeds (never collides with itself).
+        """
+        with self._locked():
+            ref = self.require(name)
+            new_provider = provider if provider is not None else ref.provider
+            new_project = project if project is not None else ref.project
+            new_env = env if env is not None else ref.env
+            new_tags_dict = tags if tags is not None else ref.tags
+
+            full_tags: Dict[str, str] = {}
+            for field_name, val in (
+                ("provider", new_provider), ("project", new_project), ("env", new_env),
+            ):
+                if val:
+                    full_tags[field_name] = val
+            full_tags.update(new_tags_dict)
+
+            colliding = [
+                other.name for other in self._data.values()
+                if other.name != name and full_tags
+                and all(other.matches_tag(k, v) for k, v in full_tags.items())
+            ]
+            if colliding:
+                raise AmbiguousMatch(sorted(colliding + [name]))
+
+            ref.provider = new_provider
+            ref.project = new_project
+            ref.env = new_env
+            ref.tags = dict(new_tags_dict)
+        return ref
 
     # --- lookup ----------------------------------------------------------
     def get(self, name: str) -> Optional[Reference]:
