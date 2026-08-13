@@ -1,0 +1,32 @@
+name: portunus-l2-plugin-lifecycle
+title: L2 Plugin Lifecycle — Health Endpoint + Standalone Service Mode
+description: >
+  Scope 1 of 2 (this repo only): makes Portunus's UI runnable as a real, host-supervisable
+  service per pantheon-v2's actual L2 contract (researched directly) -- /api/health, a
+  capabilities list, and Next.js standalone output for a fixed supervisable entrypoint.
+  Scope 2 (registering these facts in pantheon-v2's shared manifests) is a separate PR against
+  that repo, presented to the operator rather than auto-merged.
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [ui, infra]
+  roster: [researcher, technical-writer]
+  per_tag_reasoning:
+    infra: "next.config.mjs build-mode change + a new trivial route"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1, 1 finding resolved -- static-asset copying verification gap)
+    scale: small, design-discussion only
+
+stories:
+  - id: 01-health-endpoint-and-standalone
+    title: /api/health, capabilities list, Next.js standalone output
+    complexity: low
+    depends_on: []

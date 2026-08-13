@@ -1,0 +1,82 @@
+id: 01-health-endpoint-and-standalone
+epic: portunus-l2-plugin-lifecycle
+title: /api/health, capabilities list, Next.js standalone output
+status: completed
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  Makes the already-shipped UI runnable as a real, host-supervisable service per pantheon-v2's
+  actual L2 contract (researched directly against that repo, not guessed): a trivial
+  `/api/health` route (GET -> {"status":"ok"}, HTTP 200, touches nothing else), a documented
+  capabilities list in manifest.json, and next.config.mjs `output: "standalone"` so
+  `node .next/standalone/server.js` is a single fixed entrypoint matching how other Pantheon
+  gods are supervised (start: node). Verified by actually building and running the standalone
+  server -- including confirming static assets (CSS) still load, a real gap standalone mode can
+  silently introduce.
+
+acceptance_criteria:
+  - "Given the UI is running (dev or standalone), when GET /api/health is called, then it returns HTTP 200 with body {\"status\":\"ok\"}, touching no subprocess/CLI dispatch"
+  - "Given manifest.json, when read after this story, then it documents a capabilities list (secret-lookup, secret-injection, secret-vault, session-vault)"
+  - "Given `npm run build` with output: standalone, when `node .next/standalone/server.js` is run against a copy of public/ and .next/static/, then it serves both /api/health and the real HTML page with CSS loading correctly"
+  - "Given the standalone server is running, when a real API route (e.g. /api/registry) is exercised against a live PORTUNUS_HOME, then it behaves identically to the non-standalone dev/start server"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Next.js's documented output:standalone requirements (public/.next/static copying) against the actual Next.js version in package.json (16.3.0).
+    agent: researcher
+  - id: implement
+    description: Add next.config.mjs output:standalone, the /api/health route, and manifest.json's capabilities list.
+    agent: developer
+    depends_on: [research]
+  - id: test
+    description: Build, copy static assets, run the standalone server, and verify /api/health, a real HTML page (CSS loading), and a real API route all work correctly.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm /api/health never calls runPortunus() or touches any subprocess -- it must stay a trivial, dependency-free liveness signal.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/next.config.mjs
+      purpose: build config this story extends with output:standalone
+    - path: ui/app/api/registry/route.ts
+      purpose: existing trivial-route pattern (though health must be even simpler -- no runPortunus() call at all)
+    - path: manifest.json
+      purpose: Dostal harness plugin descriptor; gains the capabilities list
+
+files_to_modify:
+  - file: ui/next.config.mjs
+    change: Add output:"standalone"
+  - file: ui/app/api/health/route.ts
+    change: New trivial route
+  - file: manifest.json
+    change: Add capabilities list
+
+design_decisions:
+  - decision: /api/health never calls runPortunus() or touches a subprocess
+    rationale: "It's a liveness signal for the Next.js process itself, not a proxy for the Python CLI's health -- keeping it trivial means it can never fail for a reason unrelated to 'is this process alive'"
+  - decision: Verification actually runs the standalone server rather than trusting a successful build
+    rationale: "Grill finding: standalone output silently omits public/.next/static by default; a build-succeeds check would miss a real rendering regression"
+
+cross_cutting:
+  - concern: documentation
+    action: "CONTEXT.md gains an entry for the health endpoint / standalone service mode / capabilities list (per this epic's own grill V1 finding)."
+
+risks:
+  - severity: medium
+    description: output:standalone's file tracing misses something existing routes need, working in dev but breaking under real supervision
+    mitigation: Verification step runs the actual standalone server end-to-end (HTML page + CSS + a real API route), not just a build check
+
+references:
+  - path: .pHive/epics/portunus-l2-plugin-lifecycle/docs/design-discussion.md
+    relevant_excerpt: "next.config.mjs gains output: \"standalone\" -- verified by actually running the standalone server"
