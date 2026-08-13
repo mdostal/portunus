@@ -81,8 +81,14 @@ def cmd_reg(args) -> int:
                   f"(scope={ref.scope}, kind={ref.kind}, state={ref.state}){gate}")
         return 0
     if args.action == "add":
+        try:
+            injected_as = _parse_tags(args.injected_as) if args.injected_as else None
+        except ValueError as exc:
+            return _err(str(exc))
         ref = registry.add(args.name, args.sm_name, scope=args.scope,
-                           kind=args.kind, project=args.project or "")
+                           kind=args.kind, project=args.project or "",
+                           description=args.description or "", purpose=args.purpose or "",
+                           injected_as=injected_as)
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
         return 0
     if args.action == "rm":
@@ -361,6 +367,7 @@ def cmd_retag(args) -> int:
     registry, _audit, broker, _resolver = _build()
     try:
         tags = _parse_tags(args.tags) if args.tags else None
+        injected_as = _parse_tags(args.injected_as) if args.injected_as else None
     except ValueError as exc:
         return _err(str(exc))
 
@@ -373,6 +380,12 @@ def cmd_retag(args) -> int:
         kwargs["env"] = args.env
     if tags is not None:
         kwargs["tags"] = tags
+    if args.description:
+        kwargs["description"] = args.description
+    if args.purpose:
+        kwargs["purpose"] = args.purpose
+    if injected_as is not None:
+        kwargs["injected_as"] = injected_as
 
     try:
         ref = registry.retag(args.name, **kwargs)
@@ -548,11 +561,13 @@ def cmd_drop(args) -> int:
         return _err("empty secret value; nothing dropped")
     try:
         extra_tags = _parse_tags(args.tags) if args.tags else {}
+        injected_as = _parse_tags(args.injected_as) if args.injected_as else {}
     except ValueError as exc:
         return _err(str(exc))
     ref = registry.add(
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
         provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
+        description=args.description, purpose=args.purpose, injected_as=injected_as,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -733,6 +748,10 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--scope", default="")
     a.add_argument("--kind", default="")
     a.add_argument("--project", default="")
+    a.add_argument("--description", default="", help="what this secret is")
+    a.add_argument("--purpose", default="", help="what this secret is for")
+    a.add_argument("--injected-as", default="",
+                    help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     rm = rs.add_parser("rm", help="remove a reference")
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
@@ -779,12 +798,16 @@ def build_parser() -> argparse.ArgumentParser:
                       help="required for an 'add' request: comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
     ask.set_defaults(func=cmd_ask)
 
-    rt = sub.add_parser("retag", help="update a reference's provider/project/env/tags in place")
+    rt = sub.add_parser("retag", help="update a reference's provider/project/env/tags/metadata in place")
     rt.add_argument("name")
     rt.add_argument("--provider", default="")
     rt.add_argument("--project", default="")
     rt.add_argument("--env", default="")
     rt.add_argument("--tags", default="", help="comma-separated k=v pairs, replaces the open tags dict")
+    rt.add_argument("--description", default="", help="what this secret is")
+    rt.add_argument("--purpose", default="", help="what this secret is for")
+    rt.add_argument("--injected-as", default="",
+                     help="comma-separated env=target pairs, replaces the injected_as dict")
     rt.set_defaults(func=cmd_retag)
 
     ses = sub.add_parser("session", help="browser/login session storage (local-encrypted backend only)")
@@ -833,6 +856,10 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--project", default="")
     dr.add_argument("--env", default="")
     dr.add_argument("--tags", default="", help="comma-separated k=v pairs, e.g. team=platform")
+    dr.add_argument("--description", default="", help="what this secret is")
+    dr.add_argument("--purpose", default="", help="what this secret is for")
+    dr.add_argument("--injected-as", default="",
+                     help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     src = dr.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument("--value-file", help="read the value from this local file")
