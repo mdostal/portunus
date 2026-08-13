@@ -4,6 +4,19 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-13
+
+### Added
+
+- **L2 plugin lifecycle groundwork (scope 1 of 2).** `GET /api/health` -> `{"status":"ok"}` --
+  a trivial liveness signal, never touches the CLI/subprocess. `next.config.mjs` gains
+  `output: "standalone"` so `node .next/standalone/server.js` is a single fixed entrypoint the
+  Pantheon host can supervise (`start: node`), matching Janus/Consus/Mnemosyne. `manifest.json`
+  gains a `capabilities` list and `health_endpoint`.
+  Researched directly against `mdostal/pantheon-v2`'s actual contract code. Registering these
+  facts in that repo's shared manifests (`pantheon.gods.yaml`, `plugins.manifest.yaml`,
+  `docs/PORTS.md`) is scope 2 -- a separate PR against that repo, for operator review.
+
 ## [0.5.1] - 2026-08-13
 
 ### Added
