@@ -19,6 +19,7 @@ from .backend import BackendError, GcloudBackend, MockBackend
 from .localvault import LocalEncryptedBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
+from .intent import AmbiguousIntent, parse_intent
 from .registry import AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
 
@@ -117,6 +118,32 @@ def cmd_find(args) -> int:
     return 0
 
 
+def _adapter_from_args(args):
+    """Build (adapter, adapter_kwargs, target_desc) from --target/--var/--path/
+    --format/--key. Adapters validate their own params (empty var_name/path/
+    key) and raise AdapterError -- no redundant pre-check here."""
+    if args.target == "env":
+        return EnvVarAdapter(), {"var_name": args.var}, f"env:{args.var}"
+    return FileAdapter(), {"path": args.path, "fmt": args.format, "key": args.key}, f"file:{args.path}"
+
+
+def _inject_resolved_ref(resolver, broker, ref, args, audit_action: str) -> int:
+    """Shared boundary-injection dispatch for cmd_inject and cmd_ask: resolve
+    an adapter from args, inject via Resolver.resolve_call's boundary-callable
+    sink (value never returned/printed/logged), and write one audit_action
+    entry (ref, target descriptor -- never the value) on success or failure."""
+    adapter, adapter_kwargs, target_desc = _adapter_from_args(args)
+    template = f"{{{{secret:{ref.name}}}}}"
+    try:
+        resolver.resolve_call(template, boundary=lambda v: adapter.inject(v, **adapter_kwargs))
+    except (UnknownReference, NotInjectable, ApprovalRequired, BackendError, AdapterError) as exc:
+        broker.audit.append(audit_action, ref.sm_name, f"error:{target_desc}")
+        return _err(str(exc))
+    broker.audit.append(audit_action, ref.sm_name, f"ok:{target_desc}")
+    print(f"injected {{{{secret:{ref.name}}}}} -> {target_desc}")
+    return 0
+
+
 def cmd_inject(args) -> int:
     """Resolve a reference by tags and inject its value at a boundary target.
 
@@ -133,35 +160,49 @@ def cmd_inject(args) -> int:
     try:
         ref = registry.resolve_by_tags(**partial_tags)
     except AmbiguousMatch as exc:
-        return_code = EXIT_AMBIGUOUS
         _err(f"ambiguous match for {partial_tags!r}: {', '.join(exc.candidates)}")
-        return return_code
+        return EXIT_AMBIGUOUS
     except NoMatch:
         _err(f"no reference matches tags: {partial_tags!r}")
         return EXIT_NO_MATCH
 
-    # Adapters themselves validate their target params (e.g. reject an empty
-    # var_name/path/key) and raise AdapterError -- caught and audited below,
-    # same as any other injection failure. No redundant pre-check here.
-    if args.target == "env":
-        adapter = EnvVarAdapter()
-        adapter_kwargs = {"var_name": args.var}
-        target_desc = f"env:{args.var}"
-    else:  # file
-        adapter = FileAdapter()
-        adapter_kwargs = {"path": args.path, "fmt": args.format, "key": args.key}
-        target_desc = f"file:{args.path}"
+    return _inject_resolved_ref(resolver, broker, ref, args, "adapter_resolution")
 
-    template = f"{{{{secret:{ref.name}}}}}"
+
+def cmd_ask(args) -> int:
+    """Semantic front door: natural-language request -> parse_intent -> a tag
+    set -> resolve_by_tags -> the same boundary-injection dispatch as inject.
+
+    Fails closed at BOTH layers: parse_intent() on an unrecognizable/
+    conflicting request, resolve_by_tags() on an under-specified-but-
+    recognized request that still matches more than one reference. Neither
+    layer ever guesses. The raw request text is never written to the audit
+    log -- only the resolved tag set / outcome.
+    """
+    registry, _audit, broker, resolver = _build()
     try:
-        resolver.resolve_call(template, boundary=lambda v: adapter.inject(v, **adapter_kwargs))
-    except (UnknownReference, NotInjectable, ApprovalRequired, BackendError, AdapterError) as exc:
-        broker.audit.append("adapter_resolution", ref.sm_name, f"error:{target_desc}")
-        return _err(str(exc))
+        tag_set = parse_intent(args.request, registry)
+    except AmbiguousIntent as exc:
+        broker.audit.append("semantic_op", "-", f"ambiguous-intent:{','.join(exc.candidates)}")
+        return _err(exc.clarifying_question)
 
-    broker.audit.append("adapter_resolution", ref.sm_name, f"ok:{target_desc}")
-    print(f"injected {{{{secret:{ref.name}}}}} -> {target_desc}")
-    return 0
+    try:
+        ref = registry.resolve_by_tags(**tag_set)
+    except AmbiguousMatch as exc:
+        broker.audit.append("semantic_op", "-", f"ambiguous-resolve:{','.join(exc.candidates)}")
+        _err(f"request resolves to more than one reference ({', '.join(exc.candidates)}); "
+             f"please specify more (e.g. env)")
+        return EXIT_AMBIGUOUS
+    except NoMatch:
+        broker.audit.append("semantic_op", "-", f"no-match:{tag_set!r}")
+        _err(f"no reference matches the inferred tags: {tag_set!r}")
+        return EXIT_NO_MATCH
+
+    if not args.target:
+        broker.audit.append("semantic_op", ref.sm_name, "no-target-specified")
+        return _err("resolved a reference, but --target (env|file) is required to inject it")
+
+    return _inject_resolved_ref(resolver, broker, ref, args, "semantic_op")
 
 
 def cmd_drop(args) -> int:
@@ -323,6 +364,17 @@ def build_parser() -> argparse.ArgumentParser:
                       help="target file format (--target file)")
     inj.add_argument("--key", default="", help="key to template the value under (--target file)")
     inj.set_defaults(func=cmd_inject)
+
+    ask = sub.add_parser("ask", help="semantic front door: natural-language request -> injection")
+    ask.add_argument("request", help='e.g. "the vercel secret for mdostal.com"')
+    ask.add_argument("--target", choices=("env", "file"), default="",
+                      help="required to actually inject; omit to only resolve+report")
+    ask.add_argument("--var", default="", help="target env var name (--target env)")
+    ask.add_argument("--path", default="", help="target file path (--target file)")
+    ask.add_argument("--format", dest="format", default="", choices=("", "env", "json", "yaml"),
+                      help="target file format (--target file)")
+    ask.add_argument("--key", default="", help="key to template the value under (--target file)")
+    ask.set_defaults(func=cmd_ask)
 
     dr = sub.add_parser(
         "drop",
