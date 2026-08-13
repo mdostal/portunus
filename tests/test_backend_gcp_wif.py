@@ -24,6 +24,39 @@ def _mocked_transport(access_token):
     return lambda url, data, headers, timeout: {"access_token": access_token, "expires_in": 900}
 
 
+def test_gcp_project_binding_carries_account():
+    b = GcpProjectBinding("p", "aud", account="user@example.com")
+    assert b.account == "user@example.com"
+
+
+def test_gcp_project_binding_account_defaults_empty():
+    b = GcpProjectBinding("p", "aud")
+    assert b.account == ""
+
+
+def test_save_and_load_gcp_bindings_round_trips_account(home):
+    save_gcp_bindings({"p": GcpProjectBinding("p", "aud", account="user@example.com")})
+    bindings = load_gcp_bindings()
+    assert bindings["p"].account == "user@example.com"
+
+
+def test_legacy_bindings_file_without_account_key_still_loads(home):
+    path = home / "gcp-bindings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"p": {"wif_audience": "aud"}}')
+    import os
+    os.chmod(path, 0o600)
+    bindings = load_gcp_bindings()
+    assert bindings["p"].wif_audience == "aud"
+    assert bindings["p"].account == ""
+
+
+def test_env_fallback_binding_has_empty_account(home, monkeypatch):
+    monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "personalsites-487021")
+    bindings = load_gcp_bindings()
+    assert bindings["personalsites-487021"].account == ""
+
+
 def test_load_gcp_bindings_falls_back_to_env_when_no_file(home, monkeypatch):
     monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "personalsites-487021")
     monkeypatch.setenv("PORTUNUS_GCP_WIF_AUDIENCE", "//iam.googleapis.com/projects/1/.../providers/p")
@@ -128,6 +161,82 @@ def test_access_token_file_is_0600_and_deleted_even_on_failure(home, monkeypatch
     assert observed["mode"] == 0o600
     assert observed["text"] == "GCP.TOKEN.C"
     assert not observed["path"].exists()
+
+
+def test_access_passes_account_flag_when_binding_has_no_wif_audience(home, monkeypatch):
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    observed = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    bindings = {"demo": GcpProjectBinding("demo", account="user@example.com")}
+    backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
+    backend.access("sm-x", project="demo")
+
+    assert "--account=user@example.com" in observed[0]
+
+
+def test_access_wif_and_account_are_mutually_exclusive(home, monkeypatch):
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    observed = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    bindings = {
+        "demo": GcpProjectBinding(
+            "demo",
+            wif_audience="//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/p",
+            account="user@example.com",
+        ),
+    }
+    backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
+    provider = backend._binding_providers["demo"]
+    provider.transport = _mocked_transport("GCP.TOKEN")
+    provider.token_source = StaticOIDC()
+
+    backend.access("sm-x", project="demo")
+
+    cmd = observed[0]
+    assert any(arg.startswith("--access-token-file=") for arg in cmd)
+    assert not any(arg.startswith("--account=") for arg in cmd)
+
+
+def test_access_no_binding_means_no_account_flag_unchanged_behavior(home, monkeypatch):
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    observed = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    backend = GcloudBackend(project="legacy-project", runner=runner)
+    backend.access("sm-x")
+
+    assert not any(arg.startswith("--account=") for arg in observed[0])
+
+
+def test_two_accounts_in_same_process_each_use_own_account(home, monkeypatch):
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    observed = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    bindings = {
+        "project-a": GcpProjectBinding("project-a", account="a@example.com"),
+        "project-b": GcpProjectBinding("project-b", account="b@example.com"),
+    }
+    backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
+    backend.access("secret-a", project="project-a")
+    backend.access("secret-b", project="project-b")
+
+    assert "--account=a@example.com" in observed[0]
+    assert "--account=b@example.com" in observed[1]
 
 
 def test_build_wires_bindings_into_gcloud_backend(home, monkeypatch):

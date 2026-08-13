@@ -1,0 +1,76 @@
+id: 01-binding-account-field
+epic: portunus-gcp-multi-account
+title: GcpProjectBinding gains account; load/save_gcp_bindings serialize it
+status: shipped
+shipped_at: "2026-08-13T21:30:00Z"
+release_id: "v0.9.0"
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  Add account: str = "" to GcpProjectBinding (backend.py), alongside project/wif_audience.
+  load_gcp_bindings()/save_gcp_bindings() serialize it in gcp-bindings.json. Additive: an
+  existing bindings file without the field still loads, account defaults to "" (today's
+  ambient-active-account behavior, unchanged). Empty account means "no explicit identity --
+  use whatever gcloud considers active," matching zero-config behavior exactly as before this
+  epic.
+
+acceptance_criteria:
+  - "Given GcpProjectBinding('p', 'aud', account='user@example.com'), when constructed, then .account == 'user@example.com'"
+  - "Given save_gcp_bindings writes a binding with an account, when load_gcp_bindings reads it back, then account round-trips exactly"
+  - "Given an existing gcp-bindings.json written before this story (no account key), when load_gcp_bindings reads it, then every binding loads with account=''"
+  - "Given the env-var fallback path (no bindings file, PORTUNUS_GCP_PROJECT set), when load_gcp_bindings runs, then the resulting binding has account='' (no env var exists for this yet -- explicit bindings-file-only for account, per this story's scope)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm GcpProjectBinding's current fields and load_gcp_bindings/save_gcp_bindings's exact JSON shape to extend additively.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for account round-trip, legacy-file backward compatibility, and env-var-fallback behavior.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add account field to GcpProjectBinding; extend load_gcp_bindings/save_gcp_bindings serialization.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no behavior change when account is absent/empty (zero-config path stays identical to pre-epic behavior).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: GcpProjectBinding, load_gcp_bindings(), save_gcp_bindings() this story extends
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: Add account field to GcpProjectBinding; extend bindings load/save serialization
+  - file: tests/test_backend_gcp_wif.py
+    change: Add account round-trip and backward-compatibility tests
+
+design_decisions:
+  - decision: account defaults to "" (empty), meaning ambient active-account behavior
+    rationale: "Design-discussion Slice A -- zero-config projects/tests must behave identically to before this epic; account is opt-in per binding"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "account is an identity-selector email string, not a credential -- same non-secret class as --project. No value-handling code introduced."
+  - concern: audit-chain-integrity
+    action: "N/A -- pure schema/serialization extension, no new access event."
+
+risks:
+  - severity: low
+    description: A future change to the bindings JSON shape could silently drop the account field
+    mitigation: Explicit round-trip test asserts the exact key is read back, not just "some data survives"
+
+references:
+  - path: .pHive/epics/portunus-gcp-multi-account/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- GcpProjectBinding gains account"

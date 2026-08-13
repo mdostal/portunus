@@ -1,0 +1,82 @@
+id: 03-discover-account-passthrough
+epic: portunus-gcp-multi-account
+title: discover.py list_gcp_secrets() gains account param; cmd_discover wires it
+status: shipped
+shipped_at: "2026-08-13T21:30:00Z"
+release_id: "v0.9.0"
+complexity: medium
+methodology: tdd
+depends_on: [01-binding-account-field]
+
+description: |
+  list_gcp_secrets(project, account="", runner=None, timeout=30.0) -- new optional account
+  param, appends --account=<account> to the gcloud secrets list command when non-empty. This
+  is the exact code path that broke live (portunus discover against a project governed by an
+  account that's no longer gcloud's ambient active one). cmd_discover (cli.py) looks up the
+  project's binding via load_gcp_bindings() and passes its account through to
+  list_gcp_secrets().
+
+acceptance_criteria:
+  - "Given list_gcp_secrets('demo', account='user@example.com', runner=mock), when called, then the mocked gcloud command includes --account=user@example.com"
+  - "Given list_gcp_secrets('demo', runner=mock) with no account argument, when called, then no --account= flag appears (backward compatible, matches every existing test)"
+  - "Given a project with a gcp-bindings.json entry carrying an account, when `portunus discover --provider gcp --project <that_project>` runs, then cmd_discover passes that account through to list_gcp_secrets()"
+  - "Given a project with no binding, when `portunus discover` runs, then list_gcp_secrets() is called with no account (ambient behavior, unchanged)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm list_gcp_secrets()'s current signature/cmd-building and cmd_discover's binding-lookup pattern (already used for wif_configured) to extend consistently.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the account param and cmd_discover's binding-account wiring.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add account param to list_gcp_secrets(); wire cmd_discover to look up and pass the project's binding.account.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm discover.py still has zero import of any SecretBackend/access() method (the structural safety invariant from portunus-vault-metadata story 04 must survive this change).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/discover.py
+      purpose: list_gcp_secrets() this story extends -- must stay free of any backend/access() import
+    - path: src/portunus/cli.py
+      purpose: cmd_discover, which already calls load_gcp_bindings() for wif_configured -- same lookup extends to account
+
+files_to_modify:
+  - file: src/portunus/discover.py
+    change: Add account param to list_gcp_secrets(), append --account= when non-empty
+  - file: src/portunus/cli.py
+    change: cmd_discover looks up the project's binding.account and passes it through
+  - file: tests/test_discover.py
+    change: Add account-passthrough tests
+  - file: tests/test_cli_discover.py
+    change: Add cmd_discover binding-account wiring test
+
+design_decisions:
+  - decision: account param defaults to "" (backward compatible, no behavior change when omitted)
+    rationale: "Every existing discover.py test calls list_gcp_secrets() without account -- must keep passing unchanged"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Re-verified (existing structural test from portunus-vault-metadata) that discover.py still has zero path to a value -- this story only adds an identity-selector string to a read-only listing call."
+  - concern: audit-chain-integrity
+    action: "N/A -- discovery remains unaudited-read, unchanged by this story."
+
+risks:
+  - severity: medium
+    description: This is literally the code path that broke live -- a regression here reproduces the exact bug that motivated the epic
+    mitigation: Acceptance criteria 3/4 test the full cmd_discover -> list_gcp_secrets wiring, not just the isolated function, so the actual CLI behavior is covered
+
+references:
+  - path: .pHive/epics/portunus-gcp-multi-account/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- discover.py::list_gcp_secrets() gains an account param"

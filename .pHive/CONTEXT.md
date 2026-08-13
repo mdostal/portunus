@@ -72,14 +72,26 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   ("what secrets are available for X"). Structurally cannot reach a backend/value.
 - **`intent_kind`** now includes `list`, alongside `fetch`/`add`/`rotate` (see below) —
   routes to `list_by_project()` via `_cmd_ask_list`, fails closed if no project is recognized.
-- **`GcpProjectBinding`** (`backend.py`) — a GCP project id + optional WIF audience, loaded via
-  `load_gcp_bindings()` from `PORTUNUS_HOME/gcp-bindings.json` (`0600`), falling back to
-  `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` when no bindings file exists. `GcloudBackend`
-  mints a short-lived access token per binding on `access(sm_name, project=...)`, written to a
-  `0600` tempfile passed via `--access-token-file` and unlinked in a `finally` block — the token
-  is a second value-class, alongside secret values themselves, that must never be logged,
-  printed, or returned (see `auth.py`'s `OIDCToken`/`GCPAccessToken` — token fields are
-  `repr=False`, audit entries carry only identity, never token material).
+- **`GcpProjectBinding`** (`backend.py`) — a GCP project id + optional WIF audience + optional
+  `account`, loaded via `load_gcp_bindings()` from `PORTUNUS_HOME/gcp-bindings.json` (`0600`),
+  falling back to `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` when no bindings file
+  exists. `GcloudBackend` mints a short-lived access token per binding on `access(sm_name,
+  project=...)`, written to a `0600` tempfile passed via `--access-token-file` and unlinked in a
+  `finally` block — the token is a second value-class, alongside secret values themselves, that
+  must never be logged, printed, or returned (see `auth.py`'s `OIDCToken`/`GCPAccessToken` —
+  token fields are `repr=False`, audit entries carry only identity, never token material).
+  `account` (an email string) is the practical alternative to WIF for projects with no real
+  workload-identity trust configured yet: `GcloudBackend.access()` and `discover.py`'s
+  `list_gcp_secrets()` pass `--account=<email>` (mutually exclusive with `--access-token-file`)
+  so multiple already-locally-authenticated gcloud accounts can be used correctly per project in
+  the same process, independent of gcloud's single mutable "active account" pointer — this
+  fixed a real bug (portunus-gcp-multi-account): authenticating a second GCP account silently
+  broke every project governed by the first, since no code path passed `--account=` explicitly.
+  `portunus bindings set/show` is the CLI surface for configuring bindings (previously no
+  command existed at all — only `save_gcp_bindings()`, called by tests). `show` prints real
+  `account`/`wif_audience` values (a different, deliberate bar than the UI's presence-only
+  `wif_configured` — a local CLI reading its own `0600` config is the same trust boundary as
+  `cat`ing it directly).
 - **`discover`** (`discover.py`, `portunus discover --provider gcp --project <id> [--register]`)
   — read-only enumeration of what already exists in a live GCP Secret Manager project (names +
   labels + create-time, never a value). Holds no reference to `GcloudBackend`/any

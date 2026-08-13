@@ -19,7 +19,10 @@ from typing import List, Optional
 from . import __version__
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
-from .backend import AWSSecretsManagerBackend, BackendError, GcloudBackend, MockBackend, load_gcp_bindings
+from .backend import (
+    AWSSecretsManagerBackend, BackendError, GcloudBackend, GcpProjectBinding, MockBackend,
+    load_gcp_bindings, save_gcp_bindings,
+)
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -713,8 +716,12 @@ def cmd_discover(args) -> int:
     state=requested placeholders. See discover.py -- this command never
     touches SecretBackend.access()."""
     registry = Registry()
+    account = ""
+    binding = load_gcp_bindings().get(args.project)
+    if binding:
+        account = binding.account
     try:
-        discovered = list_gcp_secrets(args.project)
+        discovered = list_gcp_secrets(args.project, account=account)
     except DiscoverError as exc:
         return _err(str(exc))
 
@@ -753,6 +760,53 @@ def cmd_discover(args) -> int:
     for d in not_yet:
         label_note = f" labels={d.labels}" if d.labels else ""
         print(f"not-registered  {d.sm_name}{label_note}")
+    return 0
+
+
+def cmd_bindings_set(args) -> int:
+    """Upsert one project's GCP binding -- only explicitly-passed fields
+    change, preserving whichever field wasn't passed (mirrors Registry.
+    retag()'s only-passed-fields-change pattern). Identity-selector/topology
+    strings only (account email, WIF audience) -- never a credential."""
+    bindings = load_gcp_bindings()
+    existing = bindings.get(args.project)
+    account = args.account if args.account else (existing.account if existing else "")
+    wif_audience = (
+        args.wif_audience if args.wif_audience else (existing.wif_audience if existing else "")
+    )
+    bindings[args.project] = GcpProjectBinding(
+        project=args.project, wif_audience=wif_audience, account=account,
+    )
+    save_gcp_bindings(bindings)
+    print(f"binding set: {args.project} (account={account or '-'}, wif_audience={wif_audience or '-'})")
+    return 0
+
+
+def cmd_bindings_show(args) -> int:
+    """Show one or all GCP bindings -- real account/wif_audience values, not
+    presence-only. A local CLI reading the operator's own 0600
+    gcp-bindings.json is the same trust boundary as `cat`ing it directly."""
+    bindings = load_gcp_bindings()
+    if args.project:
+        binding = bindings.get(args.project)
+        if binding is None:
+            if args.json:
+                print(json.dumps({}))
+            else:
+                print(f"no binding configured for {args.project}")
+            return 0
+        bindings = {args.project: binding}
+    if args.json:
+        print(json.dumps({
+            proj: {"account": b.account, "wif_audience": b.wif_audience}
+            for proj, b in bindings.items()
+        }))
+        return 0
+    if not bindings:
+        print("(no bindings configured)")
+        return 0
+    for proj, b in bindings.items():
+        print(f"  {proj}  account={b.account or '-'}  wif_audience={b.wif_audience or '-'}")
     return 0
 
 
@@ -950,6 +1004,19 @@ def build_parser() -> argparse.ArgumentParser:
                        help="write not-yet-registered secrets as state=requested placeholders")
     disc.add_argument("--json", action="store_true", help="machine-readable output (UI consumer)")
     disc.set_defaults(func=cmd_discover)
+
+    bnd = sub.add_parser("bindings", help="configure per-project GCP auth bindings (account/WIF audience)")
+    bnd_sub = bnd.add_subparsers(dest="action", required=True)
+    bnd_set = bnd_sub.add_parser("set", help="upsert a project's binding -- only passed fields change")
+    bnd_set.add_argument("project")
+    bnd_set.add_argument("--account", default="",
+                          help="local gcloud CLI identity to use for this project, e.g. user@example.com")
+    bnd_set.add_argument("--wif-audience", default="", help="WIF provider resource name")
+    bnd_set.set_defaults(func=cmd_bindings_set)
+    bnd_show = bnd_sub.add_parser("show", help="show one or all bindings (real values, not presence-only)")
+    bnd_show.add_argument("project", nargs="?", default="")
+    bnd_show.add_argument("--json", action="store_true")
+    bnd_show.set_defaults(func=cmd_bindings_show)
 
     return p
 

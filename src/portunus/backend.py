@@ -67,10 +67,17 @@ class GcpProjectBinding:
     workloadIdentityPools/<pool>/providers/<provider>") -- infrastructure
     topology, not a credential, but kept out of world-readable files anyway
     (see load_gcp_bindings/save_gcp_bindings 0600 handling).
+
+    `account` is a local gcloud CLI identity email (e.g. "user@example.com")
+    to pass as `--account=` when no WIF token is minted for this project --
+    lets multiple already-locally-authenticated GCP accounts coexist without
+    depending on gcloud's single mutable "active account" pointer. Empty
+    means "use whatever gcloud considers active" (today's ambient behavior).
     """
 
     project: str
     wif_audience: str = ""
+    account: str = ""
 
 
 def _gcp_bindings_path(path: Optional[Path] = None) -> Path:
@@ -88,7 +95,11 @@ def load_gcp_bindings(path: Optional[Path] = None) -> Dict[str, GcpProjectBindin
     if bindings_path.exists():
         raw = json.loads(bindings_path.read_text() or "{}")
         return {
-            proj: GcpProjectBinding(project=proj, wif_audience=cfg.get("wif_audience", ""))
+            proj: GcpProjectBinding(
+                project=proj,
+                wif_audience=cfg.get("wif_audience", ""),
+                account=cfg.get("account", ""),
+            )
             for proj, cfg in raw.items()
         }
     fallback_project = os.environ.get("PORTUNUS_GCP_PROJECT", "")
@@ -104,7 +115,10 @@ def save_gcp_bindings(
     """Persist project bindings, 0600 on disk (grill H1)."""
     bindings_path = _gcp_bindings_path(path)
     bindings_path.parent.mkdir(parents=True, exist_ok=True)
-    raw = {proj: {"wif_audience": b.wif_audience} for proj, b in bindings.items()}
+    raw = {
+        proj: {"wif_audience": b.wif_audience, "account": b.account}
+        for proj, b in bindings.items()
+    }
     tmp = bindings_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(raw, indent=2))
     os.chmod(tmp, 0o600)
@@ -159,10 +173,17 @@ class GcloudBackend:
             raise BackendError("gcloud CLI not found on PATH")
         effective_project = project or self.project
         provider = self._credential_provider_for(effective_project)
+        binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
             cmd = ["gcloud"]
             if token_file:
                 cmd.append(f"--access-token-file={token_file}")
+            elif binding and binding.account:
+                # Mutually exclusive with --access-token-file: a minted WIF
+                # token already carries identity. --account selects which
+                # already-locally-authenticated gcloud identity to use,
+                # independent of gcloud's single mutable "active account".
+                cmd.append(f"--account={binding.account}")
             cmd.extend(["secrets", "versions", "access", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
