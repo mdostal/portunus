@@ -1,7 +1,7 @@
 id: 01-tag-schema-migration-lock
 epic: portunus-standalone-core
 title: Structured tag schema, legacy migration, and registry write lock
-status: pending
+status: completed
 complexity: high
 methodology: tdd
 depends_on: []

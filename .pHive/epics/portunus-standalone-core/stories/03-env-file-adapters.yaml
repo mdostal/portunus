@@ -1,7 +1,7 @@
 id: 03-env-file-adapters
 epic: portunus-standalone-core
 title: Env-var and file injection adapters (portunus inject)
-status: pending
+status: completed
 complexity: medium
 methodology: tdd
 depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query"]

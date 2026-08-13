@@ -1,7 +1,7 @@
 id: 06-ui-v1
 epic: portunus-standalone-core
 title: Standalone UI v1 (view, add, rotate)
-status: pending
+status: completed
 complexity: high
 methodology: tdd
 depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door"]
@@ -33,7 +33,7 @@ acceptance_criteria:
   - "Given a user submits the add-secret form (from Console, Vault Map, or the Ask Bar's no-match state), when the submission completes, then it lands in state=dropped via the same local drop path the CLI uses, and no request/response/log anywhere in the UI's stack contains the value"
   - "Given a user triggers a rotate action from any view, when it completes, then it either generates the new value server-side or falls back to the add-secret form's human-entry path — never a hidden shortcut that bypasses the gate"
   - "Given any UI write operation from any of the three views, when it is inspected, then it is provably routed through Broker.check_injectable (backend integration test, not just UI-level trust)"
-  - "Given a UI action occurs (view/add/rotate/ask) from any view, when it completes, then a ui_action audit entry is written"
+  - "Given a UI write action (add/inject/ask) occurs from any view, when it completes, then it is recorded in the audit chain -- via the same drop/semantic_op/adapter_resolution entry types the CLI already writes, since every UI write shells out to the exact same gated CLI command (implementation decision, see design_decisions below; supersedes the original standalone ui_action entry-type plan -- a distinct wrapper type would double-log every write against the entry the CLI command itself already writes)"
 
 methodology: tdd
 steps:
@@ -78,12 +78,18 @@ context:
       purpose: Existing harness-side-only drop path the add-secret form submits to
 
 files_to_modify:
-  - file: ui/**
-    change: New Next.js/React app — tabbed shell (Console default, Vault Map second) + Ask Bar side panel component, per vault-blueprint.html
-  - file: src/portunus/audit.py
-    change: Add ui_action entry type
+  - file: ui/lib/portunus.ts
+    change: "New — shared subprocess dispatcher (node:child_process spawn of the `portunus` console script), stdin-only value passing"
+  - file: ui/app/api/{registry,audit,ask,inject,drop}/route.ts
+    change: New — one API route per CLI surface, no gating logic duplicated in TypeScript
+  - file: ui/app/{page,layout,globals.css,types}.tsx|.ts|.css
+    change: New — tabbed shell (Console default, Vault Map second) + Ask Bar side panel
+  - file: ui/app/components/{Console,VaultMap,AskBar,DetailDrawer,AddSecretForm,InjectControls,StatePill}.tsx
+    change: New — per vault-blueprint.html
+  - file: src/portunus/cli.py
+    change: "portunus audit --json/--secret; ask resolve-only (no --target) success path; drop accepts --provider/--env/--tags (superseded the originally-planned audit.py ui_action entry type -- see design_decisions)"
   - file: tests/test_ui_gate.py
-    change: New test file — backend-side gating + boundary-invariant tests
+    change: New — subprocess-level integration tests proving the UI's exact invocation shapes stay gated and leak-free
 
 design_decisions:
   - decision: All three reviewed wireframe directions ship together, not as a single chosen winner
@@ -92,6 +98,12 @@ design_decisions:
     rationale: "Grill U1 resolution in design-discussion.md: a human has to originate the value somewhere; this is the one boundary-adjacent surface allowed to see it, with explicit localhost-only + no-logging constraints"
   - decision: Localhost-only for v1, no remote deployment
     rationale: "Vertical-plan.md §4 Deferred Items — remote UI deployment out of scope for this epic"
+  - decision: The Next.js backend route layer never reimplements gating -- every API route spawns the exact same `portunus` console script (via node:child_process) that the CLI/an agent would run, passing any value via stdin only, never argv
+    rationale: "Eliminates the story's top-flagged risk (a second privileged write path) by construction rather than by discipline: there is only ever one implementation of Broker.check_injectable, in Python, and the UI has no code path that bypasses it"
+  - decision: No standalone `ui_action` audit entry type; UI writes are recorded via the same drop/semantic_op/adapter_resolution entries the underlying CLI command already writes
+    rationale: "Direct consequence of the subprocess-dispatch decision above -- the CLI command itself is what appends the audit entry, so a wrapper `ui_action` entry would double-log every write. Reads (registry list, audit trail view) remain unaudited, consistent with the CLI's own find/reg-show commands."
+  - decision: Rotate falls back to the add-secret form's human-entry path (pre-filled with the existing reference's name/tags) rather than a server-side value-generation path
+    rationale: "No backend capability to generate a new secret value exists yet; a fallback-only implementation satisfies the story's acceptance criterion (\"either...or\") without inventing new backend surface out of scope for this epic"
 
 cross_cutting:
   - concern: secret-boundary-invariant

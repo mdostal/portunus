@@ -1,7 +1,7 @@
 id: 02-cli-tag-query
 epic: portunus-standalone-core
 title: CLI tag-query consumer (portunus find)
-status: pending
+status: completed
 complexity: low
 methodology: tdd
 depends_on: ["01-tag-schema-migration-lock"]
