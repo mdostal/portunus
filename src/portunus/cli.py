@@ -19,7 +19,7 @@ from .backend import BackendError, GcloudBackend, MockBackend
 from .localvault import LocalEncryptedBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
-from .intent import AmbiguousIntent, parse_intent
+from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
 
@@ -169,6 +169,60 @@ def cmd_inject(args) -> int:
     return _inject_resolved_ref(resolver, broker, ref, args, "adapter_resolution")
 
 
+def _cmd_ask_add(args, registry, broker) -> int:
+    """Agent-requested add: free text alone can't safely name/tag a
+    brand-new secret (there's no existing vocabulary to match it against),
+    so this requires explicit --name/--tags rather than guessing from the
+    request text. Creates a value-less state=requested placeholder --
+    fulfillment (the actual value) still requires a human running
+    `portunus drop`."""
+    if not args.name or not args.tags:
+        return _err(
+            "an 'add' request needs --name and --tags "
+            "(e.g. --name vercel-mdostal --tags provider=vercel,project=mdostal.com) -- "
+            "free text alone can't safely name a brand-new secret"
+        )
+    try:
+        partial_tags = _parse_tags(args.tags)
+    except ValueError as exc:
+        return _err(str(exc))
+
+    structured = {k: partial_tags.pop(k) for k in ("provider", "project", "env") if k in partial_tags}
+    ref = registry.request(args.name, tags=partial_tags, **structured)
+    broker.audit.append("semantic_op", ref.sm_name or args.name, "requested:add")
+    print(
+        f"requested {{{{secret:{ref.name}}}}} (state=requested) -- "
+        f"a human can fulfill it via `portunus drop {ref.name} <sm_name> --stdin`"
+    )
+    return 0
+
+
+def _cmd_ask_rotate(tag_set, registry, broker) -> int:
+    """Agent-requested rotate: flags an EXISTING reference for rotation via
+    a tags marker -- never touches its value or lifecycle state. Only
+    applies to a reference resolve_by_tags can already find; there's
+    nothing to rotate otherwise, so this fails closed exactly like fetch."""
+    try:
+        ref = registry.resolve_by_tags(**tag_set)
+    except AmbiguousMatch as exc:
+        broker.audit.append("semantic_op", "-", f"ambiguous-resolve:{','.join(exc.candidates)}")
+        _err(f"request resolves to more than one reference ({', '.join(exc.candidates)}); "
+             f"please specify more (e.g. env)")
+        return EXIT_AMBIGUOUS
+    except NoMatch:
+        broker.audit.append("semantic_op", "-", f"no-match:{tag_set!r}")
+        _err(f"no reference matches the inferred tags: {tag_set!r} -- nothing to rotate")
+        return EXIT_NO_MATCH
+
+    registry.retag(ref.name, tags={**ref.tags, "rotation_requested": "true"})
+    broker.audit.append("semantic_op", ref.sm_name, "requested:rotate")
+    print(
+        f"flagged {{{{secret:{ref.name}}}}} for rotation -- "
+        f"a human can rotate it via the UI or `portunus drop` a new value"
+    )
+    return 0
+
+
 def cmd_ask(args) -> int:
     """Semantic front door: natural-language request -> parse_intent -> a tag
     set -> resolve_by_tags -> the same boundary-injection dispatch as inject.
@@ -178,13 +232,27 @@ def cmd_ask(args) -> int:
     recognized request that still matches more than one reference. Neither
     layer ever guesses. The raw request text is never written to the audit
     log -- only the resolved tag set / outcome.
+
+    add/rotate intents (see classify_intent_kind) never supply or see a
+    value -- an agent can only REQUEST that a human fulfill an add (via
+    Registry.request(), a value-less placeholder) or rotate (a metadata
+    flag on the existing reference) -- the value still flows exclusively
+    through the existing harness-side-only `drop` path.
     """
     registry, _audit, broker, resolver = _build()
+
+    intent_kind = classify_intent_kind(args.request.lower())
+    if intent_kind == "add":
+        return _cmd_ask_add(args, registry, broker)
+
     try:
         tag_set = parse_intent(args.request, registry)
     except AmbiguousIntent as exc:
         broker.audit.append("semantic_op", "-", f"ambiguous-intent:{','.join(exc.candidates)}")
         return _err(exc.clarifying_question)
+
+    if intent_kind == "rotate":
+        return _cmd_ask_rotate(tag_set, registry, broker)
 
     try:
         ref = registry.resolve_by_tags(**tag_set)
@@ -397,6 +465,9 @@ def build_parser() -> argparse.ArgumentParser:
                       help="target file format (--target file)")
     ask.add_argument("--key", default="", help="key to template the value under (--target file)")
     ask.add_argument("--json", action="store_true", help="machine-readable output for resolve-only calls (UI consumer)")
+    ask.add_argument("--name", default="", help="required for an 'add' request, e.g. --name vercel-mdostal")
+    ask.add_argument("--tags", default="",
+                      help="required for an 'add' request: comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
     ask.set_defaults(func=cmd_ask)
 
     dr = sub.add_parser(

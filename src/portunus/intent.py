@@ -38,7 +38,14 @@ class ParsedIntent(dict):
         self.intent_kind = intent_kind
 
 
-def _classify_intent_kind(text_l: str) -> str:
+def classify_intent_kind(text_l: str) -> str:
+    """Classify already-lowercased text as 'fetch' | 'add' | 'rotate'.
+
+    Public so callers that need the kind before vocabulary-matched tags are
+    even meaningful (e.g. an 'add' request naming brand-new tags with no
+    existing vocabulary to match against) can classify first, independent
+    of parse_intent()'s registry-vocabulary lookup.
+    """
     is_add = any(re.search(rf"\b{re.escape(kw)}\b", text_l) for kw in _ADD_KEYWORDS)
     is_rotate = any(re.search(rf"\b{re.escape(kw)}\b", text_l) for kw in _ROTATE_KEYWORDS)
     if is_add and is_rotate:
@@ -88,7 +95,7 @@ def parse_intent(text: str, registry) -> ParsedIntent:
     `registry.resolve_by_tags(**parse_intent(...))` are unaffected -- only
     callers that also want intent_kind need to change.
     """
-    intent_kind = _classify_intent_kind(text.lower())
+    intent_kind = classify_intent_kind(text.lower())
 
     vocab = _collect_vocabulary(registry)
     text_l = text.lower()
