@@ -1,7 +1,9 @@
 id: 01-health-endpoint-and-standalone
 epic: portunus-l2-plugin-lifecycle
 title: /api/health, capabilities list, Next.js standalone output
-status: completed
+status: shipped
+shipped_at: "2026-08-13T14:45:40Z"
+release_id: "v0.6.0"
 complexity: low
 methodology: tdd
 depends_on: []
