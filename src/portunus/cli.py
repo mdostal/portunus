@@ -20,6 +20,7 @@ from . import __version__
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import BackendError, GcloudBackend, MockBackend, load_gcp_bindings
+from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
@@ -619,6 +620,37 @@ def cmd_auth_gcp(args) -> int:
     return 0
 
 
+def cmd_discover(args) -> int:
+    """Read-only: list what already exists in a live GCP project (names/labels
+    only, never a value). --register writes not-yet-registered ones as
+    state=requested placeholders. See discover.py -- this command never
+    touches SecretBackend.access()."""
+    registry = Registry()
+    try:
+        discovered = list_gcp_secrets(args.project)
+    except DiscoverError as exc:
+        return _err(str(exc))
+
+    if args.register:
+        report = register_discovered(registry, args.project, discovered)
+        for name in report.registered:
+            print(f"registered  {name} (state=requested)")
+        for name in report.conflicts:
+            print(f"conflict    {name} -- already points at a different secret, skipped")
+        for name in report.already_registered:
+            print(f"unchanged   {name} (already registered)")
+        return 0
+
+    from .discover import diff_against_registry
+    already, not_yet = diff_against_registry(registry, args.project, discovered)
+    for name in already:
+        print(f"registered      {name}")
+    for d in not_yet:
+        label_note = f" labels={d.labels}" if d.labels else ""
+        print(f"not-registered  {d.sm_name}{label_note}")
+    return 0
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -780,6 +812,16 @@ def build_parser() -> argparse.ArgumentParser:
     auth_gcp.add_argument("--project", default="")
     auth_gcp.add_argument("--audience", default="")
     auth_gcp.set_defaults(func=cmd_auth_gcp)
+
+    disc = sub.add_parser(
+        "discover",
+        help="read-only: list what already exists in a live provider project (never a value)",
+    )
+    disc.add_argument("--provider", required=True, choices=("gcp",))
+    disc.add_argument("--project", required=True)
+    disc.add_argument("--register", action="store_true",
+                       help="write not-yet-registered secrets as state=requested placeholders")
+    disc.set_defaults(func=cmd_discover)
 
     return p
 
