@@ -906,6 +906,15 @@ def cmd_tree(args) -> int:
     return 0
 
 
+def cmd_mcp(args) -> int:
+    """Start the Portunus MCP stdio server -- a third OSTIARIUS entry point
+    (alongside this CLI and the UI's API routes) so other agents/harnesses
+    can query and inject secrets directly."""
+    from .mcp_server import run_server
+    run_server()
+    return 0
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -1127,6 +1136,11 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--project", default="")
     tr.add_argument("--json", action="store_true", help="machine-readable output (UI/LLM consumer)")
     tr.set_defaults(func=cmd_tree)
+
+    mcp_p = sub.add_parser(
+        "mcp", help="start the Portunus MCP stdio server (for other agents/harnesses)",
+    )
+    mcp_p.set_defaults(func=cmd_mcp)
 
     return p
 
