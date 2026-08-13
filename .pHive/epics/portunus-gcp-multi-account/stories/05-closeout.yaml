@@ -1,0 +1,85 @@
+id: 05-closeout
+epic: portunus-gcp-multi-account
+title: Live multi-account verification, README/CONTEXT.md, version bump, changelog
+status: shipped
+shipped_at: "2026-08-13T21:30:00Z"
+release_id: "v0.9.0"
+complexity: low
+methodology: classic
+depends_on:
+  - 02-gcloud-backend-account-passthrough
+  - 03-discover-account-passthrough
+  - 04-bindings-cli-command
+
+description: |
+  Full pytest suite green, then real live verification against the two real GCP accounts
+  already authenticated this session: `portunus bindings set ffe-cicd --account
+  mdostal@ff.events`, `portunus bindings set personalsites-487021 --account
+  mathew.dostal@gmail.com`, then `portunus discover --project ffe-cicd` immediately followed
+  by `portunus discover --project personalsites-487021` in the same shell session -- both
+  succeeding regardless of gcloud's current ambient active account, proving the exact bug the
+  user hit is fixed. README/CONTEXT.md document the account field and bindings command.
+  Version bump and CHANGELOG entry.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given bindings set for two different real projects with two different real accounts, when both are discovered back to back in one session, then both succeed regardless of gcloud's ambient active account at the time"
+  - "Given README.md, when read, then it documents GcpProjectBinding's account field and the portunus bindings command"
+  - "Given .pHive/CONTEXT.md, when read, then it documents the account field and the fix this epic made"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped version number in lockstep"
+  - "Given CHANGELOG.md, when read, then it has a new entry describing this epic"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest; live-verify multi-account discovery against real projects; update README/CONTEXT.md; apply version bump; write CHANGELOG entry.
+    agent: developer
+  - id: review
+    description: Confirm the live verification actually exercised two different real accounts in one session (not just two different projects under the same ambient account).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: GCP multi-project section this story extends with the account field and bindings command
+    - path: .pHive/CONTEXT.md
+      purpose: Terminology section this story extends
+
+files_to_modify:
+  - file: README.md
+    change: Document account field and portunus bindings command
+  - file: .pHive/CONTEXT.md
+    change: Add account/bindings vocabulary
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Live verification against real accounts required, not just mocked tests
+    rationale: "This epic exists because a mocked/assumed design missed a real bug the first time (WIF configured but no ambient-account fallback) -- the closeout must prove the actual fix against the actual accounts that broke"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- documentation/verification-only story."
+  - concern: audit-chain-integrity
+    action: "N/A -- documentation/verification-only story."
+
+risks:
+  - severity: low
+    description: The live verification could pass by accident if both projects happen to work under whichever account is ambient at test time
+    mitigation: Acceptance criterion 2 explicitly requires checking gcloud's ambient active account differs from at least one of the two bindings' accounts during the test, not just that both discover calls succeed
+
+references:
+  - path: .pHive/epics/portunus-gcp-multi-account/docs/design-discussion.md
+    relevant_excerpt: "Slice E -- Closeout"

@@ -65,6 +65,28 @@ def test_list_gcp_secrets_never_calls_versions_access(monkeypatch):
         assert "access" not in cmd
 
 
+def test_list_gcp_secrets_passes_account_flag_when_given():
+    seen_cmds = []
+
+    def runner(cmd, capture_output, text, timeout):
+        seen_cmds.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    list_gcp_secrets("demo-project", account="user@example.com", runner=runner)
+    assert "--account=user@example.com" in seen_cmds[0]
+
+
+def test_list_gcp_secrets_no_account_flag_when_omitted():
+    seen_cmds = []
+
+    def runner(cmd, capture_output, text, timeout):
+        seen_cmds.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    list_gcp_secrets("demo-project", runner=runner)
+    assert not any(arg.startswith("--account=") for arg in seen_cmds[0])
+
+
 def test_derive_local_name_prefixes_by_project():
     assert derive_local_name("demo-project", "API_KEY") == "demo-project-api_key"
 

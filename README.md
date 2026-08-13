@@ -196,13 +196,30 @@ portunus ask "what secrets are available for mdostal.com"
 
 `GcloudBackend` authenticates keyless by default — no static service-account JSON, no long-lived
 AWS-style key pairs (`assert_no_long_lived_cloud_keys()` enforces this). Per-project bindings
-live in `PORTUNUS_HOME/gcp-bindings.json` (`0600`, project → WIF audience); with no bindings
-file, `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` give today's zero-config single-project
-behavior unchanged. Two references can point at two different GCP projects and each resolves
-against its own binding in the same process.
+live in `PORTUNUS_HOME/gcp-bindings.json` (`0600`, project → WIF audience + account); with no
+bindings file, `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` give today's zero-config
+single-project behavior unchanged. Two references can point at two different GCP projects and
+each resolves against its own binding in the same process.
 
 ```bash
 portunus auth gcp --project personalsites-487021   # mint + report identity/scope/expiry only
+```
+
+**Multiple GCP accounts at once.** `gcloud` already stores multiple credentialed accounts
+simultaneously (`gcloud auth login <email>` adds one without removing others) — but any command
+with no explicit identity follows whichever account gcloud considers "active," a single mutable
+pointer. `gcp-bindings.json`'s `account` field fixes this: set it per project and every
+Portunus GCP call for that project passes `--account=<email>` explicitly, regardless of
+gcloud's ambient active account. (Mutually exclusive with a WIF binding on the same
+project — a minted access token already carries identity.)
+
+```bash
+portunus bindings set ffe-cicd --account work@example.com
+portunus bindings set personalsites-487021 --account personal@example.com
+portunus bindings show                          # real values -- a local CLI reading your own 0600 config
+portunus discover --provider gcp --project ffe-cicd            # uses work@example.com
+portunus discover --provider gcp --project personalsites-487021  # uses personal@example.com
+# both work in the same session, regardless of which account gcloud currently considers active
 ```
 
 Discovery is read-only and opt-in — it enumerates what already exists in a live GCP Secret

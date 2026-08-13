@@ -44,13 +44,23 @@ def _default_runner(cmd, capture_output, text, timeout):
 
 
 def list_gcp_secrets(
-    project: str, runner: Optional[Runner] = None, timeout: float = 30.0
+    project: str, account: str = "", runner: Optional[Runner] = None, timeout: float = 30.0
 ) -> List[DiscoveredSecret]:
-    """List secret names + labels + create-time for `project`. Never a value."""
+    """List secret names + labels + create-time for `project`. Never a value.
+
+    `account` selects which already-locally-authenticated gcloud identity to
+    use (--account=), independent of gcloud's single mutable "active
+    account" -- lets discovery work correctly across multiple GCP accounts
+    in the same process. Empty means "use whatever gcloud considers active"
+    (unchanged ambient behavior).
+    """
     if shutil.which("gcloud") is None:
         raise DiscoverError("gcloud CLI not found on PATH")
     run = runner or _default_runner
-    cmd = ["gcloud", "secrets", "list", f"--project={project}", "--format=json"]
+    cmd = ["gcloud"]
+    if account:
+        cmd.append(f"--account={account}")
+    cmd.extend(["secrets", "list", f"--project={project}", "--format=json"])
     try:
         proc = run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:

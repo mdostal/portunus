@@ -1,0 +1,85 @@
+id: 04-bindings-cli-command
+epic: portunus-gcp-multi-account
+title: portunus bindings set/show
+status: shipped
+shipped_at: "2026-08-13T21:30:00Z"
+release_id: "v0.9.0"
+complexity: medium
+methodology: tdd
+depends_on: [01-binding-account-field]
+
+description: |
+  The missing piece: no CLI command exists to write gcp-bindings.json today (only
+  save_gcp_bindings(), called by tests). `portunus bindings set <project> [--account EMAIL]
+  [--wif-audience AUDIENCE]` upserts one binding -- reads the existing binding first, only
+  overwrites fields explicitly passed on that invocation (mirrors Registry.retag()'s
+  only-passed-fields-change pattern), never clobbers the other field. `portunus bindings show
+  [<project>]` prints one binding or all, including the real account/wif_audience values --
+  deliberately a different display bar than the UI's presence-only wif_configured (Grill U1):
+  a local CLI reading the operator's own 0600 gc-bindings.json is the same trust boundary as
+  `cat`ing the file directly.
+
+acceptance_criteria:
+  - "Given `portunus bindings set demo --account user@example.com`, when run, then gcp-bindings.json has demo.account='user@example.com'"
+  - "Given a binding already has wif_audience set, when `portunus bindings set <project> --account X` runs (no --wif-audience passed), then wif_audience is preserved unchanged (upsert, not replace)"
+  - "Given `portunus bindings set demo --wif-audience aud` after `--account X` was set, when run, then account='X' is preserved (the reverse case)"
+  - "Given `portunus bindings show demo`, when run, then it prints demo's account and wif_audience values (not just presence -- Grill U1)"
+  - "Given `portunus bindings show` with no project argument, when run, then it lists every configured binding"
+  - "Given `portunus bindings show nonexistent-project`, when run, then it reports no binding configured, not an error/crash"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm load_gcp_bindings()/save_gcp_bindings()'s exact signatures and Registry.retag()'s only-passed-fields-change pattern to mirror for the upsert logic.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for set's upsert semantics (both field-preservation directions) and show's single/all/missing-project output.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add `bindings` subcommand group (set/show) to cli.py, using load_gcp_bindings()/save_gcp_bindings() for the upsert.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm set never clobbers an unpassed field in either direction (account-then-audience and audience-then-account).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: load_gcp_bindings()/save_gcp_bindings() this story's CLI command wraps
+    - path: src/portunus/registry.py
+      purpose: Registry.retag()'s only-passed-fields-change pattern this story's upsert mirrors
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add `bindings` subcommand group (set/show) and cmd_bindings_set/cmd_bindings_show
+  - file: tests/test_cli_bindings.py
+    change: New test file
+
+design_decisions:
+  - decision: set is an upsert (preserves unpassed fields), not a replace
+    rationale: "Mirrors Registry.retag()'s established only-passed-fields-change pattern -- a human setting --account shouldn't have to re-type an already-configured --wif-audience"
+  - decision: show prints real account/wif_audience values, not presence-only
+    rationale: "Grill U1 -- resolved in design discussion: different, deliberate bar than the UI's wif_configured boolean (that rule is about browser-surface exposure, not local-CLI-reading-your-own-config)"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "account/wif_audience are identity-selector/topology strings, never credentials or values -- this command introduces no new value-handling path."
+  - concern: audit-chain-integrity
+    action: "N/A -- binding configuration is registry-adjacent config, not a secret-access event; no audit entry needed, same as gcp-bindings.json's existing unaudited nature."
+
+risks:
+  - severity: medium
+    description: A naive replace-not-upsert implementation would silently wipe wif_audience when setting account or vice versa
+    mitigation: Acceptance criteria 2/3 explicitly test both preservation directions
+
+references:
+  - path: .pHive/epics/portunus-gcp-multi-account/docs/design-discussion.md
+    relevant_excerpt: "Slice D -- portunus bindings set/show CLI command / Grill U1"

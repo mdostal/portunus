@@ -1,0 +1,55 @@
+name: portunus-gcp-multi-account
+title: Multi-Account GCP Bindings — Fix Single-Active-Account Bug
+description: >
+  Fixes a real bug the user hit live: authenticating a second GCP account via `gcloud auth
+  login` silently deactivated the first for every ambient Portunus gcloud invocation, since
+  no code path passed an explicit --account. Both credentials were never actually lost --
+  gcloud already stores multiple accounts simultaneously. Adds an `account` field to
+  GcpProjectBinding, wires it through GcloudBackend.access() and discover.py, and adds the
+  missing `portunus bindings set/show` CLI command (no way to configure gcp-bindings.json
+  existed before this epic). Gates the user's next milestone (real SM injection + a formal
+  Claude-console test session).
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [backend, cli, cloud]
+  roster: [researcher, technical-writer]
+  per_tag_reasoning:
+    backend: "GcpProjectBinding schema extension, GcloudBackend/discover.py wiring"
+    cloud: "Real multi-account GCP credential selection, verified live against two real accounts"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1 converged after revision -- 1/1 finding resolved: U1, CLI-vs-UI display bar)
+    scale: small-medium, H/V skipped per design-discussion.md Scale Assessment
+
+stories:
+  - id: 01-binding-account-field
+    title: GcpProjectBinding gains account; load/save_gcp_bindings serialize it
+    complexity: low
+    depends_on: []
+  - id: 02-gcloud-backend-account-passthrough
+    title: GcloudBackend.access() passes --account= (mutually exclusive with WIF token)
+    complexity: medium
+    depends_on: ["01-binding-account-field"]
+  - id: 03-discover-account-passthrough
+    title: discover.py list_gcp_secrets() gains account param; cmd_discover wires it
+    complexity: medium
+    depends_on: ["01-binding-account-field"]
+  - id: 04-bindings-cli-command
+    title: portunus bindings set/show
+    complexity: medium
+    depends_on: ["01-binding-account-field"]
+  - id: 05-closeout
+    title: Live multi-account verification, README/CONTEXT.md, version bump, changelog
+    complexity: low
+    depends_on:
+      - "02-gcloud-backend-account-passthrough"
+      - "03-discover-account-passthrough"
+      - "04-bindings-cli-command"
