@@ -825,6 +825,87 @@ def cmd_bindings_show(args) -> int:
     return 0
 
 
+def _build_tree(refs):
+    """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
+
+    A reference with no group lands in `ungrouped` -- never silently
+    dropped (Grill H1). `related` entries not present in `refs` (the
+    already-filtered result set) are marked unresolved, never dropped or
+    erroring -- metadata consistency is informational, not fail-closed.
+    """
+    names = {r.name for r in refs}
+    ungrouped = []
+    tree: dict = {}
+    refs_meta: dict = {}
+    for r in refs:
+        refs_meta[r.name] = {
+            "sm_name": r.sm_name,
+            "description": r.description,
+            "related": [
+                {"name": rel, "unresolved": rel not in names} for rel in r.related
+            ],
+        }
+        segments = [s for s in r.group.split("/") if s] if r.group else []
+        if not segments:
+            ungrouped.append(r.name)
+            continue
+        node = tree
+        for seg in segments:
+            node = node.setdefault(seg, {})
+        node.setdefault("_refs", []).append(r.name)
+    return ungrouped, tree, refs_meta
+
+
+def _related_suffix(name: str, refs_meta: dict) -> str:
+    related = refs_meta.get(name, {}).get("related", [])
+    if not related:
+        return ""
+    parts = [
+        f"{r['name']}{' (unresolved)' if r['unresolved'] else ''}" for r in related
+    ]
+    return "  related: " + ", ".join(parts)
+
+
+def _render_tree_text(ungrouped: list, tree: dict, refs_meta: dict) -> str:
+    lines: list = []
+    if ungrouped:
+        lines.append("(ungrouped)")
+        for name in sorted(ungrouped):
+            lines.append(f"  {name}{_related_suffix(name, refs_meta)}")
+
+    def walk(node: dict, indent: int) -> None:
+        for name in sorted(node.get("_refs", [])):
+            lines.append(f"{'  ' * indent}{name}{_related_suffix(name, refs_meta)}")
+        for seg in sorted(k for k in node if k != "_refs"):
+            lines.append(f"{'  ' * indent}{seg}/")
+            walk(node[seg], indent + 1)
+
+    walk(tree, 0)
+    return "\n".join(lines)
+
+
+def cmd_tree(args) -> int:
+    """LLM-facing relationship/hierarchy query -- metadata only, never a
+    value. Every reference with an empty group renders under an
+    (ungrouped) bucket rather than being silently dropped (Grill H1)."""
+    registry = Registry()
+    refs = list(registry)
+    if args.project:
+        refs = [r for r in refs if r.project == args.project]
+    if not refs:
+        if args.json:
+            print(json.dumps({"ungrouped": [], "tree": {}, "refs": {}}))
+        else:
+            print("no references to show")
+        return 0
+    ungrouped, tree, refs_meta = _build_tree(refs)
+    if args.json:
+        print(json.dumps({"ungrouped": sorted(ungrouped), "tree": tree, "refs": refs_meta}))
+        return 0
+    print(_render_tree_text(ungrouped, tree, refs_meta))
+    return 0
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -1038,6 +1119,14 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_show.add_argument("project", nargs="?", default="")
     bnd_show.add_argument("--json", action="store_true")
     bnd_show.set_defaults(func=cmd_bindings_show)
+
+    tr = sub.add_parser(
+        "tree",
+        help="render secrets by group hierarchy + related links (metadata only, never a value)",
+    )
+    tr.add_argument("--project", default="")
+    tr.add_argument("--json", action="store_true", help="machine-readable output (UI/LLM consumer)")
+    tr.set_defaults(func=cmd_tree)
 
     return p
 
