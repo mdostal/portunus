@@ -1,0 +1,81 @@
+id: 04-resolve-to-tempfile-tool
+epic: portunus-mcp-server
+title: portunus_resolve_to_tempfile MCP tool
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-mcp-scaffold]
+
+description: |
+  portunus_resolve_to_tempfile(name="", tags=None) -- the first injection tool. Addressing
+  (Grill H1): registry.require(name) if name given, else registry.resolve_by_tags(**tags) if
+  tags given -- fail-closed NoMatch/AmbiguousMatch surfaced as a clear tool error, mirroring
+  the CLI's own dual-addressing convention. Once resolved, builds the {{secret:<name>}}
+  placeholder itself and calls Resolver.resolve_to_tempfile(), returning the path only. The
+  agent never writes placeholder syntax -- it names what it wants (from a prior list/tree/
+  ask_preview call, or tags it already knows).
+
+acceptance_criteria:
+  - "Given name='x' resolves to an enabled reference, when portunus_resolve_to_tempfile(name='x') is called (mocked backend), then it returns a 0600 file path whose contents are the mocked value -- the tool's own return value is the path string only"
+  - "Given tags={'provider': 'gcp', 'project': 'demo'} resolving to exactly one reference, when portunus_resolve_to_tempfile(tags=tags) is called, then it resolves and returns a path the same way as the name-based call"
+  - "Given tags resolving to more than one reference, when called, then it returns a clear ambiguous-match error naming the candidates, never guessing"
+  - "Given neither name nor tags is provided, when called, then it returns a clear 'name or tags required' error"
+  - "Given a dropped/revoked/requested-state reference, when called, then it returns the existing NotInjectable/ApprovalRequired error message, never a path"
+  - "Given portunus_resolve_to_tempfile's source (every branch, including all error paths), when inspected, then it never returns or logs the resolved value itself -- only a path or an error message built from safe fields (reference name, exception type)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Resolver.resolve_to_tempfile()'s exact contract and Broker.check_injectable's existing exception types (NotInjectable, ApprovalRequired) this tool must surface cleanly.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for both addressing modes, the ambiguous/no-match/missing-address error paths, and the non-injectable-state error path -- plus the value-never-leaks source-inspection guarantee.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement portunus_resolve_to_tempfile with dual addressing and the placeholder-construction step.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm every single return statement and except-clause in this tool's code returns only a path or a safely-constructed error message -- never str(exception) on anything that could have touched a value, never the resolved argv/text.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/resolver.py
+      purpose: resolve_to_tempfile() this tool wraps
+    - path: src/portunus/registry.py
+      purpose: require()/resolve_by_tags() this tool's dual addressing uses
+    - path: src/portunus/cli.py
+      purpose: cmd_resolve's existing exception handling (UnknownReference/NotInjectable/ApprovalRequired/BackendError) this tool's error handling mirrors
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_resolve_to_tempfile tool
+  - file: tests/test_mcp_server.py
+    change: Add tests including the value-never-leaks source-inspection test
+
+design_decisions:
+  - decision: Dual addressing (name or tags), tool constructs the placeholder itself
+    rationale: "Grill H1 -- resolved in design discussion: mirrors the CLI's own inject/ask dual-addressing convention rather than requiring the agent to author {{secret:NAME}} template syntax"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The core risk of this story -- explicit review-step scrutiny of every return path, plus a source-inspection test, not just behavioral tests of the happy path."
+  - concern: audit-chain-integrity
+    action: "Goes through the existing resolve audit entry (ref/sm name only) via Resolver._fetch()'s existing mechanism -- unchanged, just a new caller."
+
+risks:
+  - severity: high
+    description: A future refactor could accidentally add a return/log statement that includes the resolved value or the tempfile's contents
+    mitigation: The source-inspection test (acceptance criterion 6) is a regression guard, not a one-time check -- it runs in the normal pytest suite on every future change to this file
+
+references:
+  - path: .pHive/epics/portunus-mcp-server/docs/design-discussion.md
+    relevant_excerpt: "Slice D -- resolve_to_tempfile injection tool / Grill H1"

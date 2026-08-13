@@ -6,8 +6,12 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 ## Terminology
 
 - **OSTIARIUS** — the gatekeeper API: the only path to request a secret from the vault or
-  deposit one into it. Lives in `resolver.py` (boundary substitution) + `cli.py` (the
-  `portunus` command).
+  deposit one into it. **Three entry points, one implementation underneath:** `resolver.py`
+  (boundary substitution) + `cli.py` (the `portunus` command, the terminal), the UI's Next.js
+  API routes (shell out to the CLI), and `mcp_server.py` (`portunus mcp`, an MCP stdio server so
+  other agents/harnesses — not just this one — can query and inject secrets directly, in-process
+  library calls since it's Python-in-the-same-package). No entry point reimplements gating —
+  `Broker.check_injectable`/`Resolver` stay the single implementation everywhere.
 - **ARCA** — the vault store, behind one `SecretBackend` interface, selected per-`Reference` by
   `provider`+`project`: `LocalEncryptedBackend` (default, local-encrypted tier), `GcloudBackend`
   (GCP Secret Manager, keyless via WIF, multi-project via `GcpProjectBinding`), and
