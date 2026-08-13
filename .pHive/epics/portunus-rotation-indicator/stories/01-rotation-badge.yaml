@@ -1,7 +1,7 @@
 id: 01-rotation-badge
 epic: portunus-rotation-indicator
 title: RotationBadge component in Console, Vault Map, DetailDrawer
-status: pending
+status: completed
 complexity: low
 methodology: tdd
 depends_on: []

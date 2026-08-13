@@ -234,6 +234,24 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 .state-revoked { color: var(--crit); background: var(--crit-bg); }
 .state-requested { color: var(--request); background: var(--request-bg); }
 
+.rotation-badge {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  color: var(--warn);
+  background: var(--warn-bg);
+  white-space: nowrap;
+}
+.rotation-badge.prominent {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+}
+
 .chip {
   font-family: var(--font-mono);
   font-size: 0.68rem;
