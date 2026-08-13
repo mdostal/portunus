@@ -1,7 +1,9 @@
 id: 03-display-metadata
 epic: portunus-vault-metadata-ui
 title: Console/VaultMap/DetailDrawer show description/purpose/injected_as
-status: pending
+status: shipped
+shipped_at: "2026-08-13T20:15:00Z"
+release_id: "v0.8.0"
 complexity: low
 methodology: classic
 depends_on: [02-ui-types-and-retag-route]

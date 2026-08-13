@@ -1,7 +1,9 @@
 id: 04-edit-metadata
 epic: portunus-vault-metadata-ui
 title: DetailDrawer's Move form gains metadata fields
-status: pending
+status: shipped
+shipped_at: "2026-08-13T20:15:00Z"
+release_id: "v0.8.0"
 complexity: medium
 methodology: classic
 depends_on: [02-ui-types-and-retag-route]

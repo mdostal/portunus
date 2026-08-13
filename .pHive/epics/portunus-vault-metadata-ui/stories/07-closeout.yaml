@@ -1,7 +1,9 @@
 id: 07-closeout
 epic: portunus-vault-metadata-ui
 title: Build/smoke verification, CHANGELOG, version bump, README note
-status: pending
+status: shipped
+shipped_at: "2026-08-13T20:15:00Z"
+release_id: "v0.8.0"
 complexity: low
 methodology: classic
 depends_on:

@@ -1,7 +1,9 @@
 id: 06-project-explorer-panel
 epic: portunus-vault-metadata-ui
 title: New "Project Explorer" tab -- list + discover + GCP-binding presence indicator
-status: pending
+status: shipped
+shipped_at: "2026-08-13T20:15:00Z"
+release_id: "v0.8.0"
 complexity: high
 methodology: classic
 depends_on: [05-discover-and-list-routes]

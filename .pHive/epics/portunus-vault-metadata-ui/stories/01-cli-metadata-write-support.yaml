@@ -1,7 +1,9 @@
 id: 01-cli-metadata-write-support
 epic: portunus-vault-metadata-ui
 title: reg add/drop --description/--purpose/--injected-as; Registry.retag() extended
-status: pending
+status: shipped
+shipped_at: "2026-08-13T20:15:00Z"
+release_id: "v0.8.0"
 complexity: medium
 methodology: tdd
 depends_on: []

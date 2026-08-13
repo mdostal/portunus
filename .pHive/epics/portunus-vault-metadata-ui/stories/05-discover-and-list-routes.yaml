@@ -1,7 +1,9 @@
 id: 05-discover-and-list-routes
 epic: portunus-vault-metadata-ui
 title: /api/discover (GET diff + POST register) and /api/list routes
-status: pending
+status: shipped
+shipped_at: "2026-08-13T20:15:00Z"
+release_id: "v0.8.0"
 complexity: medium
 methodology: tdd
 depends_on: [01-cli-metadata-write-support]
