@@ -19,6 +19,39 @@ from typing import List, Optional
 
 _VOCAB_FIELDS = ("provider", "project", "env")
 
+# Narrow, explicit keyword sets for intent_kind classification. Whole-word
+# matching only. False-negative-to-fetch (a real add/rotate phrasing that
+# isn't recognized) is the accepted failure mode -- it just means nothing
+# new happens. False-positive-to-add/rotate is what must stay rare, so the
+# list stays small and literal rather than trying to be clever.
+_ADD_KEYWORDS = ("add", "create", "new secret")
+_ROTATE_KEYWORDS = ("rotate", "roll", "regenerate")
+
+
+class ParsedIntent(dict):
+    """A resolved tag dict -- unpack directly via **result, unchanged from
+    parse_intent()'s original contract -- that also carries the classified
+    intent_kind ("fetch" | "add" | "rotate") as an attribute."""
+
+    def __init__(self, tags: dict, intent_kind: str):
+        super().__init__(tags)
+        self.intent_kind = intent_kind
+
+
+def _classify_intent_kind(text_l: str) -> str:
+    is_add = any(re.search(rf"\b{re.escape(kw)}\b", text_l) for kw in _ADD_KEYWORDS)
+    is_rotate = any(re.search(rf"\b{re.escape(kw)}\b", text_l) for kw in _ROTATE_KEYWORDS)
+    if is_add and is_rotate:
+        raise AmbiguousIntent(
+            "request mentions both add and rotate language -- please specify one",
+            candidates=["add", "rotate"],
+        )
+    if is_add:
+        return "add"
+    if is_rotate:
+        return "rotate"
+    return "fetch"
+
 
 class AmbiguousIntent(Exception):
     """parse_intent() could not confidently map text to a single tag set.
@@ -43,12 +76,20 @@ def _collect_vocabulary(registry) -> dict:
     return vocab
 
 
-def parse_intent(text: str, registry) -> dict:
-    """Map `text` to a partial tag dict using vocabulary drawn from `registry`.
+def parse_intent(text: str, registry) -> ParsedIntent:
+    """Map `text` to a ParsedIntent (a tags dict + .intent_kind) using
+    vocabulary drawn from `registry`.
 
     Raises AmbiguousIntent if the text doesn't unambiguously name exactly one
-    value per recognized field, or names nothing recognizable at all.
+    value per recognized field, names nothing recognizable at all, or names
+    conflicting add/rotate language.
+
+    Backward compatible: ParsedIntent IS a dict, so existing callers doing
+    `registry.resolve_by_tags(**parse_intent(...))` are unaffected -- only
+    callers that also want intent_kind need to change.
     """
+    intent_kind = _classify_intent_kind(text.lower())
+
     vocab = _collect_vocabulary(registry)
     text_l = text.lower()
     resolved: dict = {}
@@ -70,4 +111,4 @@ def parse_intent(text: str, registry) -> dict:
             "please specify explicit tags (e.g. provider=vercel,project=mdostal.com)",
             candidates=[],
         )
-    return resolved
+    return ParsedIntent(resolved, intent_kind)
