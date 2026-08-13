@@ -24,6 +24,11 @@ value.
 
 - You already know the exact reference name — use `portunus inject --tags <exact tags>` or
   `portunus resolve` directly; `ask` exists for when you don't.
+- You're not running as this Claude Code session — a different agent or harness that needs
+  Portunus secrets should use the MCP server (`portunus mcp`, registered as `portunus`) instead
+  of shelling out to this CLI. Same gating, same boundary-only guarantee; see README.md's "MCP
+  server — for other agents/harnesses" section for the tool list (`portunus_resolve_to_tempfile`,
+  `portunus_resolve_exec`, etc).
 
 ## Requesting an add or rotate (you still never see the value)
 

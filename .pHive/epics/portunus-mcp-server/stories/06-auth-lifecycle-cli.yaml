@@ -1,0 +1,77 @@
+id: 06-auth-lifecycle-cli
+epic: portunus-mcp-server
+title: portunus auth login/status
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  Bounded auth lifecycle through Portunus, not bare gcloud. `portunus auth login <email>` --
+  a thin subprocess wrapper around `gcloud auth login <email>` (still opens a real browser;
+  Portunus doesn't remove that requirement, it's the single command to remember).
+  `portunus auth status` -- cross-references `gcloud auth list`'s credentialed accounts
+  against every configured binding's account, reporting which bindings' accounts are
+  currently authenticated vs. which are missing/would fail. Explicitly NOT automatic reauth
+  (research-brief scope decision) -- a status report plus a wrapped login command.
+
+acceptance_criteria:
+  - "Given a mocked gcloud runner, when `portunus auth login user@example.com` runs, then it invokes `gcloud auth login user@example.com` and reports success/failure -- never touches any secret value"
+  - "Given gcp-bindings.json has entries for two projects with two different accounts, and a mocked `gcloud auth list` reports one of them credentialed and one not, when `portunus auth status` runs, then it reports each binding's account as authenticated or missing, per-binding"
+  - "Given `portunus auth status --json`, when run, then it returns a machine-readable shape (project -> {account, authenticated: bool})"
+  - "Given no bindings are configured, when `portunus auth status` runs, then it reports that cleanly, not an error"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm gcloud auth list's --format=json output shape (already observed live this session) to parse for cross-referencing against load_gcp_bindings().
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for login's subprocess wrapping and status's cross-referencing logic, using the same mocked-runner pattern established throughout this codebase.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add `auth login`/`auth status` subcommands (extending the existing `auth` subparser, which currently only has `auth gcp`).
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm neither command ever touches a secret value or a minted access token -- login/status operate entirely on account emails and gcloud's own credential metadata.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: The existing `auth gcp` subparser this story extends with sibling `login`/`status` subcommands
+    - path: src/portunus/backend.py
+      purpose: load_gcp_bindings() this story's status command cross-references
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add cmd_auth_login, cmd_auth_status, and their subparsers under the existing `auth` command group
+  - file: tests/test_cli_auth_gcp.py
+    change: Add login/status tests (or a new tests/test_cli_auth_lifecycle.py)
+
+design_decisions:
+  - decision: login/status are bounded convenience wrappers, not automatic reauth
+    rationale: "Research-brief scope decision -- fully automatic reauth requires either a long-lived service-account key (against assert_no_long_lived_cloud_keys()) or real WIF trust (not in scope); the goal is one control surface, not eliminating the browser step entirely"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- account emails and gcloud's own auth-list metadata are not secret values; no new value-handling path introduced."
+  - concern: audit-chain-integrity
+    action: "N/A -- auth lifecycle is account-management, not a secret-access event."
+
+risks:
+  - severity: low
+    description: gcloud auth list's JSON output shape could change across gcloud SDK versions
+    mitigation: Parse defensively (matching the existing gcloud-output-parsing style used in discover.py/backend.py), test against the exact shape already observed live this session
+
+references:
+  - path: .pHive/epics/portunus-mcp-server/docs/design-discussion.md
+    relevant_excerpt: "Slice F -- Auth lifecycle through Portunus"

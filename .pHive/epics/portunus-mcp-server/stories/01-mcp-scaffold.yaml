@@ -1,0 +1,82 @@
+id: 01-mcp-scaffold
+epic: portunus-mcp-server
+title: portunus mcp subcommand + FastMCP stdio server + health tool
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  Add mcp>=1.2.0 to pyproject.toml dependencies. New src/portunus/mcp_server.py module:
+  FastMCP("portunus") instance, one trivial tool (portunus_health -- process-alive check, no
+  registry access, mirrors the UI's deliberately-trivial /api/health) to prove the wiring
+  end-to-end before any real tool logic lands. New `portunus mcp` CLI subcommand
+  (build_parser + cmd_mcp) that calls mcp_server.run_server() (wrapping FastMCP.run()).
+
+acceptance_criteria:
+  - "Given `pip install -e .`, when run, then the mcp package installs as a dependency"
+  - "Given `portunus mcp --help` (argparse), when run, then it's a recognized subcommand"
+  - "Given mcp_server.py's FastMCP instance, when introspected (mcp.list_tools() or equivalent), then portunus_health is registered"
+  - "Given a raw stdio JSON-RPC session against `python -m portunus.mcp_server` (or the equivalent test harness), when tools/call is sent for portunus_health, then it returns a success response with no registry/backend access"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm the exact FastMCP API shape (@mcp.tool() decorator, mcp.run()) from the already-working qdrant-nomic-mcp.py example, and pyproject.toml's current [project.scripts]/[project.dependencies] shape to extend.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the mcp subcommand's argparse wiring and portunus_health's registration/behavior.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add mcp dependency; create mcp_server.py with FastMCP instance + portunus_health tool; wire the `mcp` CLI subcommand.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm portunus_health touches no Registry/Resolver/Backend -- it must be as trivial as the UI's own /api/health, a pure liveness signal.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: pyproject.toml
+      purpose: dependencies/[project.scripts] this story extends
+    - path: src/portunus/cli.py
+      purpose: build_parser()/subcommand pattern this story's `mcp` subcommand follows
+  references:
+    - path: /Users/mdostal/.claude/mcp/qdrant-nomic-mcp.py
+      relevant_excerpt: "from mcp.server.fastmcp import FastMCP; mcp = FastMCP(name); @mcp.tool() def fn(...) -> str: ...; mcp.run()"
+
+files_to_modify:
+  - file: pyproject.toml
+    change: Add mcp>=1.2.0 to dependencies
+  - file: src/portunus/mcp_server.py
+    change: New file -- FastMCP instance, portunus_health tool, run_server() entry point
+  - file: src/portunus/cli.py
+    change: Add `mcp` subcommand (cmd_mcp) calling mcp_server.run_server()
+  - file: tests/test_mcp_server.py
+    change: New test file
+
+design_decisions:
+  - decision: portunus_health is deliberately trivial, mirroring ui/app/api/health/route.ts
+    rationale: "Design-discussion Slice A -- prove the transport/registration wiring works before any tool touches the registry, same incremental-verification discipline used for the UI's own health endpoint"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A this story -- portunus_health has zero path to a value."
+  - concern: audit-chain-integrity
+    action: "N/A -- no secret-access event in this story."
+
+risks:
+  - severity: low
+    description: The mcp SDK's exact API could differ subtly by version from the already-working qdrant-nomic-mcp.py example
+    mitigation: Pin the same minimum version already proven working locally (mcp>=1.2.0, matching qdrant-nomic-mcp.py's own pin) rather than guessing a newer API surface
+
+references:
+  - path: .pHive/epics/portunus-mcp-server/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- portunus mcp scaffold"

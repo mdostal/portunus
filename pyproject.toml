@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "portunus"
-version = "0.10.0"
+version = "0.11.0"
 description = "Secret broker for the Dostal harness: reference registry + boundary-only resolver so plaintext secrets never enter an LLM/agent context."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Mathew Dostal" }]
 keywords = ["secrets", "gcp", "secret-manager", "harness", "llm", "agents"]
-dependencies = ["cryptography>=41"]
+dependencies = ["cryptography>=41", "mcp>=1.2.0,<2.0.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

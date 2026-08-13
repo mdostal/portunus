@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -715,6 +717,63 @@ def cmd_auth_gcp(args) -> int:
     return 0
 
 
+def cmd_auth_login(args) -> int:
+    """Thin wrapper around `gcloud auth login <email>` -- still opens a real
+    browser; Portunus doesn't remove that step, this is just the one command
+    to remember. Never touches a secret value -- only the account email and
+    gcloud's own status output."""
+    if shutil.which("gcloud") is None:
+        return _err("gcloud CLI not found on PATH")
+    try:
+        proc = subprocess.run(
+            ["gcloud", "auth", "login", args.email], capture_output=True, text=True, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return _err(f"gcloud auth login timed out for {args.email}")
+    if proc.returncode != 0:
+        return _err(f"gcloud auth login failed for {args.email}: {proc.stderr.strip()[:200]}")
+    print(f"authenticated: {args.email}")
+    return 0
+
+
+def cmd_auth_status(args) -> int:
+    """Cross-reference every configured GCP project binding's account
+    against gcloud's locally credentialed accounts (`gcloud auth list`) --
+    reports which bindings are authenticated vs. missing, per-binding. Not
+    automatic reauth -- a status report plus `auth login` above it. Account
+    emails and gcloud's own credential list are not secret values."""
+    bindings = load_gcp_bindings()
+    if not bindings:
+        if args.json:
+            print(json.dumps({}))
+        else:
+            print("no bindings configured")
+        return 0
+
+    credentialed = set()
+    if shutil.which("gcloud") is not None:
+        try:
+            proc = subprocess.run(
+                ["gcloud", "auth", "list", "--format=json"], capture_output=True, text=True, timeout=30,
+            )
+            if proc.returncode == 0:
+                credentialed = {entry.get("account", "") for entry in json.loads(proc.stdout or "[]")}
+        except (subprocess.TimeoutExpired, json.JSONDecodeError):
+            credentialed = set()
+
+    report = {
+        project: {"account": binding.account, "authenticated": binding.account in credentialed}
+        for project, binding in bindings.items()
+    }
+    if args.json:
+        print(json.dumps(report))
+        return 0
+    for project, info in report.items():
+        status = "authenticated" if info["authenticated"] else "MISSING"
+        print(f"{project}: {info['account'] or '(no account set)'} -- {status}")
+    return 0
+
+
 def _wif_configured(project: str) -> bool:
     """True iff `project` has a gcp-bindings.json entry with a non-empty
     wif_audience. Boolean only -- the audience string itself is never
@@ -903,6 +962,15 @@ def cmd_tree(args) -> int:
         print(json.dumps({"ungrouped": sorted(ungrouped), "tree": tree, "refs": refs_meta}))
         return 0
     print(_render_tree_text(ungrouped, tree, refs_meta))
+    return 0
+
+
+def cmd_mcp(args) -> int:
+    """Start the Portunus MCP stdio server -- a third OSTIARIUS entry point
+    (alongside this CLI and the UI's API routes) so other agents/harnesses
+    can query and inject secrets directly."""
+    from .mcp_server import run_server
+    run_server()
     return 0
 
 
@@ -1095,6 +1163,14 @@ def build_parser() -> argparse.ArgumentParser:
     auth_gcp.add_argument("--project", default="")
     auth_gcp.add_argument("--audience", default="")
     auth_gcp.set_defaults(func=cmd_auth_gcp)
+    auth_login = auth_sub.add_parser("login", help="wrap `gcloud auth login <email>` -- the one command to remember")
+    auth_login.add_argument("email")
+    auth_login.set_defaults(func=cmd_auth_login)
+    auth_status = auth_sub.add_parser(
+        "status", help="cross-reference configured bindings against gcloud's credentialed accounts",
+    )
+    auth_status.add_argument("--json", action="store_true")
+    auth_status.set_defaults(func=cmd_auth_status)
 
     disc = sub.add_parser(
         "discover",
@@ -1127,6 +1203,11 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--project", default="")
     tr.add_argument("--json", action="store_true", help="machine-readable output (UI/LLM consumer)")
     tr.set_defaults(func=cmd_tree)
+
+    mcp_p = sub.add_parser(
+        "mcp", help="start the Portunus MCP stdio server (for other agents/harnesses)",
+    )
+    mcp_p.set_defaults(func=cmd_mcp)
 
     return p
 

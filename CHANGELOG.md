@@ -4,6 +4,32 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-13
+
+### Added
+
+- **`portunus mcp`** — a stdio [MCP](https://modelcontextprotocol.io) server, a third OSTIARIUS
+  entry point (alongside the CLI and the standalone UI) so other agents/harnesses can query and
+  inject Portunus secrets directly, in-process, without ever asking a human for a key. Eight
+  tools: `portunus_health`, `portunus_list`, `portunus_tree`, `portunus_ask_preview`,
+  `portunus_bindings_show`, `portunus_discover`, `portunus_resolve_to_tempfile`, and
+  `portunus_resolve_exec` — the last two are the injection tools, both using the same dual
+  `name`/`tags` addressing as the CLI's own `inject`/`ask`, never raw `{{secret:NAME}}` syntax.
+- **`portunus_resolve_exec`** — the "make the call for me" tool. Runs a caller-supplied command
+  with a `{{secret}}` marker substituted through a capturing `subprocess.run` (30s timeout, not
+  the CLI's default `execvp`) and returns only `{stdout, stderr, returncode}` — never the
+  resolved command line, on any path including timeouts/exceptions. Verified live against the
+  real Google Generative AI API using the real `personalsites-487021` Gemini key: a real API
+  response came back, the key itself never appeared in the tool's result.
+- **`portunus auth login <email>`** / **`portunus auth status [--json]`** — bounded auth
+  lifecycle through Portunus instead of bare `gcloud`. `login` is a thin wrapper around
+  `gcloud auth login` (still opens a real browser); `status` cross-references every configured
+  `gcp-bindings.json` account against `gcloud auth list`'s credentialed accounts, per-binding.
+  Not automatic reauth by design — a single control surface, not a reauth guarantee.
+- Registered `portunus mcp` in this environment (`claude mcp add --scope user portunus`) and
+  verified end-to-end via a raw JSON-RPC handshake/tools-list/tools-call script (this session
+  cannot attach to a server registered mid-conversation).
+
 ## [0.10.0] - 2026-08-13
 
 ### Added

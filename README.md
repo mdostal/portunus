@@ -9,7 +9,7 @@ their own (Latin, theme-consistent) names:
 
 | Component | Role | Where it lives today |
 |---|---|---|
-| **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project" | `resolver.py` + the `portunus` CLI (`cli.py`) |
+| **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project". **Three entry points, one implementation**: the `portunus` CLI, the standalone UI's API routes, and an MCP stdio server for other agents/harnesses | `resolver.py` + the `portunus` CLI (`cli.py`) + `mcp_server.py` (`portunus mcp`) |
 | **ARCA** | The vault store — **pluggable backends behind one interface**, selected per-Reference by `provider`+`project`, not one global choice: local-encrypted (default), GCP Secret Manager (keyless, via Workload Identity Federation), AWS Secrets Manager (interface-conformant stub — no real AWS calls yet) | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `AWSSecretsManagerBackend`); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
 | **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
@@ -318,6 +318,63 @@ portunus status shared-anthropic
 portunus audit 25     # last 25 access decisions (names + results, never values)
 portunus verify       # prove the hash chain is intact
 ```
+
+## MCP server — for other agents/harnesses
+
+`portunus mcp` starts a stdio [MCP](https://modelcontextprotocol.io) server — a third OSTIARIUS
+entry point (alongside this CLI and the standalone UI) so any MCP-capable agent or harness, not
+just this one, can query and inject Portunus secrets directly, without ever asking a human for a
+key. Same package, same process, no subprocess boundary — the server calls `Registry`/`Resolver`/
+`Broker` in-process, the same way `cli.py` does.
+
+```bash
+claude mcp add --scope user portunus -- portunus mcp
+```
+
+**Tools:**
+
+| Tool | Returns |
+|---|---|
+| `portunus_health` | Liveness check |
+| `portunus_list(project)` | Every reference's metadata for a project — never a value |
+| `portunus_tree(project="")` | Group hierarchy + related links, same shape as `portunus tree --json` |
+| `portunus_ask_preview(request)` | What a plain-language fetch request would resolve to — metadata only, previews, never injects |
+| `portunus_bindings_show(project="")` | Configured GCP project bindings (account/WIF audience) |
+| `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |
+| `portunus_resolve_to_tempfile(name="", tags=None)` | A `0600` temp file **path** holding the resolved value — never the value itself |
+| `portunus_resolve_exec(argv, name="", tags=None)` | `{stdout, stderr, returncode}` from running `argv` with a `{{secret}}` marker substituted — never the resolved command line |
+
+The injection tools use the same **dual addressing** as the CLI's own `inject`/`ask`: give an
+exact `name` (from a prior `portunus_list`/`portunus_tree` call) or `tags` — never raw
+`{{secret:NAME}}` placeholder syntax. `portunus_resolve_exec` is the "make the call for me" tool:
+write a literal `{{secret}}` marker wherever the value belongs, Portunus builds the real
+placeholder and runs the command through a capturing `subprocess.run` (30s timeout) instead of
+the CLI's default `execvp`. A non-zero exit is returned normally, not treated as a tool-level
+error — that's the wrapped command's own semantics, not Portunus's.
+
+**Worked example — "give them the personal Gemini key," without ever handing over the key:**
+
+```python
+portunus_resolve_exec(
+    argv=["curl", "-s", "https://generativelanguage.googleapis.com/v1beta/models?key={{secret}}"],
+    name="personalsites-487021-google_generative_ai_api_key",
+)
+# -> {"stdout": "{...real model list JSON...}", "stderr": "", "returncode": 0}
+# the key itself never appears in the tool's return value, this call's own output, or any log.
+```
+
+### Auth lifecycle through Portunus
+
+```bash
+portunus auth login user@example.com   # thin wrapper around `gcloud auth login` -- the one command to remember
+portunus auth status [--json]          # cross-references every gcp-bindings.json account against `gcloud auth list`
+```
+
+Bounded on purpose — not automatic reauth. `login` still opens a real browser (Portunus doesn't
+remove that step); `status` reports which configured bindings are currently authenticated vs.
+missing, per-project, so a stale credential shows up before an injection call fails on it.
+Neither command ever touches a secret value — only account emails and gcloud's own credential
+metadata.
 
 ## Standalone UI
 
