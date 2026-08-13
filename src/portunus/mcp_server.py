@@ -11,7 +11,8 @@ package, same process, no subprocess boundary needed for that reason alone.
 """
 from __future__ import annotations
 
-from typing import Optional
+import subprocess
+from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -188,6 +189,87 @@ def portunus_resolve_to_tempfile(name: str = "", tags: Optional[dict] = None) ->
     except BackendError as exc:
         return {"error": str(exc)}
     return {"path": path}
+
+
+class _ExecTimeout(Exception):
+    """Sentinel: the subprocess timed out. Deliberately carries no cmd/argv
+    attribute -- str(subprocess.TimeoutExpired) embeds the resolved command
+    line, which may contain a substituted secret value."""
+
+
+class _ExecFailed(Exception):
+    """Sentinel: subprocess.run() raised something other than a timeout
+    (e.g. an invalid executable). Deliberately carries no argv attribute --
+    OSError's own message embeds the argv it was given."""
+
+
+def _capturing_runner(resolved_argv):
+    """The runner Resolver.resolve_exec() calls with the fully-substituted
+    argv -- this is the ONLY place in the process that ever holds a resolved
+    secret value for this tool. Never re-raises the underlying exception:
+    both subprocess.TimeoutExpired and OSError carry the resolved argv on
+    their own attributes/message, so a bare sentinel is raised instead."""
+    try:
+        return subprocess.run(resolved_argv, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise _ExecTimeout() from None
+    except OSError:
+        raise _ExecFailed() from None
+
+
+@mcp.tool()
+def portunus_resolve_exec(argv: List[str], name: str = "", tags: Optional[dict] = None) -> dict:
+    """Run a command with one secret substituted in, and return only the
+    command's result -- never the secret or the resolved command line.
+    Address the secret by exact reference `name` (from a prior
+    portunus_list/portunus_tree/portunus_ask_preview call) OR by `tags` --
+    give one, not both (same dual addressing as portunus_resolve_to_tempfile).
+    In `argv`, write the literal marker "{{secret}}" wherever the value
+    should be substituted, e.g.
+    ["curl", "-H", "x-goog-api-key: {{secret}}", "https://..."] -- you do
+    not need to know or write the reference's own {{secret:NAME}} syntax,
+    Portunus builds that from the resolved reference.
+
+    Returns {"stdout": ..., "stderr": ..., "returncode": ...} from the
+    subprocess (30s timeout). A non-zero returncode is NOT treated as a
+    tool-level error -- it is returned normally for you to interpret; that
+    is the wrapped command's own success/failure semantics, not Portunus's.
+    Fails closed (an "error" key only) on unknown/ambiguous/non-injectable
+    addressing or a timeout/exec failure -- never a resolved value.
+
+    Portunus cannot control what the command you supply chooses to print:
+    if your own command echoes its arguments back (e.g. `echo {{secret}}`),
+    the secret will appear in its stdout, and that stdout IS returned to
+    you as-is. This tool's guarantee is only that Portunus's own return path
+    never independently contains the resolved command line or a value
+    Portunus itself extracted -- it is not a guarantee about a command that
+    deliberately echoes its own input."""
+    registry, _audit, broker, resolver = _build()
+    try:
+        ref = _resolve_address(registry, name, tags)
+    except AddressError as exc:
+        return {"error": str(exc)}
+    except NoMatch:
+        return {"error": f"no reference matches tags: {tags!r}"}
+    except AmbiguousMatch as exc:
+        return {"error": f"ambiguous match: {exc.candidates}"}
+
+    placeholder = f"{{{{secret:{ref.name}}}}}"
+    template_argv = [arg.replace("{{secret}}", placeholder) for arg in argv]
+
+    try:
+        result = resolver.resolve_exec(template_argv, runner=_capturing_runner)
+    except UnknownReference:
+        return {"error": f"unknown reference: {ref.name}"}
+    except (NotInjectable, ApprovalRequired) as exc:
+        return {"error": str(exc)}
+    except BackendError as exc:
+        return {"error": str(exc)}
+    except _ExecTimeout:
+        return {"error": "command timed out after 30s"}
+    except _ExecFailed:
+        return {"error": "command failed to start"}
+    return {"stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}
 
 
 def run_server() -> None:

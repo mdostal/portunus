@@ -274,3 +274,192 @@ def test_resolve_to_tempfile_never_returns_a_value_source_check():
     # variable holding _substitute()'s output outside resolver.resolve_to_tempfile's
     # own return, which already only yields a path.
     assert ".access(" not in src
+
+
+# --- story 05: resolve_exec injection tool (highest scrutiny) -----------
+
+def test_resolve_exec_happy_path_returns_only_process_result(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    monkeypatch.setenv("PORTUNUS_MOCK_SM_X", "the-value")
+
+    captured = {}
+
+    class FakeCompleted:
+        stdout = "ok stdout"
+        stderr = ""
+        returncode = 0
+
+    def fake_run(argv, capture_output, text, timeout):
+        captured["argv"] = argv
+        assert timeout == 30
+        return FakeCompleted()
+
+    monkeypatch.setattr(mcp_server.subprocess, "run", fake_run)
+    result = mcp_server.portunus_resolve_exec(
+        argv=["curl", "-H", "key: {{secret}}", "https://x"], name="x"
+    )
+    assert set(result.keys()) == {"stdout", "stderr", "returncode"}
+    assert result["stdout"] == "ok stdout"
+    assert result["returncode"] == 0
+    # the real value went into the captured argv the fake subprocess saw...
+    assert "the-value" in captured["argv"][2]
+    # ...but never into the tool's own return value.
+    assert "the-value" not in str(result)
+
+
+def test_resolve_exec_by_tags(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x", provider="gcp", project="demo")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    monkeypatch.setenv("PORTUNUS_MOCK_SM_X", "the-value")
+
+    class FakeCompleted:
+        stdout = ""
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(
+        mcp_server.subprocess, "run",
+        lambda argv, capture_output, text, timeout: FakeCompleted(),
+    )
+    result = mcp_server.portunus_resolve_exec(
+        argv=["echo", "{{secret}}"], tags={"provider": "gcp", "project": "demo"}
+    )
+    assert "error" not in result
+
+
+def test_resolve_exec_nonzero_exit_returned_normally(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    monkeypatch.setenv("PORTUNUS_MOCK_SM_X", "the-value")
+
+    class FakeCompleted:
+        stdout = ""
+        stderr = "boom"
+        returncode = 7
+
+    monkeypatch.setattr(
+        mcp_server.subprocess, "run",
+        lambda argv, capture_output, text, timeout: FakeCompleted(),
+    )
+    result = mcp_server.portunus_resolve_exec(argv=["false", "{{secret}}"], name="x")
+    assert "error" not in result
+    assert result["returncode"] == 7
+    assert result["stderr"] == "boom"
+
+
+def test_resolve_exec_timeout_does_not_leak_argv(home, monkeypatch):
+    import subprocess as real_subprocess
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    monkeypatch.setenv("PORTUNUS_MOCK_SM_X", "the-super-secret-value")
+
+    def fake_run(argv, capture_output, text, timeout):
+        raise real_subprocess.TimeoutExpired(cmd=argv, timeout=timeout)
+
+    monkeypatch.setattr(mcp_server.subprocess, "run", fake_run)
+    result = mcp_server.portunus_resolve_exec(argv=["sleep", "{{secret}}"], name="x")
+    assert "error" in result
+    assert set(result.keys()) == {"error"}
+    assert "the-super-secret-value" not in str(result)
+
+
+def test_resolve_exec_oserror_does_not_leak_argv(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    monkeypatch.setenv("PORTUNUS_MOCK_SM_X", "the-super-secret-value")
+
+    def fake_run(argv, capture_output, text, timeout):
+        raise FileNotFoundError(f"no such file: {argv}")
+
+    monkeypatch.setattr(mcp_server.subprocess, "run", fake_run)
+    result = mcp_server.portunus_resolve_exec(argv=["nonexistent", "{{secret}}"], name="x")
+    assert "error" in result
+    assert "the-super-secret-value" not in str(result)
+
+
+def test_resolve_exec_ambiguous_tags(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("a", "sm-a", project="demo")
+    reg.add("b", "sm-b", project="demo")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_exec(argv=["echo", "{{secret}}"], tags={"project": "demo"})
+    assert "error" in result
+    assert "a" in result["error"] and "b" in result["error"]
+
+
+def test_resolve_exec_no_match(home, monkeypatch):
+    from portunus import mcp_server
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_exec(
+        argv=["echo", "{{secret}}"], tags={"project": "nonexistent"}
+    )
+    assert "error" in result
+
+
+def test_resolve_exec_neither_name_nor_tags(home, monkeypatch):
+    from portunus import mcp_server
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_exec(argv=["echo", "{{secret}}"])
+    assert "error" in result
+    assert "name or tags" in result["error"]
+
+
+def test_resolve_exec_unknown_name(home, monkeypatch):
+    from portunus import mcp_server
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_exec(argv=["echo", "{{secret}}"], name="nonexistent")
+    assert "error" in result
+
+
+def test_resolve_exec_dropped_state_fails_closed(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x", state="dropped")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_exec(argv=["echo", "{{secret}}"], name="x")
+    assert "error" in result
+    assert "stdout" not in result
+
+
+def test_resolve_exec_never_leaks_argv_source_check():
+    """AST-level: portunus_resolve_exec's own source never builds or touches
+    a resolved/substituted argv -- resolution happens entirely inside
+    resolver.resolve_exec()/_capturing_runner(), out of this function's own
+    scope, so there is no local variable here that could ever hold a value."""
+    from portunus import mcp_server
+    src = _no_backend_access(mcp_server.portunus_resolve_exec)
+    assert ".access(" not in src
+    assert "_substitute" not in src
+    assert "os.execvp" not in src
+
+
+def test_resolve_exec_capturing_runner_never_leaks_on_exception():
+    """AST-level: the runner's exception handlers never reference the caught
+    exception's own attributes -- subprocess.TimeoutExpired/OSError carry the
+    resolved argv on .cmd/args/str(), so the handlers raise bare sentinel
+    exceptions instead of re-using anything from the caught exception."""
+    from portunus import mcp_server
+    src = _no_backend_access(mcp_server._capturing_runner)
+    assert "str(exc" not in src
+    assert ".cmd" not in src
+    assert ".output" not in src
+    assert ".args" not in src
