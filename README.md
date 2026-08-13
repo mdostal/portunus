@@ -107,7 +107,20 @@ vault.store_session(
     rotation_interval_seconds=900,
 )
 metadata = vault.inspect_session("example.test", "dostal@example.test")
-record = vault.load_session("example.test", "dostal@example.test")
+record = vault.load_session("example.test", "dostal@example.test")  # raises SessionExpired past its TTL
+```
+
+Also available via the CLI — `session load` follows `resolve`'s exact boundary discipline: it
+writes a `0600` temp file and prints only the **path**, never the record:
+
+```bash
+portunus session store example.test dostal@example.test --value-file storage_state.json --ttl-seconds 3600
+portunus session inspect example.test dostal@example.test    # metadata only
+portunus session list                                        # every stored session, metadata only
+path=$(portunus session load example.test dostal@example.test)   # fails closed once expired (--allow-expired to override)
+# ... use "$path" ...
+rm -f "$path"
+portunus session remove example.test dostal@example.test
 ```
 
 ### Find, inject, and ask — metadata-tag lookup and boundary injection

@@ -65,7 +65,7 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   rotation metadata. `load_session()` fails closed with `SessionExpired` once the TTL elapses
   (`allow_expired=True` opts out for metadata-only callers). `inspect_session()`/
   `list_sessions()` return namespace/TTL/rotation/`expired` metadata only, never the session
-  payload. No CLI/UI exposure exists yet — library API only.
+  payload. CLI-exposed as `portunus session store|load|inspect|list|remove` — `load` mirrors `resolve`'s tempfile-only-out discipline exactly (0600 file, path only, never the record on stdout). No UI exposure yet.
 
 ## Key paths
 

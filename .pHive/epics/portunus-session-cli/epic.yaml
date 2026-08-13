@@ -1,0 +1,31 @@
+name: portunus-session-cli
+title: CLI Exposure for Session Storage
+description: >
+  Wires the already-shipped session-storage library API (store_session/load_session/
+  inspect_session/list_sessions/remove_session, v0.4.0) into the CLI as `portunus session
+  store|load|inspect|list|remove`, following the exact boundary discipline already
+  established for secrets (drop's stdin-only-in, resolve's tempfile-only-out).
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [cli, backend]
+  roster: [researcher, technical-writer]
+  per_tag_reasoning:
+    cli: "Five new subcommands wiring an existing library API"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1, 0 findings -- converged immediately)
+    scale: small, design-discussion only
+
+stories:
+  - id: 01-session-cli-commands
+    title: portunus session store|load|inspect|list|remove
+    complexity: medium
+    depends_on: []
