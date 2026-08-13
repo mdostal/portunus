@@ -1,0 +1,147 @@
+project_name: "portunus"
+type: brownfield
+discovered: "2026-08-12"
+source: "README.md + manifest.json + codebase scan (no CLAUDE.md present)"
+
+project_type: framework
+has_ui: true
+
+ship_target:
+  kind: github-release
+  notes: "Matches existing CI/promote.yml dev->main flow. PyPI/pipx publish not yet wired up -- README says 'once published'."
+
+claude_md_summary: |
+  No CLAUDE.md present in this repo. Conventions below are inferred from README.md,
+  manifest.json, module docstrings, and codebase scan.
+
+tech_stack:
+  languages: [python]
+  frameworks: []
+  build_tools: [setuptools]
+  package_managers: [pip, pipx]
+  versions:
+    python: ">=3.9"
+    cryptography: ">=41"
+
+structure:
+  modules:
+    - name: portunus
+      purpose: "Secret broker package: reference registry, boundary-only resolver, approval-gated broker, pluggable backends, hash-chain audit, CLI"
+      source: src/portunus/
+      tests: tests/
+  entry_points:
+    - "portunus (CLI) -> src/portunus/cli.py:main"
+
+architecture:
+  pattern: "Layered request/deposit boundary: Registry (reference metadata only) -> Resolver/OSTIARIUS (boundary-only {{secret:NAME}} substitution) -> Broker/Petitio (approval gate + lifecycle guard) -> SecretBackend/ARCA (MockBackend | LocalEncryptedBackend | GcloudBackend) -> AuditChain (tamper-evident hash-chain log)"
+  di_framework: "manual (constructor injection, no DI framework)"
+  state_management: "n/a -- stateless CLI; state lives in file-backed registry/audit/vault under PORTUNUS_HOME"
+  navigation: "n/a -- CLI subcommands via argparse"
+  data_layer: "Registry (name -> Secret Manager location, never the value) + pluggable SecretBackend implementations"
+
+conventions:
+  naming: "Component names are Latin and theme-consistent (OSTIARIUS, ARCA, Petitio), documented in README and module docstrings"
+  file_organization: "One module per concern under src/portunus/ (registry, resolver, broker, backend, localvault, audit, cli, paths)"
+  branching: "dev -> main/master promotion automated via promote.yml; feature work merged via PR with standard (non-squash) merge commits"
+  commit_messages: "Ticket-prefixed (e.g. 'PAN-7831: ...', 'DOS-78: ...', 'DOS-726 Stage 1') plus scaffold/docs/ci prefixes for non-ticket work"
+
+test_infrastructure:
+  unit:
+    framework: pytest
+    location: tests/
+    count: "6 files (test_registry, test_broker, test_audit, test_localvault, test_resolver, test_cli_drop)"
+    coverage_tool: none
+  integration:
+    framework: "pytest fixtures via conftest.py"
+    location: tests/
+  e2e:
+    framework: "none yet -- Playwright integration is planned (see .pHive/epics/portunus-session-vault story 05)"
+    location: n/a
+    count: 0
+  mocking: "MockBackend (in-memory, first-party) for tests; no mocking library"
+  test_commands:
+    - "pytest -q"
+    - "pip install -e \".[test]\" && pytest"
+
+ci_cd:
+  platform: GitHub Actions
+  workflows: [ci.yml, promote.yml]
+  gating: "ci.yml (shared Pantheon/god CI gate) runs on every PR into dev/main/master, auto-detects python via pyproject.toml and runs pytest; promote.yml auto-opens/reuses a single dev->main PR on push to dev"
+
+documentation_found:
+  - path: README.md
+    content_summary: "Component model (OSTIARIUS/ARCA/Petitio), safety invariants, install/usage for drop/state/resolve, backend selection env vars"
+  - path: manifest.json
+    content_summary: "Dostal harness plugin descriptor -- type core, engine kind tool, UI tab 'Vault' mounted as a link (no UI code lives in this repo yet)"
+  - path: .pHive/epics/portunus-session-vault/
+    content_summary: "In-flight epic (pre-dates this kickoff): durable session vault storage in Arca for Playwright/login sessions, 5 stories, TDD methodology -- likely needs revision given the reframed north_star below"
+
+existing_knowledge:
+  mcp_servers: [posthog, qdrant-nomic, playwright, vibemon]
+  existing_skills: []
+  existing_hooks: []
+
+integrations:
+  cli_tools:
+    linearis: missing
+    frame0: missing
+    codex: detected
+    maestro: missing
+  mcp_servers:
+    firecrawl: missing
+    context7: missing
+    posthog: detected
+    firebase: missing
+    mobile-mcp: missing
+  vaults:
+    obsidian: missing
+
+code_quality:
+  linters: []
+  formatters: []
+  pre_commit:
+    framework: null
+    hooks: []
+  code_snippets:
+    - path: src/portunus/cli.py
+      pattern: argparse-cli-boundary
+      annotation: "OSTIARIUS entrypoint; subcommand dispatch wires Registry+AuditChain+Broker+backend together, never prints a secret value (execs with value in argv, or writes a 0600 temp file and prints only its path)."
+      lines: "1-40"
+    - path: src/portunus/resolver.py
+      pattern: boundary-only-resolver
+      annotation: "Regex-based {{secret:NAME}} placeholder substitution; module docstring documents the non-negotiable invariants directly (value never returned up-stack, never logged, only 3 sink types)."
+      lines: "1-40"
+  test_first_signals:
+    co_located_tests: false
+    test_before_source: inconclusive
+    test_runner_in_precommit: false
+    bdd_keywords: false
+    test_absence: false
+
+project_maturity: early_stage
+
+north_star:
+  goal: >
+    Portunus is a standalone, releasable, containable secret finder/manager -- not just a
+    Dostal-harness plugin. Core capabilities: metadata-indexed secret lookup (resolve "the
+    secret for vercel for mdostal.com" by tags -- provider/project/env/scope -- instead of
+    exact names), boundary-only injection into the real target (HTTP header/body, env var,
+    subprocess env, file) so a value never passes through an LLM/agent turn, agents can
+    semantically ask Portunus to fetch/add/roll a secret without ever seeing the value,
+    fail-closed on ambiguous metadata matches, and an audit log recording ref/target/when
+    (never the value). GCP Secret Manager is the store; Portunus is the resolver+injector
+    layer on top -- that split is decided, not open. Long-term it should also self-declare
+    as an L2 Pantheon plugin (descriptor + lifecycle events) so it can piggyback on the
+    Pantheon host when run as a plugin, while still standing up its own harness integration
+    (skill/CLI) and UI when run standalone.
+  audience: >
+    Standalone product first, plugin second: any developer/team managing secrets across
+    many repos. Dostal-harness/Pantheon plugin integration (manifest.json's "Vault" tab) is
+    a secondary, opt-in surface via the L2 plugin lifecycle, not the primary use case.
+  expected_scale: "Single-developer / low volume today; must scale to many repos and integrations per user over time."
+  pain_points: >
+    .env files get fed to LLMs that repeatedly want to roll/regenerate/delete them -- secret
+    handling needs to be removed from LLM turns entirely: fetched, added, and injected via
+    APIs/skills/tools outside the model's context, with auto-setup that ties a request to the
+    correct secret. A UI is needed so humans can see, add, move, and roll secrets in one
+    place, especially as integrations grow.

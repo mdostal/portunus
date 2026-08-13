@@ -1,0 +1,50 @@
+concerns:
+  - id: documentation
+    name: Documentation Updates
+    description: >
+      When a story changes user-facing behavior, workflow steps, or configuration,
+      corresponding documentation must be updated.
+    applies_when: >
+      Story modifies workflows, schemas, directory structure, configuration files,
+      or adds/removes/renames reference documents
+    planning_prompt: >
+      Which documentation files reference the behavior this story changes?
+      List each doc and what section needs updating.
+    implementation_checklist:
+      - "All docs referencing changed behavior identified"
+      - "Affected sections updated to reflect new behavior"
+      - "No stale references to old behavior remain"
+
+  - id: secret-boundary-invariant
+    name: Secret Boundary Invariant
+    description: >
+      A resolved secret value must never be returned up the call stack, logged, printed
+      to stdout/stderr, or exposed to an LLM/agent context. The only sinks are: a
+      caller-supplied boundary callable, a 0600 temp file the caller deletes, or the argv
+      of an exec'd subprocess. This is Portunus's non-negotiable principle (see README.md).
+    applies_when: >
+      Story touches resolver.py, broker.py, backend.py, localvault.py, or any new
+      injection adapter (HTTP header/body, env var, subprocess env, file)
+    planning_prompt: >
+      Which sink(s) does this change introduce or touch, and how is the "never returned,
+      never logged" invariant enforced/tested for each one?
+    implementation_checklist:
+      - "No new code path returns a resolved value to caller/model-visible state"
+      - "No new code path logs or prints a resolved value"
+      - "Tests assert the value never leaks through the new/changed path"
+
+  - id: audit-chain-integrity
+    name: Audit Chain Integrity
+    description: >
+      Every resolution/gate decision must land in the tamper-evident hash-chain audit
+      log (ref/target/when -- never the value), and `portunus verify` must still prove
+      the chain is untampered after the change.
+    applies_when: >
+      Story adds/changes a resolution path, backend, or gate decision
+    planning_prompt: >
+      Does this change add an audit-log entry point? Does `portunus verify` still pass
+      against a chain that includes the new entry type?
+    implementation_checklist:
+      - "New decision/resolution paths write an audit entry"
+      - "Audit entry never contains the secret value"
+      - "portunus verify passes on a chain including the new entry type"
