@@ -4,6 +4,23 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-13
+
+### Fixed
+
+- **`LocalEncryptedBackend.load_session()` now enforces its own TTL.** Previously an expired
+  session was returned identically to a valid one -- `load_session()` never checked its own
+  `ttl.expires_at` metadata. Raises `SessionExpired` (a `BackendError`) by default;
+  `allow_expired=True` opts out for metadata-only callers.
+
+### Added
+
+- `list_sessions()` -- enumerates every stored session's metadata (namespace/TTL/rotation/
+  `expired`), never a session payload. Skips corrupt/undecryptable entries rather than failing.
+- `inspect_session()` gains an `expired: bool` field.
+- CONTEXT.md documents session-storage vocabulary (`SESSION_SCHEMA`, `store_session`, etc.)
+  that shipped before this release (PAN-7831) but was never written down.
+
 ## [0.3.0] - 2026-08-13
 
 ### Added

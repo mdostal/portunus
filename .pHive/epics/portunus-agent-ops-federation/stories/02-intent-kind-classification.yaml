@@ -1,7 +1,9 @@
 id: 02-intent-kind-classification
 epic: portunus-agent-ops-federation
 title: parse_intent gains intent_kind (fetch/add/rotate), fail-closed to fetch
-status: completed
+status: shipped
+shipped_at: "2026-08-13T13:53:17Z"
+release_id: "v0.3.0"
 complexity: medium
 methodology: tdd
 depends_on: []

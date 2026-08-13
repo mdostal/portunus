@@ -1,7 +1,9 @@
 id: 03-ask-agent-requests
 epic: portunus-agent-ops-federation
 title: portunus ask routes add/rotate intents to Registry.request()
-status: completed
+status: shipped
+shipped_at: "2026-08-13T13:53:17Z"
+release_id: "v0.3.0"
 complexity: medium
 methodology: tdd
 depends_on: ["01-registry-request-and-retag", "02-intent-kind-classification"]

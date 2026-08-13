@@ -1,0 +1,77 @@
+id: 01-session-ttl-enforcement
+epic: portunus-session-ttl-and-list
+title: load_session() enforces TTL expiry; inspect_session() gains expired flag
+status: completed
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  LocalEncryptedBackend.load_session() decrypts and returns a stored session record without
+  ever checking its own ttl.expires_at metadata -- an expired session is returned identically
+  to a valid one. Adds SessionExpired (subclasses BackendError, so existing except BackendError
+  callers are unaffected) and an allow_expired=False default parameter. inspect_session() calls
+  load_session(..., allow_expired=True) so metadata inspection never raises on an expired
+  session, and gains an expired: bool field in its returned view.
+
+acceptance_criteria:
+  - "Given a session stored with a short TTL, when the TTL elapses and load_session() is called without allow_expired, then it raises SessionExpired and does not return the session payload"
+  - "Given the same expired session, when load_session(allow_expired=True) is called, then it returns the full record as before (no behavior change for explicit opt-in callers)"
+  - "Given the same expired session, when inspect_session() is called, then it does not raise and its returned metadata includes expired=true"
+  - "Given a non-expired session, when inspect_session() is called, then its metadata includes expired=false"
+  - "Given SessionExpired is raised, when the exception is inspected, then it is an instance of BackendError (existing except BackendError call sites are unaffected)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm _utc_now()/_format_time()'s exact ISO 8601 format and store_session()'s expires_at computation to reuse the identical comparison primitives (no new date-parsing path).
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for expired-raises-by-default, allow_expired-bypasses, inspect_session-never-raises-shows-expired-flag, non-expired-shows-expired-false, SessionExpired-is-a-BackendError.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add SessionExpired, the allow_expired parameter, the expiry comparison in load_session(), and the expired field in inspect_session()'s view.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the expiry comparison reuses _utc_now()/ISO 8601 parsing consistently (no timezone/clock-skew bug), and that inspect_session's allow_expired=True call is correct.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/localvault.py
+      purpose: load_session()/inspect_session()/store_session() this story extends
+
+files_to_modify:
+  - file: src/portunus/localvault.py
+    change: Add SessionExpired, allow_expired param on load_session(), expired field on inspect_session()
+  - file: tests/test_localvault.py
+    change: Extend with TTL-expiry tests
+
+design_decisions:
+  - decision: SessionExpired subclasses BackendError rather than a new exception hierarchy
+    rationale: "Existing callers already catch BackendError broadly (e.g. cli.py's cmd_resolve); this keeps them correct without requiring a new except clause"
+  - decision: inspect_session() opts into allow_expired=True rather than raising
+    rationale: "The whole point of TTL/rotation metadata is letting a human see that a session is expired -- inspection must never fail closed on the thing it exists to report"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- SessionExpired's message names site/account namespace and expiry time, never the session payload/cookies/tokens."
+  - concern: documentation
+    action: "CONTEXT.md session vocabulary update folded into story 02's closeout."
+
+risks:
+  - severity: medium
+    description: Clock skew or timezone bug in the expiry comparison
+    mitigation: Reuse _utc_now()'s exact UTC-aware comparison primitives rather than introducing a new date-parsing path
+
+references:
+  - path: .pHive/epics/portunus-session-ttl-and-list/docs/design-discussion.md
+    relevant_excerpt: "Slice 1 -- TTL enforcement... inspect_session() calls load_session(..., allow_expired=True)"
