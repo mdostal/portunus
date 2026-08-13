@@ -1,7 +1,9 @@
 id: 04-gcp-discovery
 epic: portunus-vault-metadata
 title: Read-only GCP Secret Manager discovery
-status: pending
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
 complexity: medium
 methodology: tdd
 depends_on: [01-reference-metadata-fields, 03-gcp-project-binding-backend]

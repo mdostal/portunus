@@ -1,7 +1,9 @@
 id: 07-closeout
 epic: portunus-vault-metadata
 title: ARCA/OSTIARIUS README narrative, CONTEXT.md, version bump, changelog
-status: pending
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
 complexity: low
 methodology: tdd
 depends_on:

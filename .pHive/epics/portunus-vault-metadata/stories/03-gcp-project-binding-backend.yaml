@@ -1,7 +1,9 @@
 id: 03-gcp-project-binding-backend
 epic: portunus-vault-metadata
 title: Multi-project GCP backend with WIF credential binding
-status: pending
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
 complexity: high
 methodology: tdd
 depends_on: [02-port-wif-auth-module]

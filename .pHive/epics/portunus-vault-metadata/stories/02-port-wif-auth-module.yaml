@@ -1,7 +1,9 @@
 id: 02-port-wif-auth-module
 epic: portunus-vault-metadata
 title: Port keyless WIF/OIDC auth module from dos-81-keyless-wif
-status: pending
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
 complexity: medium
 methodology: tdd
 depends_on: []

@@ -1,7 +1,9 @@
 id: 05-list-by-project-query
 epic: portunus-vault-metadata
 title: LLM-facing "list keys for project" query
-status: pending
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
 complexity: medium
 methodology: tdd
 depends_on: [01-reference-metadata-fields]

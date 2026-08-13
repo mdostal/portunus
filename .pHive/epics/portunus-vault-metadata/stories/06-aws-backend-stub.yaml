@@ -1,7 +1,9 @@
 id: 06-aws-backend-stub
 epic: portunus-vault-metadata
 title: AWS Secrets Manager backend stub
-status: pending
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
 complexity: low
 methodology: tdd
 depends_on: []
