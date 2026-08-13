@@ -1,7 +1,7 @@
 id: 02-session-api
 epic: portunus-session-vault
 title: Core Session API (save/load/list/revoke)
-status: pending
+status: partial  # see epic.yaml -> reconciliation: store/load/inspect/remove exist, but load_session has no TTL-expiry enforcement and there is no list-sessions capability
 complexity: medium
 methodology: tdd
 depends_on:

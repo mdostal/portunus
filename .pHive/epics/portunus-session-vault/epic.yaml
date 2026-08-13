@@ -4,6 +4,54 @@ description: Persist Playwright and login sessions durably as secrets using Arca
 target_codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
 methodology: tdd
 version_bump: minor
+status: needs-replanning
+
+reconciliation:
+  performed_by: portunus-standalone-core story 07 (glossary-verify-closeout), 2026-08-12
+  finding: >
+    Every story's `context.codebase`/`key_files` in this epic points at
+    `target_codebase` above -- a Minerva ephemeral run workspace, not this repo --
+    and reference TypeScript files that have never existed here (src/arca/vault.ts,
+    src/portunus/api.ts, src/ostiarius/gate.ts, src/cli/index.ts,
+    tests/e2e/playwright.config.ts; this repo is Python, src/portunus/*.py). This
+    epic was planned against a different/orphaned target and committed here by
+    mistake (commit cef6983 "plan(be0f019c...): commit planned work so build
+    agents can execute") -- consistent with the broader Pantheon multi-repo
+    duplication problem the user flagged separately (orphaned Minerva run outputs
+    landing in the wrong repo).
+
+    HOWEVER: checking actual shipped code (not just this epic's stories) found
+    story 01's real subject matter -- Arca session storage with TTL/rotation
+    metadata, namespaced per site/account -- already landed directly in this repo
+    via a SEPARATE, unrelated PR (commit 4f42a51, "PAN-7831: add Arca session
+    vault storage") -- see `LocalEncryptedBackend.store_session/load_session/
+    inspect_session/remove_session` in `src/portunus/localvault.py` and
+    `tests/test_localvault.py`. That work did not go through this epic's stories
+    at all; it's a case of the same capability being delivered through a
+    different, untracked path while this epic's own stories sat orphaned.
+  disposition: >
+    Per-story, not blanket:
+    - 01-arca-storage-model: DONE, but via PAN-7831 outside this epic's own
+      story -- store/load/inspect/remove_session all exist with TTL+rotation
+      metadata, tested, boundary-safe (verified: never logs/prints the session).
+    - 02-session-api: PARTIAL. store/load/inspect/remove(=revoke) exist at the
+      library level, but load_session does NOT enforce TTL expiry (returns an
+      expired session silently -- acceptance criterion violated) and there is no
+      "list all sessions" capability. Real, open gap.
+    - 03-ostiarius-gate, 04-cli-broker-seam, 05-playwright-integration-tests:
+      NOT done. No role-scoped gate, no CLI session subcommand, no Playwright
+      integration exists anywhere in this repo. Genuinely distinct capabilities
+      from tag-based secret lookup (portunus-standalone-core), not superseded by
+      it -- these still represent real, valuable, unstarted work.
+  recommendation: >
+    Don't resume these 5 stories as literally written (wrong file paths). Instead:
+    (a) close 01 as done-elsewhere, pointing at PAN-7831; (b) re-plan 02's TTL-
+    expiry-enforcement gap and a list-sessions capability as a small story against
+    the real localvault.py; (c) re-plan 03/04/05 fresh against this repo's actual
+    structure if session-based Playwright auth is still wanted -- they're valid,
+    just never correctly targeted.
+  stories_status: see each story's own status field (not a blanket value)
+
 stories:
   - id: 01-arca-storage-model
     title: Arca Vault Storage Model for Sessions

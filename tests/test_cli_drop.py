@@ -76,3 +76,25 @@ def test_drop_never_writes_plaintext_to_disk_or_audit(home):
 def test_drop_requires_stdin_or_value_file(home, capsys):
     with pytest.raises(SystemExit):
         main(["drop", "shared-test", "dostal-shared-test"])
+
+
+def test_drop_accepts_provider_project_env_tags(home, capsys):
+    """story 06 prep: the UI's add-secret form needs the full tag schema
+    from story 01 available on drop, not just legacy scope/kind."""
+    value_file = home / "value.txt"
+    value_file.write_text(SECRET + "\n")
+
+    rc = main([
+        "drop", "vercel-mdostal", "sm-vercel-mdostal", "--value-file", str(value_file),
+        "--provider", "vercel", "--project", "mdostal.com", "--env", "prod",
+        "--tags", "team=platform",
+    ])
+    assert rc == 0
+
+    from portunus import Registry
+    ref = Registry().require("vercel-mdostal")
+    assert ref.provider == "vercel"
+    assert ref.project == "mdostal.com"
+    assert ref.env == "prod"
+    assert ref.tags == {"team": "platform"}
+    assert ref.state == "dropped"

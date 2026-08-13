@@ -1,7 +1,7 @@
 id: 03-ostiarius-gate
 epic: portunus-session-vault
 title: Ostiarius Role-Scoped Access Gate
-status: pending
+status: needs-replanning  # see epic.yaml -> reconciliation: valid, unstarted capability, but this story's file paths target a different (wrong) codebase
 complexity: medium
 methodology: tdd
 depends_on:

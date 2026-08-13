@@ -1,0 +1,72 @@
+id: 02-cli-tag-query
+epic: portunus-standalone-core
+title: CLI tag-query consumer (portunus find)
+status: completed
+complexity: low
+methodology: tdd
+depends_on: ["01-tag-schema-migration-lock"]
+
+description: |
+  First real, working consumer of resolve_by_tags(). Adds `portunus find --tags k=v,...`
+  which prints matching reference metadata (never a value) or a clear error for the
+  no-match/ambiguous cases, with distinct exit codes so scripts can branch on the failure mode.
+
+acceptance_criteria:
+  - "Given --tags matching exactly one reference, when `portunus find` runs, then it prints that reference's metadata (name, tags, state) and exits 0"
+  - "Given --tags matching zero references, when `portunus find` runs, then it prints a clear no-match error and exits non-zero"
+  - "Given --tags matching more than one reference, when `portunus find` runs, then it prints every candidate name and exits with a distinct non-zero code from the no-match case"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm argparse subcommand wiring pattern in cli.py (existing subcommands' structure).
+    agent: researcher
+  - id: test-spec
+    description: Write failing CLI integration tests for match/no-match/ambiguous outcomes and their exit codes.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add the find subcommand wired to resolve_by_tags().
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no value is ever printed (metadata-only output) and exit codes are distinct.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: Existing argparse subcommand structure this story extends
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add `find` subcommand parsing --tags into kwargs for resolve_by_tags()
+  - file: tests/test_cli_find.py
+    change: New test file — CLI integration tests for the three outcomes
+
+design_decisions:
+  - decision: Distinct exit codes for NoMatch vs AmbiguousMatch
+    rationale: "Structured-outline Part 2 Phase 2: lets scripts branch on the failure mode instead of parsing stderr text"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Applies — output must be metadata only, never a value. Test asserts no value-shaped string in stdout."
+  - concern: audit-chain-integrity
+    action: "N/A — read-only query, no resolution/gate decision to audit."
+  - concern: documentation
+    action: "README.md Usage section gains a `find` example (tracked as part of story 07's doc pass, not blocking this story)."
+
+risks:
+  - severity: low
+    description: Exit code collision with existing subcommands' error codes
+    mitigation: Review existing cli.py exit-code conventions before assigning new ones
+
+references:
+  - path: .pHive/epics/portunus-standalone-core/docs/structured-outline.md
+    relevant_excerpt: "Phase 2: CLI tag-query consumer — first real, working consumer of resolve_by_tags()."

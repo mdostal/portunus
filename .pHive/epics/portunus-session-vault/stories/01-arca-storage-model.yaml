@@ -1,7 +1,7 @@
 id: 01-arca-storage-model
 epic: portunus-session-vault
 title: Arca Vault Storage Model for Sessions
-status: pending
+status: done-elsewhere  # see epic.yaml -> reconciliation: shipped via PAN-7831 (commit 4f42a51), outside this epic
 complexity: medium
 methodology: tdd
 depends_on: []

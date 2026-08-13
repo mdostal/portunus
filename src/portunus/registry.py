@@ -8,17 +8,40 @@ the resolver.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Dict, Iterator, Optional
+from typing import Dict, Iterator, List, Optional
 
 from .paths import home
 
 # Lifecycle states, mirroring bin/secrets. "enabled"/"locked" are injectable;
 # "dropped"/"revoked" fail closed.
 VALID_STATES = ("enabled", "locked", "dropped", "revoked")
+
+# Tag keys resolved against Reference's own fields; anything else is looked
+# up in the open `tags` dict. Keep in sync with Reference's structured fields.
+_STRUCTURED_TAG_FIELDS = ("provider", "project", "env", "scope", "kind")
+
+
+class NoMatch(KeyError):
+    """resolve_by_tags() found zero references matching the given tags."""
+
+
+class AmbiguousMatch(KeyError):
+    """resolve_by_tags() found more than one match. Never guesses -- fails closed."""
+
+    def __init__(self, candidates: List[str]):
+        self.candidates = candidates
+        super().__init__(f"ambiguous match: {candidates!r}")
+
+
+class RegistryLocked(RuntimeError):
+    """Could not acquire the registry write lock within the timeout."""
 
 
 @dataclass
@@ -32,16 +55,30 @@ class Reference:
     state: str = "enabled"
     approval: str = ""   # "required" if access is gated
     sm_path: str = ""    # projects/<p>/secrets/<sm_name> (informational)
+    provider: str = ""   # e.g. "vercel", "gcp", "github"
+    project: str = ""    # e.g. a project/site slug such as "mdostal.com"
+    env: str = ""        # e.g. "prod" | "staging" | "dev"
+    tags: dict = field(default_factory=dict)  # open, forward-compat key/value tags
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    def matches_tag(self, key: str, value: str) -> bool:
+        """Exact-value match only -- never substring/fuzzy. See resolve_by_tags()."""
+        if key in _STRUCTURED_TAG_FIELDS:
+            return getattr(self, key) == value
+        return self.tags.get(key) == value
 
 
 class Registry:
     """A JSON-backed map of reference name -> Reference. 0600 on disk."""
 
-    def __init__(self, path: Optional[Path] = None):
+    _LOCK_POLL_INTERVAL = 0.02
+
+    def __init__(self, path: Optional[Path] = None, lock_timeout: float = 5.0):
         self.path = Path(path) if path else home() / "registry.json"
+        self.lock_path = self.path.with_suffix(".lock")
+        self.lock_timeout = lock_timeout
         self._data: Dict[str, Reference] = {}
         self._load()
 
@@ -64,6 +101,40 @@ class Registry:
         os.replace(tmp, self.path)
         os.chmod(self.path, 0o600)
 
+    @contextmanager
+    def _locked(self):
+        """Serialize mutation across processes/threads sharing this registry file.
+
+        Acquires an exclusive flock (bounded by lock_timeout, else RegistryLocked),
+        reloads the freshest on-disk state so this instance never overwrites a
+        sibling writer's update with a stale in-memory copy, yields for the
+        mutation, then flushes and releases.
+        """
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(self.lock_path, "w")
+        deadline = time.monotonic() + self.lock_timeout
+        acquired = False
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except OSError:
+                    time.sleep(self._LOCK_POLL_INTERVAL)
+            if not acquired:
+                raise RegistryLocked(
+                    f"could not acquire registry lock within {self.lock_timeout}s "
+                    f"({self.lock_path})"
+                )
+            self._load()
+            yield
+            self._flush()
+        finally:
+            if acquired:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+            fh.close()
+
     # --- mutation --------------------------------------------------------
     def add(
         self,
@@ -74,38 +145,60 @@ class Registry:
         state: str = "enabled",
         approval: str = "",
         project: str = "",
+        provider: str = "",
+        env: str = "",
+        tags: Optional[dict] = None,
     ) -> Reference:
         """Register (or overwrite) a reference. Value is never accepted here."""
         if state not in VALID_STATES:
             raise ValueError(f"invalid state: {state!r} (want one of {VALID_STATES})")
         sm_path = f"projects/{project}/secrets/{sm_name}" if project else ""
-        ref = Reference(
-            name=name, sm_name=sm_name, scope=scope, kind=kind,
-            state=state, approval=approval, sm_path=sm_path,
-        )
-        self._data[name] = ref
-        self._flush()
+        with self._locked():
+            ref = Reference(
+                name=name, sm_name=sm_name, scope=scope, kind=kind,
+                state=state, approval=approval, sm_path=sm_path,
+                provider=provider, project=project, env=env, tags=dict(tags or {}),
+            )
+            self._data[name] = ref
         return ref
 
     def remove(self, name: str) -> bool:
-        existed = self._data.pop(name, None) is not None
-        if existed:
-            self._flush()
+        with self._locked():
+            existed = self._data.pop(name, None) is not None
         return existed
 
     def set_state(self, name: str, state: str) -> Reference:
         if state not in VALID_STATES:
             raise ValueError(f"invalid state: {state!r}")
-        ref = self.require(name)
-        ref.state = state
-        self._flush()
+        with self._locked():
+            ref = self.require(name)
+            ref.state = state
         return ref
 
     def set_approval(self, name: str, required: bool) -> Reference:
-        ref = self.require(name)
-        ref.approval = "required" if required else ""
-        self._flush()
+        with self._locked():
+            ref = self.require(name)
+            ref.approval = "required" if required else ""
         return ref
+
+    def migrate_legacy_tags(self) -> int:
+        """Additively copy scope/kind into tags{} for references that have no
+        tags yet. Never touches scope/kind. Idempotent -- a reference with
+        tags already set (from this or a prior migration) is left alone."""
+        migrated = 0
+        with self._locked():
+            for ref in self._data.values():
+                if ref.tags:
+                    continue
+                new_tags = {}
+                if ref.scope:
+                    new_tags["scope"] = ref.scope
+                if ref.kind:
+                    new_tags["kind"] = ref.kind
+                if new_tags:
+                    ref.tags = new_tags
+                    migrated += 1
+        return migrated
 
     # --- lookup ----------------------------------------------------------
     def get(self, name: str) -> Optional[Reference]:
@@ -116,6 +209,23 @@ class Registry:
         if ref is None:
             raise KeyError(name)
         return ref
+
+    def resolve_by_tags(self, **partial_tags: str) -> Reference:
+        """Fail-closed tag resolution: exactly one match or an explicit error.
+
+        Never guesses. Zero matches raises NoMatch; more than one match raises
+        AmbiguousMatch (never silently picks one) with every candidate name.
+        Matching is exact-value only -- no substring/fuzzy matching, ever.
+        """
+        matches = [
+            ref for ref in self._data.values()
+            if all(ref.matches_tag(k, v) for k, v in partial_tags.items())
+        ]
+        if not matches:
+            raise NoMatch(f"no reference matches tags: {partial_tags!r}")
+        if len(matches) > 1:
+            raise AmbiguousMatch([m.name for m in matches])
+        return matches[0]
 
     def __contains__(self, name: object) -> bool:
         return name in self._data

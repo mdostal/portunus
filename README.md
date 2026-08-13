@@ -110,6 +110,29 @@ metadata = vault.inspect_session("example.test", "dostal@example.test")
 record = vault.load_session("example.test", "dostal@example.test")
 ```
 
+### Find, inject, and ask — metadata-tag lookup and boundary injection
+
+References carry structured tags (`provider`/`project`/`env`, plus an open `tags{}` dict)
+alongside legacy `scope`/`kind`. Lookup by tags is **fail-closed**: zero or more-than-one match
+is always an explicit error, never a guess.
+
+```bash
+# Find a reference by tags -- metadata only, never a value:
+portunus find --tags provider=vercel,project=mdostal.com,env=prod
+
+# Resolve by tags and inject directly at a boundary target:
+portunus inject --tags provider=vercel,project=mdostal.com,env=prod --target env --var VERCEL_TOKEN
+portunus inject --tags provider=vercel,project=mdostal.com,env=prod --target file --format env --key VERCEL_TOKEN --path ./.env.local
+
+# Semantic front door -- plain-language request instead of exact tags:
+portunus ask "the vercel secret for mdostal.com in prod" --target env --var VERCEL_TOKEN
+portunus ask "the vercel secret for mdostal.com in prod"   # resolve-only preview, no injection
+```
+
+`ask` never guesses either: an unrecognized or ambiguous request gets a clarifying question
+on stderr instead of a pick. A thin Claude skill at `.claude/skills/portunus-ask/` wraps `ask`
+for agent tool-call use.
+
 ### Resolve at the boundary
 
 Exec mode — plaintext exists only in the child process argv, nothing is written to disk:
@@ -143,6 +166,23 @@ portunus audit 25     # last 25 access decisions (names + results, never values)
 portunus verify       # prove the hash chain is intact
 ```
 
+## Standalone UI
+
+A localhost-only Next.js app under `ui/` — Console (default tab, faceted table + detail
+drawer), Vault Map (second tab, cards grouped by provider/project), and an Ask Bar (persistent
+side panel across both, backed by `portunus ask`). No gating logic is duplicated in
+TypeScript: every API route under `ui/app/api/` shells out to the same `portunus` console
+script the CLI uses, so `Broker.check_injectable` stays the single, only implementation of the
+gate. The add-secret form is the one deliberate human-plaintext-entry point (mirroring
+`portunus drop --stdin`) — a value is piped to the CLI via stdin only, never an argv element,
+never logged.
+
+```bash
+cd ui
+npm install
+npm run dev   # http://localhost:3000
+```
+
 ## Library API
 
 ```python
@@ -174,13 +214,17 @@ log, or a non-`0600` file.
 
 ```
 src/portunus/
-  registry.py    reference registry (name -> SM path); no value field
+  registry.py    reference registry (name -> SM path); tags/provider/project/env; no value field
   backend.py     ARCA — SecretBackend protocol; MockBackend (tests) + GcloudBackend (Stage 2+)
   localvault.py  ARCA — LocalEncryptedBackend, the Stage 1 default (encrypted at rest)
   broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit
   audit.py       tamper-evident hash-chain access log
   resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
+  adapters.py    boundary injection adapters (env var, file, HTTP header, HTTP body)
+  intent.py      semantic front door — natural language -> tag set (portunus ask)
   cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
+ui/              standalone localhost-only UI (Console / Vault Map / Ask Bar)
+.claude/skills/portunus-ask/  thin Claude skill wrapping `portunus ask`
 manifest.json    Dostal plugin manifest (type: core, engine: tool)
 ```
 

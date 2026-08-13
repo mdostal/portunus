@@ -1,0 +1,84 @@
+id: 04-semantic-front-door
+epic: portunus-standalone-core
+title: Semantic agent-facing front door (portunus ask + Claude skill)
+status: completed
+complexity: medium
+methodology: tdd
+depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters"]
+
+description: |
+  Lets an agent (or human) express intent in natural language ("inject the vercel secret for
+  mdostal.com into env") via `portunus ask` or a thin Claude skill wrapper. parse_intent()
+  maps text to a concrete tag set using deterministic matching against known registry
+  vocabulary (not a general NLP model) and fails closed with a clarifying question on any
+  ambiguity — the same "no fuzzy fallback, ever" contract as resolve_by_tags(), applied one
+  layer up. Add/rotate stay CLI-drop-only; this story is fetch/inject only.
+
+acceptance_criteria:
+  - "Given a request naming known provider/project/env vocabulary unambiguously, when portunus ask runs, then it resolves to a single tag set and dispatches to the appropriate adapter"
+  - "Given a request that plausibly matches more than one provider/project/env combination, when portunus ask runs, then it raises AmbiguousIntent with a clarifying question and candidate list, never a best guess"
+  - "Given a resolved semantic request, when it completes, then a semantic_op audit entry is written containing the resolved tag set and outcome — never the raw request text or the value"
+  - "Given a chain containing semantic_op entries, when portunus verify runs, then it passes"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm story 03's adapter dispatch interface to reuse from the semantic front door.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for parse_intent (unambiguous resolution, ambiguous-fails-closed) and the semantic_op audit entry shape.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement intent.py (parse_intent, AmbiguousIntent), the ask CLI subcommand, the Claude skill wrapper, and the semantic_op audit entry type.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm parse_intent's known-vocabulary matching cannot silently guess on ambiguous input.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: resolve_by_tags() and stored tag vocabulary that parse_intent draws its known-terms list from
+
+files_to_modify:
+  - file: src/portunus/intent.py
+    change: New file — parse_intent(), AmbiguousIntent
+  - file: src/portunus/cli.py
+    change: Add `ask` subcommand
+  - file: src/portunus/audit.py
+    change: Add semantic_op entry type
+  - file: .claude/skills/portunus-ask/SKILL.md
+    change: New thin skill wrapping `portunus ask` for agent tool-call use
+  - file: tests/test_intent.py
+    change: New test file
+
+design_decisions:
+  - decision: Deterministic keyword/pattern matching against known registry vocabulary, not a general NLP model
+    rationale: "Structured-outline Part 7 assumption: fail-closed requirement means the cost of being wrong is a clarifying question, not a wrong injection — acceptable v1 simplicity"
+  - decision: semantic_op audit entries never store the raw request text
+    rationale: "Grill C2 / design-discussion §2: avoid accidentally logging something sensitive typed into the request"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Applies to the dispatch step (reuses story 03's adapters) — no new leak surface introduced by parsing itself, since parse_intent only ever produces a tag set, never touches a value."
+  - concern: audit-chain-integrity
+    action: "New semantic_op entry type. portunus verify test against a chain including it is required."
+  - concern: documentation
+    action: "README.md Usage section gains an `ask` example (tracked in story 07)."
+
+risks:
+  - severity: medium
+    description: parse_intent's vocabulary is too small/rigid, frustrating the semantic-ask goal without being unsafe
+    mitigation: Manual testing against realistic-sounding requests beyond the unit-test fixture set; acceptable to ship stricter-than-ideal in v1 (usability gap, not safety gap)
+
+references:
+  - path: .pHive/epics/portunus-standalone-core/docs/structured-outline.md
+    relevant_excerpt: "Phase 4: Semantic front door — parse_intent fails closed at the parsing step too, same contract as resolve_by_tags()."

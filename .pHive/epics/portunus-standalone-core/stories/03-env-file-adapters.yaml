@@ -1,0 +1,94 @@
+id: 03-env-file-adapters
+epic: portunus-standalone-core
+title: Env-var and file injection adapters (portunus inject)
+status: completed
+complexity: medium
+methodology: tdd
+depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query"]
+
+description: |
+  Boundary-only injection into a process env var or a templated file (.env/JSON/YAML), via
+  a new `portunus inject` subcommand and a SecretAdapter abstraction. Every injection produces
+  an adapter_resolution audit entry (ref, adapter kind, target descriptor — never the value).
+  This is the first story that actually handles a resolved plaintext value, so the boundary-
+  invariant tests are the load-bearing verification, not a formality.
+
+acceptance_criteria:
+  - "Given a resolved reference and --target env --var NAME, when portunus inject runs, then NAME is set in the process environment and the value is never printed, returned, or logged"
+  - "Given a resolved reference and --target file --format env|json|yaml, when portunus inject runs, then a 0600 file is written with the value templated under the given key"
+  - "Given an adapter injection succeeds or fails, when either happens, then an adapter_resolution audit entry is written (ref, adapter kind, target descriptor, timestamp — never the value)"
+  - "Given a chain containing adapter_resolution entries, when portunus verify runs, then it passes"
+  - "Given an adapter's injection fails, when the resulting exception is inspected, then its message never contains the value"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm the existing 0600 temp-file discipline in resolver.py and the three current boundary sinks to extend consistently.
+    agent: researcher
+  - id: test-spec
+    description: |
+      Write failing boundary-invariant tests FIRST (sentinel-value grep across return values,
+      exceptions, and any log output) for both adapters, plus functional and audit-entry tests.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement adapters.py (EnvVarAdapter, FileAdapter), the inject CLI subcommand, and the adapter_resolution audit entry type.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Adversarial review specifically for the failure-path leak scenario (exception messages, f-strings including the value).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/resolver.py
+      purpose: Existing boundary-only sink pattern (callable / temp-file / subprocess argv) to extend
+    - path: src/portunus/audit.py
+      purpose: Hash-chain audit log this story adds a new entry type to
+
+files_to_modify:
+  - file: src/portunus/adapters.py
+    change: New file — SecretAdapter protocol, EnvVarAdapter, FileAdapter
+  - file: src/portunus/cli.py
+    change: Add `inject` subcommand
+  - file: src/portunus/audit.py
+    change: Add adapter_resolution entry type
+  - file: tests/test_adapters.py
+    change: New test file — boundary-invariant + functional + audit tests
+
+code_examples:
+  - title: Existing boundary-only sink discipline to match
+    file: src/portunus/resolver.py
+    snippet: |
+      # the only sinks for a resolved value are: a caller-supplied boundary
+      # callable, a 0600 temp file the caller must delete, or the argv of an
+      # exec'd subprocess
+
+design_decisions:
+  - decision: Ship env+file adapters before HTTP header/body
+    rationale: "Design-discussion Q5 default call: lowest risk, closest to today's existing sinks"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Core to this story. Boundary-invariant tests (sentinel-grep on return/exception/log) are mandatory for both adapters, including their failure paths."
+  - concern: audit-chain-integrity
+    action: "New adapter_resolution entry type. portunus verify test against a chain including it is required before this story is complete."
+  - concern: documentation
+    action: "README.md Usage section gains an `inject` example (tracked in story 07)."
+
+risks:
+  - severity: high
+    description: An adapter's failure path leaks the value via an exception message
+    mitigation: Boundary-invariant tests explicitly exercise the failure path, not just the happy path (per structured-outline Part 7 finding #2)
+
+references:
+  - path: .pHive/epics/portunus-standalone-core/docs/structured-outline.md
+    relevant_excerpt: "Phase 3 verification: boundary-invariant tests (sentinel-value grep across output/exceptions/logs) are the load-bearing verification here."
+  - path: .pHive/cross-cutting-concerns.yaml
+    relevant_excerpt: "secret-boundary-invariant — no new code path returns/logs/prints a resolved value; tests assert this for every sink."

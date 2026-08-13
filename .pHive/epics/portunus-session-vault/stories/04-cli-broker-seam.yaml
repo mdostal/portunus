@@ -1,7 +1,7 @@
 id: 04-cli-broker-seam
 epic: portunus-session-vault
 title: CLI and Broker Seam Integration
-status: pending
+status: needs-replanning  # see epic.yaml -> reconciliation: valid, unstarted capability, but this story's file paths target a different (wrong) codebase
 complexity: low
 methodology: tdd
 depends_on:
