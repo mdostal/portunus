@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cleanError, runPortunus } from "@/lib/portunus";
+import { cleanError, runPortunus, tagsToArg } from "@/lib/portunus";
 
 // Metadata-only Move action. Shells out to `portunus retag` -- the
 // collision check lives entirely in Registry.retag() (Python); this route
@@ -16,10 +16,14 @@ export async function POST(req: NextRequest) {
   if (body.project !== undefined) args.push("--project", String(body.project));
   if (body.env !== undefined) args.push("--env", String(body.env));
   if (body.tags !== undefined) {
-    const tags = typeof body.tags === "string"
-      ? body.tags
-      : Object.entries(body.tags as Record<string, string>).map(([k, v]) => `${k}=${v}`).join(",");
+    const tags = tagsToArg(body.tags);
     if (tags) args.push("--tags", tags);
+  }
+  if (body.description !== undefined) args.push("--description", String(body.description));
+  if (body.purpose !== undefined) args.push("--purpose", String(body.purpose));
+  if (body.injected_as !== undefined) {
+    const injectedAs = tagsToArg(body.injected_as);
+    if (injectedAs) args.push("--injected-as", injectedAs);
   }
 
   const result = await runPortunus(args);

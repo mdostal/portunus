@@ -12,6 +12,9 @@ export interface PortunusReference {
   project: string;
   env: string;
   tags: Record<string, string>;
+  description: string;
+  purpose: string;
+  injected_as: Record<string, string>;
 }
 
 export interface AuditEntry {
