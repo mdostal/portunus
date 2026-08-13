@@ -19,7 +19,7 @@ from typing import List, Optional
 from . import __version__
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
-from .backend import BackendError, GcloudBackend, MockBackend, load_gcp_bindings
+from .backend import AWSSecretsManagerBackend, BackendError, GcloudBackend, MockBackend, load_gcp_bindings
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -57,6 +57,10 @@ def _build(project: str = ""):
             bindings=load_gcp_bindings(),
             audit=audit,
         )
+    elif backend_kind == "aws":
+        # Stub: fails clearly rather than silently falling through to the
+        # local-encrypted default (grill V1 -- the real pre-epic gap).
+        backend = AWSSecretsManagerBackend()
     else:
         # Stage 1 default: the local-encrypted ARCA tier. No plaintext ever
         # leaves this machine, let alone an LLM context.

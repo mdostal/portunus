@@ -57,6 +57,8 @@ files_to_modify:
 design_decisions:
   - decision: Stub raises immediately on access(), with zero AWS SDK/network imports
     rationale: "Design-discussion Slice E -- deliberately not a partial implementation; a future epic is the right place to wire AWSWebIdentityAuth (already ported, story 02) into a working backend"
+  - decision: "Routed via PORTUNUS_BACKEND=aws (process-level selection), not per-Reference provider dispatch"
+    rationale: "Deviation from the story's original framing, found during implement: _build() has never done per-Reference backend routing -- backend_kind (mock/gcloud/local) is a single process-level choice today, and true per-Reference multi-provider dispatch (mixing gcp/aws/local backends within one resolve_call) doesn't exist yet for ANY provider, not just aws -- that's a real future epic on its own. Implementing per-Reference dispatch just for aws would be inconsistent with gcloud/local's own selection mechanism. PORTUNUS_BACKEND=aws is the consistent, minimal fix for the actual bug found: an unrecognized backend_kind silently fell through to the `else` branch (LocalEncryptedBackend), which is a MORE dangerous silent-wrong-backend gap than the story's originally-assumed GcloudBackend fallback."
 
 cross_cutting:
   - concern: secret-boundary-invariant

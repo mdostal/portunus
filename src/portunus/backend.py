@@ -194,3 +194,22 @@ class GcloudBackend:
                 os.unlink(path)
             except OSError:
                 pass
+
+
+class AWSSecretsManagerBackend:
+    """AWS Secrets Manager -- STUB. No real AWS calls.
+
+    Interface-conformant placeholder so provider="aws" routes to a backend
+    that fails clearly instead of silently mis-routing to GcloudBackend
+    (grill V1: today's real gap is an unrecognized provider falling through
+    to whatever _build() constructs by default and failing with a confusing
+    GCP-flavored error against a non-GCP secret). AWSWebIdentityAuth
+    (auth.py) is already ported and tested but intentionally NOT wired to
+    this stub -- a future epic connects them.
+    """
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        raise BackendError(
+            "AWS Secrets Manager backend is not yet implemented -- "
+            "see portunus-vault-metadata design discussion"
+        )
