@@ -4,6 +4,18 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-13
+
+### Added
+
+- **CLI exposure for session storage.** `portunus session store|load|inspect|list|remove`
+  wires the v0.4.0 session-storage library API into the CLI. `store` mirrors `drop`'s
+  stdin-only-in discipline; `load` mirrors `resolve`'s tempfile-only-out discipline exactly --
+  a session record contains real cookies/tokens, exactly as sensitive as a secret value, so it
+  gets a `0600` temp file and only the path is ever printed. `inspect`/`list` are metadata-only.
+  `store`/`load`/`remove` write audit entries; `inspect`/`list` don't, matching the existing
+  unaudited-read convention.
+
 ## [0.4.0] - 2026-08-13
 
 ### Fixed

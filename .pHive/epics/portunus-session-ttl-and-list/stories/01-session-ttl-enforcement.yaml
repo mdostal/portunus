@@ -1,7 +1,9 @@
 id: 01-session-ttl-enforcement
 epic: portunus-session-ttl-and-list
 title: load_session() enforces TTL expiry; inspect_session() gains expired flag
-status: completed
+status: shipped
+shipped_at: "2026-08-13T14:00:28Z"
+release_id: "v0.4.0"
 complexity: low
 methodology: tdd
 depends_on: []
