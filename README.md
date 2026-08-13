@@ -228,6 +228,23 @@ npm install
 npm run dev   # http://localhost:3000
 ```
 
+### Running as a supervised service (L2 plugin lifecycle)
+
+The UI also builds as a self-contained, host-supervisable service — `GET /api/health` returns
+`{"status":"ok"}` (a trivial liveness signal; it never touches the CLI/subprocess), and
+`next.config.mjs` sets `output: "standalone"` so a single fixed entrypoint can be supervised
+directly:
+
+```bash
+cd ui
+npm run build
+cp -r .next/static .next/standalone/.next/static   # standalone mode doesn't do this automatically
+PORT=7802 node .next/standalone/server.js
+```
+
+Runs on port **7802** (declared in `manifest.json`'s `ui.url`), matching the port Portunus is
+registered under in the Pantheon host's shared manifests.
+
 ## Library API
 
 ```python

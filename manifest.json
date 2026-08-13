@@ -13,8 +13,10 @@
   "ui": {
     "url": "http://localhost:7802",
     "tab": "Vault",
-    "mount": "link"
+    "mount": "link",
+    "health_endpoint": "http://localhost:7802/api/health"
   },
+  "capabilities": ["secret-lookup", "secret-injection", "secret-vault", "session-vault"],
   "requires": [],
   "config": {
     "home": "${PORTUNUS_HOME:-~/.portunus}",

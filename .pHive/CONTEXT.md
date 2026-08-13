@@ -79,7 +79,15 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/cli.py` — the `portunus` CLI entry point (`find`, `inject`, `ask`, `drop`, ...).
 - `ui/` — the standalone localhost-only UI (Console / Vault Map / Ask Bar). Every API route
   under `ui/app/api/` shells out to the same gated `portunus` console script rather than
-  reimplementing any gating logic in TypeScript — see `ui/lib/portunus.ts`.
+  reimplementing any gating logic in TypeScript — see `ui/lib/portunus.ts`. Also runnable as a
+  supervised service via `output: "standalone"` (`ui/next.config.mjs`) + `GET /api/health` —
+  see README's "Running as a supervised service" section.
+- **L2 plugin lifecycle** — the Pantheon host (`mdostal/pantheon-v2`, a separate repo) derives
+  a god's L2 `ServiceDescriptor` from plain fields on its own `pantheon.gods.yaml` entry
+  (`health_endpoint`/`capabilities`/`api_version`/`port`/`transport`) — no descriptor file is
+  needed in this repo. Portunus's real facts (health endpoint, capabilities, port 7802) are
+  registered there via a separate PR, not this repo. `manifest.json`'s `capabilities` list is
+  the source those facts are drawn from.
 - `.claude/skills/portunus-ask/` — thin Claude skill wrapping `portunus ask` for agent use.
 - `.pHive/epics/` — in-flight Hive epics/stories for this repo.
 
