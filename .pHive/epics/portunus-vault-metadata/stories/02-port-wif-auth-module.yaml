@@ -1,0 +1,89 @@
+id: 02-port-wif-auth-module
+epic: portunus-vault-metadata
+title: Port keyless WIF/OIDC auth module from dos-81-keyless-wif
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  Slice B (part 1). Port src/portunus/auth.py from origin/dos-81-keyless-wif close to
+  verbatim: OIDCToken (frozen dataclass, token field repr=False), OIDCTokenSource protocol +
+  EnvOIDCTokenSource (reads PORTUNUS_OIDC_TOKEN[_FILE]/_ISSUER/_SUBJECT/_AUDIENCE/
+  _EXPIRES_AT -- the harness supplies the token, Portunus never mints or stores one),
+  GCPWorkloadIdentityAuth.mint() (STS token-exchange grant, returns short-lived
+  GCPAccessToken, audits a credential-mint entry, never logs the token),
+  AWSWebIdentityAuth.mint() (same shape via AssumeRoleWithWebIdentity -- kept even though the
+  AWS backend itself stays stubbed in story 06, since the auth-exchange code is already
+  correct/tested), and assert_no_long_lived_cloud_keys() (fails if GOOGLE_APPLICATION_CREDENTIALS
+  / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are present, or a service-account JSON is found
+  at a given path). Port tests/test_auth.py's assertions alongside it -- the branch's tests
+  already verify the token never leaks via repr()/return value, using a fully injected/mocked
+  transport (no real network calls).
+
+acceptance_criteria:
+  - "Given EnvOIDCTokenSource reads a token from PORTUNUS_OIDC_TOKEN, when repr() is called on the resulting OIDCToken, then the token value does not appear in the repr string"
+  - "Given GCPWorkloadIdentityAuth.mint() is called with a mocked transport, when it completes, then it returns a GCPAccessToken with the mocked access_token and appends exactly one credential-mint audit entry"
+  - "Given AWSWebIdentityAuth.mint() is called with a mocked transport, when it completes, then it returns AWSSessionCredentials without ever logging or returning the raw XML response containing credentials outside the parsed dataclass"
+  - "Given assert_no_long_lived_cloud_keys() is called with GOOGLE_APPLICATION_CREDENTIALS set in the environment, when invoked, then it raises AuthError naming the offending env var (never its value)"
+  - "Given assert_no_long_lived_cloud_keys() is called with none of the banned env vars or service-account-shaped files present, when invoked, then it returns without raising"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Diff origin/dos-81-keyless-wif's src/portunus/auth.py and tests/test_auth.py against current main to confirm no naming collisions with modules that have landed since (audit.py's AuditChain signature, etc.).
+    agent: researcher
+  - id: test-spec
+    description: Port test_auth.py's test cases (adjusting only for any AuditChain API drift found in research) as failing tests first.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Port auth.py verbatim except for any drift-adjustments identified in research.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no test hits real network (transport is always injected/mocked) and the token/credentials never appear in a log, print, return value, or exception message anywhere in the module.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/audit.py
+      purpose: AuditChain, whose .append() the ported GCPWorkloadIdentityAuth/AWSWebIdentityAuth call for credential-mint entries
+  references:
+    - path: origin/dos-81-keyless-wif:src/portunus/auth.py
+      relevant_excerpt: "Full 287-line module already retrieved this session via git show -- reuse verbatim"
+    - path: origin/dos-81-keyless-wif:tests/test_auth.py
+      relevant_excerpt: "125-line test file already retrieved this session via git show -- reuse verbatim, adjusting only for confirmed API drift"
+
+files_to_modify:
+  - file: src/portunus/auth.py
+    change: New file -- ported from origin/dos-81-keyless-wif
+  - file: tests/test_auth.py
+    change: New file -- ported from origin/dos-81-keyless-wif
+
+design_decisions:
+  - decision: Port auth.py as its own isolated module in this story, with zero backend.py/cli.py integration yet
+    rationale: "Design-discussion Slice B splits the port (this story) from the integration (story 03) so the ported module can be verified against its own tests in isolation before anything depends on it"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "This module introduces a second category of value that must never leak -- short-lived WIF access tokens/AWS session credentials. Every mint() path is tested for repr()/log/return leakage, matching the existing value-boundary test discipline."
+  - concern: audit-chain-integrity
+    action: "credential-mint audit entries use the existing AuditChain.append() path -- no new audit mechanism introduced."
+
+risks:
+  - severity: medium
+    description: The branch is 64 commits behind main -- AuditChain's constructor/append signature, or import paths, may have drifted since the branch was cut
+    mitigation: Research step explicitly diffs against current main before porting; test-spec step surfaces any signature mismatch as a failing test before implementation
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- Port auth.py from dos-81-keyless-wif close to verbatim"
+  - path: .pHive/epics/portunus-vault-metadata/docs/research-brief.md
+    relevant_excerpt: "Pre-existing keyless-WIF implementation to reuse (branch origin/dos-81-keyless-wif)"

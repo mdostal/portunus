@@ -1,0 +1,74 @@
+id: 01-reference-metadata-fields
+epic: portunus-vault-metadata
+title: Richer Reference metadata (description, purpose, injected_as)
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  Slice A. Add description (what it is), purpose (what it's for), and injected_as (dict,
+  {env_name: adapter_target}, e.g. {"prod": "env:STRIPE_KEY"}, describing how a secret gets
+  injected per environment) to the Reference dataclass. All three default to ""/{} and load
+  additively -- an existing registry.json with none of these fields must keep loading
+  unchanged, same discipline as migrate_legacy_tags(). None of the three join
+  _STRUCTURED_TAG_FIELDS (they're descriptive metadata, not tag-matchable identity), but
+  to_dict() must surface them so find/discover/list output can show them.
+
+acceptance_criteria:
+  - "Given a Reference is constructed with no description/purpose/injected_as, when to_dict() is called, then description=='' purpose=='' injected_as=={}"
+  - "Given an existing registry.json written before this story (no description/purpose/injected_as keys), when Registry loads it, then every Reference loads successfully with the new fields defaulted"
+  - "Given a Reference with description/purpose/injected_as set, when saved and reloaded, then all three round-trip exactly"
+  - "Given resolve_by_tags is called with description or purpose as a tag key, when matched, then it does NOT match via _STRUCTURED_TAG_FIELDS or the open tags dict (these fields are descriptive-only, not queryable identity)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Reference dataclass field order, _STRUCTURED_TAG_FIELDS, to_dict()/asdict(), and the existing additive-load pattern in Registry._load().
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for default values, round-trip persistence, and old-registry-file backward compatibility.
+    agent: tester
+  - id: implement
+    description: Add description/purpose/injected_as fields to Reference with empty defaults; confirm Registry._load() tolerates their absence in old JSON.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the three new fields are NOT added to _STRUCTURED_TAG_FIELDS (per design -- they're descriptive, not tag-matchable).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Reference dataclass, _STRUCTURED_TAG_FIELDS, Registry._load() this story extends
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: Add description/purpose/injected_as fields to Reference dataclass with empty defaults
+  - file: tests/test_registry.py
+    change: Add tests for new-field defaults, round-trip, and legacy-file backward compatibility
+
+design_decisions:
+  - decision: description/purpose/injected_as are NOT added to _STRUCTURED_TAG_FIELDS
+    rationale: "Design-discussion Slice A -- these are descriptive/informational metadata for humans and the list-by-project query (story 05), not identity fields resolve_by_tags should match on; keeping the tag-matchable surface unchanged avoids any risk to the existing fail-closed resolve_by_tags contract"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- no value-handling code introduced (pure metadata fields)."
+  - concern: audit-chain-integrity
+    action: "N/A -- no new mutation path beyond existing Reference construction/save, already covered by existing audit points."
+
+risks:
+  - severity: low
+    description: A field named "description" or "purpose" could be confused with an existing free-text tags{} entry of the same key, causing ambiguity about which one is authoritative
+    mitigation: Document in CONTEXT.md (story 07 closeout) that description/purpose are structured fields, distinct from and taking precedence over any same-named tags{} entry
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- Richer metadata on Reference"
