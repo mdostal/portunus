@@ -59,6 +59,19 @@ files_to_modify:
 design_decisions:
   - decision: Explicit per-invocation override only, no automatic cross-vault search
     rationale: "Design-discussion 'Scope decision for this pass': federated multi-vault search is a real Large-scope epic on its own; this slice unlocks explicit cross-repo targeting cheaply without that scope"
+  - decision: >
+      Implemented as a save/set/restore of the PORTUNUS_HOME env var around
+      args.func(args) dispatch in main(), NOT as an override parameter threaded
+      through paths.home()/_build()/every Registry()/AuditChain() call site (the
+      originally planned approach in this story's description).
+    rationale: >
+      paths.home() already reads PORTUNUS_HOME fresh on every call with no
+      caching, so mutating the env var for the duration of one invocation (and
+      restoring it in a finally block) achieves the identical effect while
+      structurally eliminating this story's own top risk: "a subcommand handler
+      constructs Registry()/AuditChain() directly instead of through _build(),
+      silently bypassing --home." There is no per-site threading to forget --
+      every construction site, present or future, is covered automatically.
 
 cross_cutting:
   - concern: secret-boundary-invariant

@@ -458,6 +458,11 @@ def cmd_verify(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
     p.add_argument("--version", action="version", version=f"portunus {__version__}")
+    p.add_argument(
+        "--home", default="",
+        help="explicit vault path for this invocation only, overrides PORTUNUS_HOME "
+             "(cross-repo targeting -- not automatic multi-vault search)",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("reg", help="manage the reference registry")
@@ -576,7 +581,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    if not args.home:
+        return args.func(args)
+
+    # --home overrides PORTUNUS_HOME for this invocation only. paths.home()
+    # reads the env fresh on every call, so setting it here (and restoring
+    # it afterward) is sufficient to route every Registry()/AuditChain()
+    # construction site -- including any that don't go through _build() --
+    # without threading an override parameter through each one by hand.
+    prior = os.environ.get("PORTUNUS_HOME")
+    os.environ["PORTUNUS_HOME"] = args.home
+    try:
+        return args.func(args)
+    finally:
+        if prior is None:
+            os.environ.pop("PORTUNUS_HOME", None)
+        else:
+            os.environ["PORTUNUS_HOME"] = prior
 
 
 if __name__ == "__main__":
