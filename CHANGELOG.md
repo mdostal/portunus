@@ -4,6 +4,14 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-13
+
+### Added
+
+- UI: a `⟳ rotation requested` badge in Console, Vault Map, and DetailDrawer wherever a
+  reference has `tags.rotation_requested=true` (set by an agent's `portunus ask "rotate ..."`
+  request, v0.3.0) -- closes a display gap, no backend change.
+
 ## [0.5.0] - 2026-08-13
 
 ### Added

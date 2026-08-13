@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import type { PortunusReference } from "../types";
 import StatePill from "./StatePill";
+import RotationBadge from "./RotationBadge";
 
 export default function VaultMap({
   refs,
@@ -35,6 +36,7 @@ export default function VaultMap({
                 <div className="tags-row">
                   {r.env && <span className="chip">{r.env}</span>}
                   <StatePill state={r.state} />
+                  <RotationBadge reference={r} />
                 </div>
               </button>
             ))}
