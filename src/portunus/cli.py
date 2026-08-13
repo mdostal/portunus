@@ -697,6 +697,16 @@ def cmd_auth_gcp(args) -> int:
     return 0
 
 
+def _wif_configured(project: str) -> bool:
+    """True iff `project` has a gcp-bindings.json entry with a non-empty
+    wif_audience. Boolean only -- the audience string itself is never
+    returned by this helper's callers (matches `portunus auth gcp`'s own
+    restraint: identity/scope/expiry only, never the audience/token)."""
+    bindings = load_gcp_bindings()
+    binding = bindings.get(project)
+    return bool(binding and binding.wif_audience)
+
+
 def cmd_discover(args) -> int:
     """Read-only: list what already exists in a live GCP project (names/labels
     only, never a value). --register writes not-yet-registered ones as
@@ -710,6 +720,14 @@ def cmd_discover(args) -> int:
 
     if args.register:
         report = register_discovered(registry, args.project, discovered)
+        if args.json:
+            print(json.dumps({
+                "registered": report.registered,
+                "conflicts": report.conflicts,
+                "already_registered": report.already_registered,
+                "wif_configured": _wif_configured(args.project),
+            }))
+            return 0
         for name in report.registered:
             print(f"registered  {name} (state=requested)")
         for name in report.conflicts:
@@ -720,6 +738,16 @@ def cmd_discover(args) -> int:
 
     from .discover import diff_against_registry
     already, not_yet = diff_against_registry(registry, args.project, discovered)
+    if args.json:
+        print(json.dumps({
+            "already_registered": already,
+            "not_yet_registered": [
+                {"sm_name": d.sm_name, "labels": d.labels, "create_time": d.create_time}
+                for d in not_yet
+            ],
+            "wif_configured": _wif_configured(args.project),
+        }))
+        return 0
     for name in already:
         print(f"registered      {name}")
     for d in not_yet:
@@ -920,6 +948,7 @@ def build_parser() -> argparse.ArgumentParser:
     disc.add_argument("--project", required=True)
     disc.add_argument("--register", action="store_true",
                        help="write not-yet-registered secrets as state=requested placeholders")
+    disc.add_argument("--json", action="store_true", help="machine-readable output (UI consumer)")
     disc.set_defaults(func=cmd_discover)
 
     return p
