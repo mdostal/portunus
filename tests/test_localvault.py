@@ -229,3 +229,58 @@ def test_load_session_not_yet_expired_succeeds_normally(home):
     )
     record = backend.load_session("example.test", "dostal@example.test")
     assert record["session"] == _session_state()
+
+
+# --- story 02: list_sessions() ---------------------------------------------
+
+def test_list_sessions_returns_metadata_for_multiple_sessions_with_correct_expired_flags(home):
+    backend = LocalEncryptedBackend()
+    backend.store_session("a.test", "user-a", _session_state(), ttl_seconds=3600)
+    _store_expired_session(backend, "b.test", "user-b")
+
+    sessions = backend.list_sessions()
+    assert len(sessions) == 2
+
+    by_site = {s["namespace"]["site"]: s for s in sessions}
+    assert by_site["a.test"]["expired"] is False
+    assert by_site["b.test"]["expired"] is True
+    for s in sessions:
+        assert "session" not in s
+        assert SESSION_SECRET not in json.dumps(s)
+
+
+def test_list_sessions_skips_corrupt_entries_but_returns_the_rest(home):
+    backend = LocalEncryptedBackend()
+    backend.store_session("a.test", "user-a", _session_state(), ttl_seconds=3600)
+    # Store garbage directly under a session: key -- simulates a corrupt entry.
+    backend.store(backend.session_key("corrupt.test", "user-c"), "not valid json{{{")
+
+    sessions = backend.list_sessions()
+    assert len(sessions) == 1
+    assert sessions[0]["namespace"]["site"] == "a.test"
+
+
+def test_list_sessions_excludes_non_session_vault_entries(home):
+    backend = LocalEncryptedBackend()
+    backend.store("dostal-shared-anthropic", SECRET)
+    backend.store_session("a.test", "user-a", _session_state(), ttl_seconds=3600)
+
+    sessions = backend.list_sessions()
+    assert len(sessions) == 1
+    assert sessions[0]["namespace"]["site"] == "a.test"
+
+
+def test_inspect_session_output_unchanged_by_the_session_view_refactor(home):
+    """Regression: inspect_session()'s existing fields must be identical
+    after extracting _session_view() -- only `expired` is new."""
+    backend = LocalEncryptedBackend()
+    backend.store_session(
+        "example.test", "dostal@example.test", _session_state(),
+        ttl_seconds=3600, rotation_interval_seconds=900,
+    )
+    inspection = backend.inspect_session("example.test", "dostal@example.test")
+    assert inspection["schema"] == "portunus.session.v1"
+    assert inspection["namespace"] == {"site": "example.test", "account": "dostal@example.test"}
+    assert inspection["ttl"]["seconds"] == 3600
+    assert inspection["rotation"]["interval_seconds"] == 900
+    assert set(inspection.keys()) == {"schema", "namespace", "ttl", "rotation", "expired"}
