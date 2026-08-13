@@ -18,7 +18,8 @@ from typing import List, Optional
 
 from . import __version__
 from .audit import AuditChain
-from .backend import BackendError, GcloudBackend, MockBackend
+from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
+from .backend import BackendError, GcloudBackend, MockBackend, load_gcp_bindings
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
@@ -50,7 +51,11 @@ def _build(project: str = ""):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
     elif backend_kind == "gcloud":
-        backend = GcloudBackend(project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""))
+        backend = GcloudBackend(
+            project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""),
+            bindings=load_gcp_bindings(),
+            audit=audit,
+        )
     else:
         # Stage 1 default: the local-encrypted ARCA tier. No plaintext ever
         # leaves this machine, let alone an LLM context.
@@ -590,6 +595,30 @@ def cmd_verify(args) -> int:
     return 0 if ok else 2
 
 
+def cmd_auth_gcp(args) -> int:
+    """Mint a GCP WIF access token and report identity/scope/expiry -- never the token."""
+    audit = AuditChain()
+    project = args.project or os.environ.get("PORTUNUS_GCP_PROJECT", "")
+    bindings = load_gcp_bindings()
+    audience = args.audience
+    if not audience and project in bindings:
+        audience = bindings[project].wif_audience
+    if not audience:
+        audience = os.environ.get("PORTUNUS_GCP_WIF_AUDIENCE", "")
+    try:
+        auth = GCPWorkloadIdentityAuth(
+            audience=audience, token_source=EnvOIDCTokenSource(), audit=audit,
+        )
+        minted = auth.mint()
+    except AuthError as exc:
+        return _err(str(exc))
+    print(
+        "gcp:wif ok "
+        f"identity={minted.identity} scope={minted.scope} expires_at={minted.expires_at}"
+    )
+    return 0
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -744,6 +773,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")
     ve.set_defaults(func=cmd_verify)
+
+    auth_p = sub.add_parser("auth", help="check keyless cloud credential minting")
+    auth_sub = auth_p.add_subparsers(dest="provider", required=True)
+    auth_gcp = auth_sub.add_parser("gcp", help="mint a GCP WIF access token without printing it")
+    auth_gcp.add_argument("--project", default="")
+    auth_gcp.add_argument("--audience", default="")
+    auth_gcp.set_defaults(func=cmd_auth_gcp)
 
     return p
 

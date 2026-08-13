@@ -55,7 +55,7 @@ class Resolver:
         if name not in self.registry:
             raise UnknownReference(name)
         ref = self.broker.check_injectable(name)   # raises on dropped/revoked/gated
-        value = self.backend.access(ref.sm_name)    # the only place a value appears
+        value = self.backend.access(ref.sm_name, project=ref.project)  # the only place a value appears
         self.broker.audit.append("resolve", ref.sm_name, "ok")
         return value
 

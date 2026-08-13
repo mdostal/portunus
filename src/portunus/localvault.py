@@ -83,7 +83,7 @@ class LocalEncryptedBackend:
         data[sm_name] = self._fernet.encrypt(value.encode()).decode()
         self._flush(data)
 
-    def access(self, sm_name: str) -> str:
+    def access(self, sm_name: str, project: str = "") -> str:
         data = self._load()
         token = data.get(sm_name)
         if token is None:
