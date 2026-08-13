@@ -1,7 +1,7 @@
 id: 05-home-override-flag
 epic: portunus-agent-ops-federation
 title: --home global CLI flag for explicit vault targeting
-status: pending
+status: completed
 complexity: low
 methodology: tdd
 depends_on: []

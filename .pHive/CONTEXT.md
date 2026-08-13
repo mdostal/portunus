@@ -43,6 +43,22 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   unrecognized or internally conflicting; downstream ambiguity across multiple still-matching
   references is `resolve_by_tags()`'s job, not this function's. Backs `portunus ask` and the
   UI's Ask Bar.
+- **`intent_kind`** — `classify_intent_kind()`'s output (`fetch` | `add` | `rotate`), carried
+  on `parse_intent()`'s return value (`ParsedIntent`, a dict subclass — still unpacks via
+  `**result` unchanged). Narrow, whole-word keyword classification; defaults to `fetch` (the
+  safe default) on anything not recognized as add/rotate language.
+- **`requested` state** — an agent-initiated placeholder lifecycle state (`Registry.request()`):
+  a value-less `Reference` an agent asked for, fails closed via `Broker.check_injectable`
+  exactly like `dropped`/`revoked`. An agent can only ever *request* an add/rotate — the actual
+  value still flows exclusively through the harness-side-only `drop` path, human-originated.
+- **`retag`** — `Registry.retag()` updates a reference's `provider`/`project`/`env`/`tags` in
+  place, rejecting any change that would collide with a different existing reference (reuses
+  `matches_tag()`'s exact-match logic — one collision definition, not two). CLI: `portunus
+  retag`. UI: the Move action in `DetailDrawer`.
+- **`--home`** — a per-invocation CLI override for `PORTUNUS_HOME` (explicit cross-repo vault
+  targeting, not automatic multi-vault federation — that's still out of scope). Implemented as
+  a save/set/restore of the env var around dispatch in `cli.py::main()`, not a threaded
+  parameter, so every `Registry()`/`AuditChain()` construction site is covered automatically.
 
 ## Key paths
 

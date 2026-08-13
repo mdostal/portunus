@@ -1,7 +1,7 @@
 id: 04-cli-retag
 epic: portunus-agent-ops-federation
 title: portunus retag subcommand
-status: pending
+status: completed
 complexity: low
 methodology: tdd
 depends_on: ["01-registry-request-and-retag"]

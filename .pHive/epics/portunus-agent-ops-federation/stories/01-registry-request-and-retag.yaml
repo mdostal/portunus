@@ -1,7 +1,7 @@
 id: 01-registry-request-and-retag
 epic: portunus-agent-ops-federation
 title: Registry.request() and Registry.retag()
-status: pending
+status: completed
 complexity: medium
 methodology: tdd
 depends_on: []

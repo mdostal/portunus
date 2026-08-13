@@ -1,7 +1,7 @@
 id: 07-closeout
 epic: portunus-agent-ops-federation
 title: CONTEXT.md update, full suite verify
-status: pending
+status: completed
 complexity: low
 methodology: classic
 depends_on: ["01-registry-request-and-retag", "02-intent-kind-classification", "03-ask-agent-requests", "04-cli-retag", "05-home-override-flag", "06-ui-requested-and-move"]

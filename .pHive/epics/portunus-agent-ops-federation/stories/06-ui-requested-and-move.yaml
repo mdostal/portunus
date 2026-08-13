@@ -1,7 +1,7 @@
 id: 06-ui-requested-and-move
 epic: portunus-agent-ops-federation
 title: UI requested-state display + Move action
-status: pending
+status: completed
 complexity: medium
 methodology: tdd
 depends_on: ["01-registry-request-and-retag", "03-ask-agent-requests", "04-cli-retag"]
