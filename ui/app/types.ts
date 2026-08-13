@@ -15,6 +15,8 @@ export interface PortunusReference {
   description: string;
   purpose: string;
   injected_as: Record<string, string>;
+  group: string;
+  related: string[];
 }
 
 export interface AuditEntry {
