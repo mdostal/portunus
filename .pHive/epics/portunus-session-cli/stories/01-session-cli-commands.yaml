@@ -1,7 +1,7 @@
 id: 01-session-cli-commands
 epic: portunus-session-cli
 title: portunus session store|load|inspect|list|remove
-status: pending
+status: completed
 complexity: medium
 methodology: tdd
 depends_on: []

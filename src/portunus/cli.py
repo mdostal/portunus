@@ -8,15 +8,18 @@ temp file and prints its *path*.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import stat
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
 from . import __version__
 from .audit import AuditChain
 from .backend import BackendError, GcloudBackend, MockBackend
-from .localvault import LocalEncryptedBackend
+from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
@@ -318,6 +321,139 @@ def cmd_retag(args) -> int:
     return 0
 
 
+def _session_backend(resolver):
+    """Sessions are a LocalEncryptedBackend-only capability -- not part of
+    the generic SecretBackend protocol GcloudBackend/MockBackend implement.
+    Mirrors drop's exact same hasattr check."""
+    backend = resolver.backend
+    if not hasattr(backend, "store_session"):
+        return None
+    return backend
+
+
+def cmd_session_store(args) -> int:
+    """Store a browser/login session. Mirrors drop's stdin-only-in
+    discipline exactly: the session JSON blob comes from stdin or a local
+    file, never an inline argv flag."""
+    _registry, _audit, broker, resolver = _build()
+    backend = _session_backend(resolver)
+    if backend is None:
+        return _err("session commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+
+    if args.stdin:
+        raw = sys.stdin.read()
+    else:
+        try:
+            raw = Path(args.value_file).read_text()
+        except OSError as exc:
+            return _err(f"cannot read --value-file: {exc}")
+    try:
+        session_obj = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return _err(f"invalid session JSON: {exc}")
+
+    try:
+        backend.store_session(
+            args.site, args.account, session_obj,
+            ttl_seconds=args.ttl_seconds,
+            rotation_interval_seconds=args.rotation_interval_seconds,
+        )
+    except ValueError as exc:
+        return _err(str(exc))
+
+    key = backend.session_key(args.site, args.account)
+    broker.audit.append("session_store", key, "stored")
+    print(f"stored session for {args.site} / {args.account} (ttl={args.ttl_seconds}s)")
+    return 0
+
+
+def cmd_session_load(args) -> int:
+    """Load a session's full record (including real cookies/tokens) --
+    exactly as sensitive as a secret value, so it gets the identical
+    0600-tempfile, path-only-printed treatment as `resolve`."""
+    _registry, _audit, broker, resolver = _build()
+    backend = _session_backend(resolver)
+    if backend is None:
+        return _err("session commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+
+    key = backend.session_key(args.site, args.account)
+    try:
+        record = backend.load_session(args.site, args.account, allow_expired=args.allow_expired)
+    except SessionExpired as exc:
+        broker.audit.append("session_load", key, "denied-expired")
+        return _err(f"{exc} -- pass --allow-expired to load it anyway")
+    except BackendError as exc:
+        return _err(str(exc))
+
+    fd, path = tempfile.mkstemp(prefix="portunus-session-")
+    try:
+        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(record))
+    except BaseException:
+        os.unlink(path)
+        raise
+    broker.audit.append("session_load", key, "ok")
+    print(path)  # path only, never the record
+    return 0
+
+
+def cmd_session_inspect(args) -> int:
+    """Metadata only -- namespace/ttl/rotation/expired, never a payload."""
+    _registry, _audit, _broker, resolver = _build()
+    backend = _session_backend(resolver)
+    if backend is None:
+        return _err("session commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+    try:
+        view = backend.inspect_session(args.site, args.account)
+    except BackendError as exc:
+        return _err(str(exc))
+    if args.json:
+        print(json.dumps(view))
+    else:
+        print(f"  {args.site} / {args.account}  expired={view['expired']}  "
+              f"ttl={view['ttl']}  rotation={view['rotation']}")
+    return 0
+
+
+def cmd_session_list(args) -> int:
+    """Metadata for every stored session -- never a payload."""
+    _registry, _audit, _broker, resolver = _build()
+    backend = _session_backend(resolver)
+    if backend is None:
+        return _err("session commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+    sessions = backend.list_sessions()
+    if args.json:
+        print(json.dumps(sessions))
+    else:
+        if not sessions:
+            print("(no sessions stored)")
+        for view in sessions:
+            ns = view["namespace"]
+            print(f"  {ns['site']} / {ns['account']}  expired={view['expired']}")
+    return 0
+
+
+def cmd_session_remove(args) -> int:
+    """Remove a stored session. Confirms by namespace only."""
+    _registry, _audit, broker, resolver = _build()
+    backend = _session_backend(resolver)
+    if backend is None:
+        return _err("session commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+    existed = backend.remove_session(args.site, args.account)
+    if not existed:
+        return _err(f"no such session: {args.site} / {args.account}")
+    key = backend.session_key(args.site, args.account)
+    broker.audit.append("session_remove", key, "removed")
+    print(f"removed session for {args.site} / {args.account}")
+    return 0
+
+
 def cmd_drop(args) -> int:
     """Put a secret INTO Arca. Harness-side only: the value never enters the
     LLM chat, ~/.claude, or a provider — it comes from stdin or a local file
@@ -517,6 +653,40 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--env", default="")
     rt.add_argument("--tags", default="", help="comma-separated k=v pairs, replaces the open tags dict")
     rt.set_defaults(func=cmd_retag)
+
+    ses = sub.add_parser("session", help="browser/login session storage (local-encrypted backend only)")
+    ses_sub = ses.add_subparsers(dest="action", required=True)
+
+    ses_store = ses_sub.add_parser("store", help="store a session (value via --stdin or --value-file, never inline)")
+    ses_store.add_argument("site")
+    ses_store.add_argument("account")
+    ses_store.add_argument("--ttl-seconds", type=int, required=True)
+    ses_store.add_argument("--rotation-interval-seconds", type=int, default=None)
+    ses_src = ses_store.add_mutually_exclusive_group(required=True)
+    ses_src.add_argument("--stdin", action="store_true", help="read the session JSON from stdin")
+    ses_src.add_argument("--value-file", help="read the session JSON from this local file")
+    ses_store.set_defaults(func=cmd_session_store)
+
+    ses_load = ses_sub.add_parser("load", help="load a session -- writes a 0600 tempfile, prints only the path")
+    ses_load.add_argument("site")
+    ses_load.add_argument("account")
+    ses_load.add_argument("--allow-expired", action="store_true")
+    ses_load.set_defaults(func=cmd_session_load)
+
+    ses_inspect = ses_sub.add_parser("inspect", help="show session metadata only (never the payload)")
+    ses_inspect.add_argument("site")
+    ses_inspect.add_argument("account")
+    ses_inspect.add_argument("--json", action="store_true")
+    ses_inspect.set_defaults(func=cmd_session_inspect)
+
+    ses_list = ses_sub.add_parser("list", help="list every stored session's metadata (never a payload)")
+    ses_list.add_argument("--json", action="store_true")
+    ses_list.set_defaults(func=cmd_session_list)
+
+    ses_remove = ses_sub.add_parser("remove", help="remove a stored session")
+    ses_remove.add_argument("site")
+    ses_remove.add_argument("account")
+    ses_remove.set_defaults(func=cmd_session_remove)
 
     dr = sub.add_parser(
         "drop",
