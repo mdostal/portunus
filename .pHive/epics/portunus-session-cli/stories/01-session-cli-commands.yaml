@@ -1,0 +1,106 @@
+id: 01-session-cli-commands
+epic: portunus-session-cli
+title: portunus session store|load|inspect|list|remove
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  New `portunus session` subcommand group wiring the already-shipped LocalEncryptedBackend
+  session methods into the CLI. `store` follows drop's stdin-only-in discipline (the session
+  JSON blob via stdin or --value-file, never inline argv). `load` follows resolve's tempfile-
+  only-out discipline (writes a 0600 file, prints only the path -- a session record contains
+  real cookies/tokens, exactly as sensitive as a secret value). `inspect`/`list` print metadata
+  only (safe). `remove` confirms by namespace only. store/load/remove write audit entries
+  (session_store/session_load/session_remove); inspect/list do not (matching find/reg show's
+  existing unaudited-read convention).
+
+acceptance_criteria:
+  - "Given a JSON session blob via --stdin, when `portunus session store <site> <account> --ttl-seconds N` runs, then it is stored and the command prints confirmation naming the namespace only, never the session content"
+  - "Given a stored, non-expired session, when `portunus session load <site> <account>` runs, then it writes a 0600 temp file containing the full record and prints only the path -- never the record on stdout"
+  - "Given a stored, expired session, when `portunus session load` runs without --allow-expired, then it fails with a clear error naming the --allow-expired escape hatch, and with --allow-expired it succeeds"
+  - "Given a stored session, when `portunus session inspect <site> <account> [--json]` runs, then it prints only namespace/ttl/rotation/expired metadata"
+  - "Given multiple stored sessions, when `portunus session list [--json]` runs, then it prints metadata for all of them, never any payload"
+  - "Given a stored session, when `portunus session remove <site> <account>` runs, then it is removed and the command confirms by namespace only"
+  - "Given store/load/remove actions, when the audit chain is inspected, then session_store/session_load/session_remove entries exist (never containing the payload) and portunus verify passes; inspect/list write no audit entries"
+  - "Given a non-local backend (PORTUNUS_BACKEND=gcloud or mock), when any session subcommand runs, then it fails with a clear error naming the local-encrypted-backend requirement, mirroring drop's existing check"
+  - "Given malformed JSON via --stdin/--value-file, when `portunus session store` runs, then it fails closed with a clear error rather than silently storing corrupt data"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm store_session()/load_session()/inspect_session()/list_sessions()/remove_session()'s exact signatures (v0.4.0), and re-read drop's stdin-only and resolve's tempfile-only patterns in cli.py to mirror exactly.
+    agent: researcher
+  - id: test-spec
+    description: Write failing CLI integration tests for all nine acceptance criteria above.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add the session subcommand group (store/load/inspect/list/remove) to cli.py.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm session load's tempfile discipline is byte-identical in spirit to resolve's (0600, path-only, no payload ever printed), and that the local-backend check mirrors drop's exactly.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_drop (stdin-only-in pattern), cmd_resolve (tempfile-only-out pattern), reg's nested-subparser convention -- all three patterns this story reuses directly
+    - path: src/portunus/localvault.py
+      purpose: the already-shipped session methods this story exposes
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add the session subcommand group and its five handlers
+  - file: tests/test_cli_session.py
+    change: New test file
+
+code_examples:
+  - title: stdin-only-in discipline to mirror for session store
+    file: src/portunus/cli.py
+    snippet: |
+      if args.stdin:
+          value = sys.stdin.readline().rstrip("\n")
+      else:
+          try:
+              value = Path(args.value_file).read_text().rstrip("\n")
+          except OSError as exc:
+              return _err(f"cannot read --value-file: {exc}")
+  - title: tempfile-only-out discipline to mirror for session load
+    file: src/portunus/cli.py
+    snippet: |
+      path = resolver.resolve_to_tempfile(text)
+      print(path)  # path only, never the value
+
+design_decisions:
+  - decision: session load writes a 0600 temp file and prints only the path, exactly like resolve
+    rationale: "A session record contains real cookies/tokens -- exactly as sensitive as a secret value, so it gets the identical boundary treatment"
+  - decision: store/load/remove are audited; inspect/list are not
+    rationale: "Matches the existing convention (find/reg show are unaudited reads; drop/resolve/inject/ask are audited actions) rather than inventing a new rule"
+  - decision: No Registry/Broker integration in this pass -- sessions stay backend-only
+    rationale: "Consistent with today's design; role-scoped session gating remains a distinct, larger, unstarted piece of work per portunus-session-vault's reconciliation notes"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Core to this story, especially session load. Boundary-invariant test required: the full session record (including the sentinel session-cookie value) must never appear in stdout/stderr for any subcommand, only in the 0600 tempfile load produces."
+  - concern: audit-chain-integrity
+    action: "New session_store/session_load/session_remove entry types. portunus verify test against a chain including them is required."
+  - concern: documentation
+    action: "README gets a Session storage CLI section; CONTEXT.md's session-storage entry gets updated to note CLI exposure now exists."
+
+risks:
+  - severity: high
+    description: session load prints the payload directly instead of writing it to a tempfile
+    mitigation: Explicit boundary-invariant test asserts the sentinel session value never appears in captured stdout/stderr for any session subcommand
+
+references:
+  - path: .pHive/epics/portunus-session-cli/docs/design-discussion.md
+    relevant_excerpt: "session load ... mirrors resolve's tempfile discipline exactly"
