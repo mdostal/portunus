@@ -173,10 +173,17 @@ class GcloudBackend:
             raise BackendError("gcloud CLI not found on PATH")
         effective_project = project or self.project
         provider = self._credential_provider_for(effective_project)
+        binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
             cmd = ["gcloud"]
             if token_file:
                 cmd.append(f"--access-token-file={token_file}")
+            elif binding and binding.account:
+                # Mutually exclusive with --access-token-file: a minted WIF
+                # token already carries identity. --account selects which
+                # already-locally-authenticated gcloud identity to use,
+                # independent of gcloud's single mutable "active account".
+                cmd.append(f"--account={binding.account}")
             cmd.extend(["secrets", "versions", "access", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
