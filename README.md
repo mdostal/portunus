@@ -274,13 +274,17 @@ portunus verify       # prove the hash chain is intact
 ## Standalone UI
 
 A localhost-only Next.js app under `ui/` — Console (default tab, faceted table + detail
-drawer), Vault Map (second tab, cards grouped by provider/project), and an Ask Bar (persistent
-side panel across both, backed by `portunus ask`). No gating logic is duplicated in
-TypeScript: every API route under `ui/app/api/` shells out to the same `portunus` console
-script the CLI uses, so `Broker.check_injectable` stays the single, only implementation of the
-gate. The add-secret form is the one deliberate human-plaintext-entry point (mirroring
-`portunus drop --stdin`) — a value is piped to the CLI via stdin only, never an argv element,
-never logged.
+drawer), Vault Map (second tab, cards grouped by provider/project), Project Explorer (third
+tab — a GCP-project-scoped view: what's already registered, what's discoverable via
+`portunus discover` with a one-click "register all", and whether that project has a WIF
+binding configured), and an Ask Bar (persistent side panel across all three, backed by
+`portunus ask`). No gating logic is duplicated in TypeScript: every API route under
+`ui/app/api/` shells out to the same `portunus` console script the CLI uses, so
+`Broker.check_injectable` stays the single, only implementation of the gate. The add-secret
+form is the one deliberate human-plaintext-entry point (mirroring `portunus drop --stdin`) — a
+value is piped to the CLI via stdin only, never an argv element, never logged. A secret's
+description/purpose/injected_as metadata is viewable and editable from the detail drawer's
+Move form — never a value, always through the same `portunus retag` path.
 
 ```bash
 cd ui
