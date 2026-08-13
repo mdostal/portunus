@@ -1,7 +1,9 @@
 id: 07-closeout
 epic: portunus-secret-tree
 title: Build a real 2-3-level tree, verify, README/CONTEXT.md, version bump, changelog
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
 complexity: low
 methodology: classic
 depends_on:

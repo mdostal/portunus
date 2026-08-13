@@ -1,7 +1,9 @@
 id: 02-cli-write-support
 epic: portunus-secret-tree
 title: --group/--related on reg add/drop/retag
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
 complexity: low
 methodology: tdd
 depends_on: [01-registry-schema]

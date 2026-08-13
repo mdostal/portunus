@@ -1,7 +1,9 @@
 id: 04-ui-plumbing
 epic: portunus-secret-tree
 title: UI types + /api/retag forward group/related
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
 complexity: low
 methodology: classic
 depends_on: [02-cli-write-support]

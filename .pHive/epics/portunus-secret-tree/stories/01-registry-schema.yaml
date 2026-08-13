@@ -1,7 +1,9 @@
 id: 01-registry-schema
 epic: portunus-secret-tree
 title: Reference gains group/related; Registry.add()/retag() extended
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
 complexity: low
 methodology: tdd
 depends_on: []

@@ -1,7 +1,9 @@
 id: 06-project-explorer-tree-view
 epic: portunus-secret-tree
 title: Project Explorer's Registered list renders as a nested tree
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
 complexity: high
 methodology: classic
 depends_on: [04-ui-plumbing]

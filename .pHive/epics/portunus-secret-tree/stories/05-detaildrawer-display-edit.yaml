@@ -1,7 +1,9 @@
 id: 05-detaildrawer-display-edit
 epic: portunus-secret-tree
 title: DetailDrawer shows and edits group/related
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
 complexity: low
 methodology: classic
 depends_on: [04-ui-plumbing]
