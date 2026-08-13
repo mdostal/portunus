@@ -1,0 +1,78 @@
+id: 06-project-explorer-panel
+epic: portunus-vault-metadata-ui
+title: New "Project Explorer" tab -- list + discover + GCP-binding presence indicator
+status: pending
+complexity: high
+methodology: classic
+depends_on: [05-discover-and-list-routes]
+
+description: |
+  A new third tab ("project") alongside Console/Vault Map in page.tsx's Tab union. Contents:
+  a project-id text input; a "Registered" list (story 05's /api/list) of what's already
+  tracked for that project; a "Discoverable" list (story 05's /api/discover GET) of secrets
+  found in live GCP Secret Manager but not yet registered, each with a "Register" button that
+  POSTs to /api/discover (mirroring the CLI's own --register semantics exactly -- no
+  client-side reimplementation of the never-overwrite/state=requested logic); and a one-line
+  "GCP WIF: configured / not configured" indicator sourced from /api/discover's
+  wif_configured field, never rendering the audience value.
+
+acceptance_criteria:
+  - "Given the Project Explorer tab is selected, when a project id is entered, then the Registered and Discoverable lists both populate from /api/list and /api/discover respectively"
+  - "Given a Discoverable entry, when its Register button is clicked, then it POSTs to /api/discover and, on success, moves that entry from Discoverable to Registered (re-fetch or optimistic update)"
+  - "Given a project with wif_configured=true, when rendered, then the panel shows 'GCP WIF: configured' -- never any audience/token string"
+  - "Given a project with wif_configured=false, when rendered, then the panel shows 'GCP WIF: not configured'"
+  - "Given a discover call returns a conflict (naming collision, per portunus-vault-metadata's discover.py), when rendered, then the panel surfaces the conflict message rather than silently dropping it"
+  - "Given `npm run build`, when run, then it completes with zero TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add the "project" tab to page.tsx's Tab union + nav; create a new ProjectExplorer.tsx component wiring the project-id input, Registered/Discoverable lists, Register action, and wif_configured indicator.
+    agent: developer
+  - id: test
+    description: npm run build; live smoke test (Playwright) -- navigate to the tab, enter a project id, confirm both lists render and a mocked/seeded Register action works end to end against a temp PORTUNUS_HOME with a stubbed gcloud runner.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the Register button's client code contains zero logic beyond a bare POST -- all safety semantics (never-overwrite, state=requested) live entirely server-side in the already-reviewed Python discover.py.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/page.tsx
+      purpose: Tab union + nav this story extends with a third tab
+    - path: ui/app/components/VaultMap.tsx
+      purpose: Existing tab-content component shape/style to match for the new ProjectExplorer component
+
+files_to_modify:
+  - file: ui/app/page.tsx
+    change: Add "project" to the Tab union, a nav button, and render ProjectExplorer when active
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: New file -- project-id input, Registered/Discoverable lists, Register action, wif_configured indicator
+
+design_decisions:
+  - decision: Register button POSTs with zero client-side safety logic
+    rationale: "Design-discussion §4 highest risk -- reimplementing any part of --register's never-overwrite/state=requested semantics client-side would reopen a safety hole portunus-vault-metadata closed structurally; the route (story 05) is a bare pass-through, and this component must stay one too"
+  - decision: wif_configured renders as a two-state label only, no expandable detail
+    rationale: "Design-discussion §4 medium risk -- explicitly avoids any future temptation to add the audience value 'for convenience'; the boolean is the whole surface by design"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The Register action and wif_configured indicator both stay strictly metadata-only -- no value, no WIF audience/token ever reaches this component. Reviewed explicitly at the review step."
+  - concern: audit-chain-integrity
+    action: "N/A at the component level -- audit entries are generated server-side by Registry.add()/retag() through the existing mechanisms, unaffected by this UI addition."
+
+risks:
+  - severity: medium
+    description: A conflict response (naming collision) could be silently swallowed if the component only checks for success/failure rather than reading the conflicts array
+    mitigation: Acceptance criterion explicitly requires surfacing conflicts, not just registered/failed
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata-ui/docs/design-discussion.md
+    relevant_excerpt: "Slice F -- Project Explorer panel (new third tab)"

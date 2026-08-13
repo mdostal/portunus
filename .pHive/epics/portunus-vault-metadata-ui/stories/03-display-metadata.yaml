@@ -1,0 +1,76 @@
+id: 03-display-metadata
+epic: portunus-vault-metadata-ui
+title: Console/VaultMap/DetailDrawer show description/purpose/injected_as
+status: pending
+complexity: low
+methodology: classic
+depends_on: [02-ui-types-and-retag-route]
+
+description: |
+  Read-path only, purely additive rendering. DetailDrawer shows description/purpose/
+  injected_as (when set) below the existing tags row. Console's table gets a muted
+  description sub-line under the reference name when description is non-empty. VaultMap's
+  cards show a short description snippet in the card body when non-empty. No new state, no
+  new API calls -- refs already carry these fields as of story 02.
+
+acceptance_criteria:
+  - "Given a reference with description/purpose/injected_as set, when DetailDrawer renders it, then all three appear below the tags row"
+  - "Given a reference with none of the three set, when DetailDrawer renders it, then no empty/placeholder metadata section appears (show-only-if-set, matching the existing tags/env chip pattern)"
+  - "Given a reference with a description, when Console's table renders it, then a muted sub-line shows the description under the reference name"
+  - "Given a reference with a description, when VaultMap renders its card, then the description appears in the card body"
+  - "Given `npm run build`, when run, then it completes with zero TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add show-only-if-set metadata rendering to DetailDrawer, Console, and VaultMap.
+    agent: developer
+  - id: test
+    description: npm run build; live smoke test (Playwright screenshot) against a temp PORTUNUS_HOME seeded with a reference carrying description/purpose/injected_as, confirming visual placement doesn't crowd existing layout.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm all three components use the same show-only-if-set convention already established for tags/env chips (no new empty-state pattern invented).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: tags-row rendering pattern this story extends with metadata fields
+    - path: ui/app/components/Console.tsx
+      purpose: table rows this story adds a description sub-line to
+    - path: ui/app/components/VaultMap.tsx
+      purpose: cards this story adds a description snippet to
+
+files_to_modify:
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Render description/purpose/injected_as below the tags row, show-only-if-set
+  - file: ui/app/components/Console.tsx
+    change: Add a muted description sub-line under the reference name
+  - file: ui/app/components/VaultMap.tsx
+    change: Add a description snippet to the card body
+
+design_decisions:
+  - decision: Show-only-if-set, no new column/mandatory field
+    rationale: "Design-discussion §4 risk -- avoids crowding already-dense Console/VaultMap layouts; matches the existing tags/env chip convention exactly"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- rendering non-secret metadata fields only; no value ever touches these components."
+  - concern: audit-chain-integrity
+    action: "N/A -- pure read/render, no new write path."
+
+risks:
+  - severity: low
+    description: A very long description could visually break Console's table row or VaultMap's card
+    mitigation: CSS truncation (ellipsis) on the description sub-line/snippet, same as existing chip overflow handling
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata-ui/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- Read path: display metadata"

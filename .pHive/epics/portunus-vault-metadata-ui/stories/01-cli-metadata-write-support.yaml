@@ -1,0 +1,86 @@
+id: 01-cli-metadata-write-support
+epic: portunus-vault-metadata-ui
+title: reg add/drop --description/--purpose/--injected-as; Registry.retag() extended
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  Prerequisite found during research: neither `reg add` nor `drop` expose --description/
+  --purpose/--injected-as, even though Registry.add() has accepted them since v0.7.0's story
+  01. Registry.retag() (the only in-place-update path) doesn't accept them either -- the only
+  code that has ever set these fields is discover.py's label-seeding. Add the three flags to
+  `reg add` and `drop`; extend Registry.retag() to also accept and update description/purpose/
+  injected_as (no collision check needed for these -- they're not in _STRUCTURED_TAG_FIELDS,
+  so they can't collide by definition). --injected-as parses with the existing _parse_tags()
+  helper (k=v,k2=v2 -- splits only on the first "=" per pair, so a colon-containing value like
+  "env:STRIPE_KEY" is unaffected).
+
+acceptance_criteria:
+  - "Given `portunus reg add x sm-x --description 'a key' --purpose 'billing'`, when run, then the resulting Reference has description='a key' purpose='billing'"
+  - "Given `portunus drop x sm-x --description 'a key' --injected-as 'prod=env:STRIPE_KEY,staging=file:.env.staging' --stdin`, when run, then the resulting Reference has description='a key' and injected_as={'prod': 'env:STRIPE_KEY', 'staging': 'file:.env.staging'}"
+  - "Given an existing reference, when `Registry.retag(name, description='new desc')` is called, then only description changes -- provider/project/env/tags/purpose/injected_as are untouched"
+  - "Given Registry.retag() is called with description/purpose/injected_as, when it completes, then it does NOT run the collision-check logic used for provider/project/env/tags (these fields can never collide -- they're not tag-matchable)"
+  - "Given `portunus retag x --injected-as 'prod=env:BAD=VALUE'`, when the value itself contains an '=' after the first one, then it still parses correctly (only the first '=' per pair is the separator)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Registry.add()'s existing description/purpose/injected_as params (story 01 of portunus-vault-metadata) and _parse_tags()'s split-on-first-= behavior to reuse for --injected-as.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for reg add/drop's new flags and Registry.retag()'s extended field support.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add --description/--purpose/--injected-as to reg add and drop CLI subcommands; extend Registry.retag() with description/purpose/injected_as kwargs (no collision check for these).
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm retag's collision check still only evaluates provider/project/env/tags, never description/purpose/injected_as.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Registry.add() (already has these params) and Registry.retag() (this story extends)
+    - path: src/portunus/cli.py
+      purpose: reg add/drop subcommand parsers this story extends; _parse_tags() this story reuses for --injected-as
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: Extend Registry.retag() with description/purpose/injected_as kwargs
+  - file: src/portunus/cli.py
+    change: Add --description/--purpose/--injected-as to reg add and drop parsers; wire retag's new flags
+  - file: tests/test_reference_metadata.py
+    change: Add CLI-level round-trip tests for the new flags
+  - file: tests/test_registry_request_retag.py
+    change: Add retag() metadata-field tests
+
+design_decisions:
+  - decision: injected_as CLI flag reuses _parse_tags(), no new parser
+    rationale: "Grill H1 (from portunus-vault-metadata-ui design-discussion) -- injected_as is the same flat string->string dict shape as tags; a second parser would be pure duplication"
+  - decision: retag()'s collision check does not evaluate description/purpose/injected_as
+    rationale: "These fields were deliberately excluded from _STRUCTURED_TAG_FIELDS in portunus-vault-metadata story 01 specifically so they'd never participate in tag-matching/collision logic"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- no value-handling code introduced (metadata fields only)."
+  - concern: audit-chain-integrity
+    action: "N/A for reg add/drop's flag additions (existing audit points cover them). retag's audit entry is unchanged by this story -- same 'retag' action string, now covering a wider field set."
+
+risks:
+  - severity: low
+    description: A user could confuse injected_as's k=v syntax with an actual secret value being typed into a plaintext field
+    mitigation: injected_as values are adapter-target strings ("env:VAR"/"file:path"), never secret values -- same non-secret status as tags; no new plaintext-entry risk
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata-ui/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- CLI + Registry.retag() metadata support"

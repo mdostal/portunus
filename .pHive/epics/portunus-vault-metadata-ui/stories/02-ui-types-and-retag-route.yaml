@@ -1,0 +1,79 @@
+id: 02-ui-types-and-retag-route
+epic: portunus-vault-metadata-ui
+title: PortunusReference gains metadata fields (both copies); /api/retag forwards them
+status: pending
+complexity: low
+methodology: classic
+depends_on: [01-cli-metadata-write-support]
+
+description: |
+  Add description/purpose/injected_as to BOTH PortunusReference definitions (ui/lib/
+  portunus.ts and ui/app/types.ts -- a pre-existing duplication, kept in sync here, not
+  refactored away this pass). Extend /api/retag's POST body handling to forward --description/
+  --purpose/--injected-as to the CLI (Slice A's new flags), mirroring exactly how it already
+  forwards provider/project/env/tags. /api/registry's GET path needs no change -- `reg json`
+  already emits every Reference field, so the new type fields appear in its response
+  automatically.
+
+acceptance_criteria:
+  - "Given ui/lib/portunus.ts's PortunusReference interface, when read, then it has description: string, purpose: string, injected_as: Record<string, string>"
+  - "Given ui/app/types.ts's PortunusReference interface, when read, then it has the same three fields"
+  - "Given a POST to /api/retag with {name, description, purpose, injected_as}, when handled, then the route calls runPortunus with --description/--purpose/--injected-as flags matching the existing --provider/--project/--env pattern"
+  - "Given `npm run build`, when run, then it completes with zero TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add the three fields to both PortunusReference definitions; extend /api/retag/route.ts's arg-building to forward them (injected_as converted from Record<string,string> to a k=v,k2=v2 string via the existing tagsToArg() helper, same as tags).
+    agent: developer
+  - id: test
+    description: npm run build (TypeScript correctness -- no JS/TS unit-test framework exists in this repo yet, matching every prior UI story's verification approach); confirm /api/retag forwards the new fields via a manual curl against a temp PORTUNUS_HOME.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm both PortunusReference copies stayed in sync (a known pre-existing duplication risk flagged in the design discussion).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/lib/portunus.ts
+      purpose: One of two PortunusReference definitions; also holds tagsToArg(), reused for injected_as
+    - path: ui/app/types.ts
+      purpose: The second PortunusReference definition (client-safe types)
+    - path: ui/app/api/retag/route.ts
+      purpose: Existing provider/project/env/tags forwarding pattern this story extends
+
+files_to_modify:
+  - file: ui/lib/portunus.ts
+    change: Add description/purpose/injected_as to PortunusReference
+  - file: ui/app/types.ts
+    change: Add description/purpose/injected_as to PortunusReference
+  - file: ui/app/api/retag/route.ts
+    change: Forward description/purpose/injected_as to the CLI, reusing tagsToArg() for injected_as
+
+design_decisions:
+  - decision: injected_as forwarded via the existing tagsToArg() helper, not a new serializer
+    rationale: "Same flat string->string dict shape as tags -- Grill H1's resolution in the design discussion"
+  - decision: PortunusReference's pre-existing two-copy duplication is kept, not refactored away
+    rationale: "Out of scope for this epic -- flagged as a known risk in the design discussion, not a blocker; refactoring shared types is a separate, unrelated cleanup"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- metadata-only fields, no value ever flows through these types/routes."
+  - concern: audit-chain-integrity
+    action: "N/A -- this route already goes through Registry.retag()'s existing audit point (unchanged mechanism, wider field set)."
+
+risks:
+  - severity: low
+    description: The two PortunusReference copies could drift again in a future change
+    mitigation: Acceptance criteria explicitly check both files; pre-existing risk, not solved here (see design_decisions)
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata-ui/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- Client types + write-route parity"

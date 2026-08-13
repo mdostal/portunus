@@ -1,0 +1,95 @@
+id: 05-discover-and-list-routes
+epic: portunus-vault-metadata-ui
+title: /api/discover (GET diff + POST register) and /api/list routes
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-cli-metadata-write-support]
+
+description: |
+  Second prerequisite found during story decomposition: `portunus discover` has no --json
+  flag (unlike list/audit/ask, which all already support --json for exactly this
+  UI-consumer purpose) -- it only prints human-readable text lines. Add --json to `portunus
+  discover` first (Python, TDD), returning DiscoveryReport's fields as structured JSON
+  (already_registered/not_yet_registered/registered/conflicts) plus a new wif_configured:
+  bool field (from load_gcp_bindings() -- true iff the given project has a binding with a
+  non-empty wif_audience; the audience VALUE itself is never included in the response,
+  matching portunus auth gcp's own restraint). Then add two Next.js routes, both thin
+  runPortunus() wrappers exactly like every existing route: /api/discover (GET
+  ?project=<id> for diff-only --json, POST {project} for --register --json) and /api/list
+  (GET ?project=<id>, wrapping `portunus list --project <id> --json`, which already exists
+  from portunus-vault-metadata story 05 -- no CLI change needed for this half).
+
+acceptance_criteria:
+  - "Given `portunus discover --provider gcp --project demo --json` (diff-only, mocked gcloud), when run, then stdout is valid JSON with already_registered/not_yet_registered/wif_configured keys"
+  - "Given `portunus discover --provider gcp --project demo --register --json`, when run, then stdout is valid JSON with registered/conflicts/already_registered keys"
+  - "Given a project with a gcp-bindings.json entry carrying a non-empty wif_audience, when --json output is produced, then wif_configured=true and the audience string itself does NOT appear anywhere in the output"
+  - "Given a project with no binding, when --json output is produced, then wif_configured=false"
+  - "Given GET /api/discover?project=demo, when handled, then it shells out to `portunus discover --provider gcp --project demo --json` and returns the parsed JSON"
+  - "Given POST /api/discover with {project: 'demo'}, when handled, then it shells out with --register --json"
+  - "Given GET /api/list?project=demo, when handled, then it shells out to `portunus list --project demo --json` and returns the parsed JSON"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm DiscoveryReport's exact field shapes (discover.py) and portunus list --json's existing output shape (from portunus-vault-metadata story 05) to mirror in the new route responses.
+    agent: researcher
+  - id: test-spec
+    description: Write failing Python tests for `discover --json` (both diff-only and --register modes) and wif_configured's true/false cases.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add --json to the discover CLI subcommand (Python); add /api/discover/route.ts and /api/list/route.ts (Next.js, thin runPortunus() wrappers).
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the wif_configured field is boolean-only and the route responses never include the WIF audience string anywhere.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/discover.py
+      purpose: DiscoveryReport/DiscoveredSecret dataclasses this story serializes to --json
+    - path: src/portunus/backend.py
+      purpose: load_gcp_bindings(), used to compute wif_configured
+    - path: src/portunus/cli.py
+      purpose: cmd_discover this story extends with --json; cmd_list (already --json-capable) this story's /api/list route wraps unchanged
+    - path: ui/app/api/registry/route.ts
+      purpose: The established thin-GET-wrapper pattern this story's two new routes follow
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add --json to the discover subcommand; serialize DiscoveryReport + wif_configured
+  - file: ui/app/api/discover/route.ts
+    change: New file -- GET (diff) and POST (register) handlers
+  - file: ui/app/api/list/route.ts
+    change: New file -- GET handler wrapping `portunus list --json`
+  - file: tests/test_cli_discover.py
+    change: Add --json output tests
+
+design_decisions:
+  - decision: discover --json added as its own prerequisite within this story, not story 01
+    rationale: "Found during story decomposition -- thematically belongs with discovery, not metadata-write-support; keeps story 01 focused"
+  - decision: wif_configured is boolean-only in the JSON response, never the audience string
+    rationale: "Design-discussion §3 Slice F / Open Question 1 -- matches portunus auth gcp's existing restraint (identity/scope/expiry only, never audience/token)"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "discover --json is read-only metadata (names/labels/wif_configured boolean) -- never a value, never the WIF audience string. Explicit test coverage for the audience-never-appears guarantee."
+  - concern: audit-chain-integrity
+    action: "N/A -- discover's diff-only/register paths already covered by portunus-vault-metadata's audit discipline (register writes go through Registry.add(), unaudited by design like other metadata-only writes; --json is a serialization format change only)."
+
+risks:
+  - severity: medium
+    description: A future change to DiscoveryReport's fields could silently break the JSON contract the UI routes depend on
+    mitigation: Tests assert exact key names, not just "valid JSON" -- a field rename would fail the test suite
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata-ui/docs/design-discussion.md
+    relevant_excerpt: "Slice E -- Discovery + list API routes / Open Question 1"

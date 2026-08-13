@@ -1,0 +1,72 @@
+id: 04-edit-metadata
+epic: portunus-vault-metadata-ui
+title: DetailDrawer's Move form gains metadata fields
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [02-ui-types-and-retag-route]
+
+description: |
+  Extend DetailDrawer's existing Move form (moveOpen/moveDraft/submitMove state, currently
+  provider/project/env) with description/purpose/injected_as fields, POSTing to the same
+  (now story-02-widened) /api/retag. No second edit surface -- one form, one handler. injected_as
+  uses the "env=target,env2=target2" comma-separated convention (Grill H1), same input style
+  as AddSecretForm's existing tags field, with a helper placeholder showing the format.
+
+acceptance_criteria:
+  - "Given DetailDrawer's Move form is open, when rendered, then it includes description/purpose/injected_as inputs alongside provider/project/env"
+  - "Given a user fills description/purpose/injected_as and submits, when the form posts, then /api/retag receives all three fields correctly"
+  - "Given the injected_as input, when rendered, then its label/placeholder shows the k=v,k2=v2 convention with an example (e.g. prod=env:STRIPE_KEY,staging=file:.env.staging)"
+  - "Given a successful save, when it completes, then the drawer reflects the updated metadata (same refresh pattern as the existing provider/project/env move)"
+  - "Given `npm run build`, when run, then it completes with zero TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add description/purpose/injected_as inputs to DetailDrawer's Move form; extend moveDraft state and submitMove's request body.
+    agent: developer
+  - id: test
+    description: npm run build; live smoke test -- edit a seeded reference's metadata via the form, confirm the change persists and displays (story 03's rendering).
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the form reuses the existing submitMove/retag mechanism rather than introducing a second write path.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: The existing Move form/moveDraft/submitMove this story extends
+    - path: ui/app/components/AddSecretForm.tsx
+      purpose: The established k=v,k2=v2 tags-input convention this story mirrors for injected_as
+
+files_to_modify:
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Add description/purpose/injected_as fields to the Move form and moveDraft state
+
+design_decisions:
+  - decision: One form, one handler -- extends the existing Move mechanism rather than adding a second edit surface
+    rationale: "Design-discussion Slice D -- description/purpose/injected_as are metadata updates through the exact same retag() path as provider/project/env; no reason for a separate UI flow"
+  - decision: injected_as input uses the k=v,k2=v2 convention with an explicit example placeholder
+    rationale: "Grill H1 -- resolved in design discussion: reuses tags' existing convention rather than inventing a JSON/structured input"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- description/purpose/injected_as are non-secret metadata; this form never handles a value (mirrors AddSecretForm's own value field being the sole plaintext-entry point elsewhere)."
+  - concern: audit-chain-integrity
+    action: "N/A -- goes through the existing retag audit point, unchanged mechanism."
+
+risks:
+  - severity: low
+    description: A user could mistakenly type an actual secret value into description/purpose thinking it's a value field
+    mitigation: Clear field labels ("description", "purpose") distinct from any value-entry field; these fields are visually and functionally separate from AddSecretForm's stdin-only value entry
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata-ui/docs/design-discussion.md
+    relevant_excerpt: "Slice D -- Write path: edit metadata"
