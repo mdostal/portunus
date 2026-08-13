@@ -24,6 +24,39 @@ def _mocked_transport(access_token):
     return lambda url, data, headers, timeout: {"access_token": access_token, "expires_in": 900}
 
 
+def test_gcp_project_binding_carries_account():
+    b = GcpProjectBinding("p", "aud", account="user@example.com")
+    assert b.account == "user@example.com"
+
+
+def test_gcp_project_binding_account_defaults_empty():
+    b = GcpProjectBinding("p", "aud")
+    assert b.account == ""
+
+
+def test_save_and_load_gcp_bindings_round_trips_account(home):
+    save_gcp_bindings({"p": GcpProjectBinding("p", "aud", account="user@example.com")})
+    bindings = load_gcp_bindings()
+    assert bindings["p"].account == "user@example.com"
+
+
+def test_legacy_bindings_file_without_account_key_still_loads(home):
+    path = home / "gcp-bindings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"p": {"wif_audience": "aud"}}')
+    import os
+    os.chmod(path, 0o600)
+    bindings = load_gcp_bindings()
+    assert bindings["p"].wif_audience == "aud"
+    assert bindings["p"].account == ""
+
+
+def test_env_fallback_binding_has_empty_account(home, monkeypatch):
+    monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "personalsites-487021")
+    bindings = load_gcp_bindings()
+    assert bindings["personalsites-487021"].account == ""
+
+
 def test_load_gcp_bindings_falls_back_to_env_when_no_file(home, monkeypatch):
     monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "personalsites-487021")
     monkeypatch.setenv("PORTUNUS_GCP_WIF_AUDIENCE", "//iam.googleapis.com/projects/1/.../providers/p")
