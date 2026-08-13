@@ -239,8 +239,13 @@ def cmd_drop(args) -> int:
             return _err(f"cannot read --value-file: {exc}")
     if not value:
         return _err("empty secret value; nothing dropped")
+    try:
+        extra_tags = _parse_tags(args.tags) if args.tags else {}
+    except ValueError as exc:
+        return _err(str(exc))
     ref = registry.add(
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
+        provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -402,6 +407,10 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("sm_name", help="vault key, e.g. dostal-shared-anthropic")
     dr.add_argument("--scope", default="")
     dr.add_argument("--kind", default="")
+    dr.add_argument("--provider", default="")
+    dr.add_argument("--project", default="")
+    dr.add_argument("--env", default="")
+    dr.add_argument("--tags", default="", help="comma-separated k=v pairs, e.g. team=platform")
     src = dr.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument("--value-file", help="read the value from this local file")
