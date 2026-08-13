@@ -1,7 +1,9 @@
 id: 05-http-adapters
 epic: portunus-standalone-core
 title: HTTP header and body injection adapters
-status: completed
+status: shipped
+shipped_at: "2026-08-13T04:16:44Z"
+release_id: "v0.2.0"
 complexity: low
 methodology: tdd
 depends_on: ["03-env-file-adapters"]
