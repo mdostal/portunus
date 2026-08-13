@@ -713,8 +713,12 @@ def cmd_discover(args) -> int:
     state=requested placeholders. See discover.py -- this command never
     touches SecretBackend.access()."""
     registry = Registry()
+    account = ""
+    binding = load_gcp_bindings().get(args.project)
+    if binding:
+        account = binding.account
     try:
-        discovered = list_gcp_secrets(args.project)
+        discovered = list_gcp_secrets(args.project, account=account)
     except DiscoverError as exc:
         return _err(str(exc))
 

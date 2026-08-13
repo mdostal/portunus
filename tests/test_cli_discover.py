@@ -5,10 +5,12 @@ from portunus import Registry
 from portunus.cli import main
 
 
-def _mock_gcloud_list(monkeypatch, secrets):
+def _mock_gcloud_list(monkeypatch, secrets, seen_cmds=None):
     from types import SimpleNamespace
 
     def fake_run(cmd, capture_output, text, timeout):
+        if seen_cmds is not None:
+            seen_cmds.append(cmd)
         return SimpleNamespace(returncode=0, stdout=json.dumps(secrets), stderr="")
 
     monkeypatch.setattr("portunus.discover._default_runner", fake_run)
@@ -79,3 +81,21 @@ def test_discover_json_wif_configured_false_with_no_binding(home, monkeypatch, c
     out = capsys.readouterr().out
     data = json.loads(out)
     assert data["wif_configured"] is False
+
+
+def test_cmd_discover_passes_binding_account_to_list_gcp_secrets(home, monkeypatch, capsys):
+    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    save_gcp_bindings({"demo": GcpProjectBinding("demo", account="user@example.com")})
+    seen_cmds = []
+    _mock_gcloud_list(monkeypatch, [], seen_cmds=seen_cmds)
+    rc = main(["discover", "--provider", "gcp", "--project", "demo"])
+    assert rc == 0
+    assert "--account=user@example.com" in seen_cmds[0]
+
+
+def test_cmd_discover_no_binding_means_no_account_flag(home, monkeypatch, capsys):
+    seen_cmds = []
+    _mock_gcloud_list(monkeypatch, [], seen_cmds=seen_cmds)
+    rc = main(["discover", "--provider", "gcp", "--project", "demo"])
+    assert rc == 0
+    assert not any(arg.startswith("--account=") for arg in seen_cmds[0])
