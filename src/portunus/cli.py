@@ -18,6 +18,7 @@ from .audit import AuditChain
 from .backend import BackendError, GcloudBackend, MockBackend
 from .localvault import LocalEncryptedBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
+from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .registry import AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
 
@@ -113,6 +114,53 @@ def cmd_find(args) -> int:
     print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
           f"(provider={ref.provider}, project={ref.project}, env={ref.env}, "
           f"scope={ref.scope}, kind={ref.kind}, tags={ref.tags}, state={ref.state})")
+    return 0
+
+
+def cmd_inject(args) -> int:
+    """Resolve a reference by tags and inject its value at a boundary target.
+
+    The value only ever flows resolver -> adapter -> target via
+    Resolver.resolve_call's boundary-callable sink -- it is never returned,
+    printed, or logged here, on either the success or failure path.
+    """
+    try:
+        partial_tags = _parse_tags(args.tags)
+    except ValueError as exc:
+        return _err(str(exc))
+
+    registry, _audit, broker, resolver = _build()
+    try:
+        ref = registry.resolve_by_tags(**partial_tags)
+    except AmbiguousMatch as exc:
+        return_code = EXIT_AMBIGUOUS
+        _err(f"ambiguous match for {partial_tags!r}: {', '.join(exc.candidates)}")
+        return return_code
+    except NoMatch:
+        _err(f"no reference matches tags: {partial_tags!r}")
+        return EXIT_NO_MATCH
+
+    # Adapters themselves validate their target params (e.g. reject an empty
+    # var_name/path/key) and raise AdapterError -- caught and audited below,
+    # same as any other injection failure. No redundant pre-check here.
+    if args.target == "env":
+        adapter = EnvVarAdapter()
+        adapter_kwargs = {"var_name": args.var}
+        target_desc = f"env:{args.var}"
+    else:  # file
+        adapter = FileAdapter()
+        adapter_kwargs = {"path": args.path, "fmt": args.format, "key": args.key}
+        target_desc = f"file:{args.path}"
+
+    template = f"{{{{secret:{ref.name}}}}}"
+    try:
+        resolver.resolve_call(template, boundary=lambda v: adapter.inject(v, **adapter_kwargs))
+    except (UnknownReference, NotInjectable, ApprovalRequired, BackendError, AdapterError) as exc:
+        broker.audit.append("adapter_resolution", ref.sm_name, f"error:{target_desc}")
+        return _err(str(exc))
+
+    broker.audit.append("adapter_resolution", ref.sm_name, f"ok:{target_desc}")
+    print(f"injected {{{{secret:{ref.name}}}}} -> {target_desc}")
     return 0
 
 
@@ -264,6 +312,17 @@ def build_parser() -> argparse.ArgumentParser:
     fd.add_argument("--tags", required=True,
                      help="comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
     fd.set_defaults(func=cmd_find)
+
+    inj = sub.add_parser("inject", help="resolve by tags and inject at a boundary target")
+    inj.add_argument("--tags", required=True,
+                      help="comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
+    inj.add_argument("--target", required=True, choices=("env", "file"))
+    inj.add_argument("--var", default="", help="target env var name (--target env)")
+    inj.add_argument("--path", default="", help="target file path (--target file)")
+    inj.add_argument("--format", dest="format", default="", choices=("", "env", "json", "yaml"),
+                      help="target file format (--target file)")
+    inj.add_argument("--key", default="", help="key to template the value under (--target file)")
+    inj.set_defaults(func=cmd_inject)
 
     dr = sub.add_parser(
         "drop",
