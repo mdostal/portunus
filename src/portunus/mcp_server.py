@@ -11,15 +11,40 @@ package, same process, no subprocess boundary needed for that reason alone.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from mcp.server.fastmcp import FastMCP
 
-from .backend import load_gcp_bindings
-from .cli import _build_tree, _wif_configured
+from .backend import BackendError, load_gcp_bindings
+from .broker import ApprovalRequired, NotInjectable
+from .cli import _build, _build_tree, _wif_configured
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import AmbiguousMatch, NoMatch, Registry
+from .resolver import UnknownReference
 
 mcp = FastMCP("portunus")
+
+
+class AddressError(Exception):
+    """Raised when a tool's name/tags addressing can't identify a reference
+    before resolution -- distinct from NoMatch/AmbiguousMatch, which mean
+    "addressing was well-formed but resolution failed/was ambiguous"."""
+
+
+def _resolve_address(registry: Registry, name: str, tags: Optional[dict]):
+    """Dual addressing (Grill H1, portunus-mcp-server): resolve by exact
+    name if given, else by tags. Mirrors the CLI's own inject/ask dual-
+    addressing convention -- the caller never writes {{secret:NAME}}
+    placeholder syntax, it just names what it wants."""
+    if name:
+        try:
+            return registry.require(name)
+        except KeyError:
+            raise AddressError(f"unknown reference: {name}")
+    if tags:
+        return registry.resolve_by_tags(**tags)  # NoMatch/AmbiguousMatch propagate
+    raise AddressError("name or tags is required")
 
 
 @mcp.tool()
@@ -130,6 +155,39 @@ def portunus_discover(project: str, register: bool = False) -> dict:
         ],
         "wif_configured": _wif_configured(project),
     }
+
+
+@mcp.tool()
+def portunus_resolve_to_tempfile(name: str = "", tags: Optional[dict] = None) -> dict:
+    """Resolve one secret to a 0600 temp file and return its PATH -- never
+    the value. Address it by exact reference `name` (from a prior
+    portunus_list/portunus_tree/portunus_ask_preview call) OR by `tags`
+    (e.g. {"provider": "gcp", "project": "demo"}) -- give one, not both.
+    Fails closed on anything ambiguous, unknown, or not currently
+    injectable (dropped/revoked/requested/gated). You are responsible for
+    not reading the file's contents back into your own response -- treat
+    the path as a pointer to hand to another tool/command, not something
+    to inspect yourself."""
+    registry, _audit, broker, resolver = _build()
+    try:
+        ref = _resolve_address(registry, name, tags)
+    except AddressError as exc:
+        return {"error": str(exc)}
+    except NoMatch:
+        return {"error": f"no reference matches tags: {tags!r}"}
+    except AmbiguousMatch as exc:
+        return {"error": f"ambiguous match: {exc.candidates}"}
+
+    placeholder = f"{{{{secret:{ref.name}}}}}"
+    try:
+        path = resolver.resolve_to_tempfile(placeholder)
+    except UnknownReference:
+        return {"error": f"unknown reference: {ref.name}"}
+    except (NotInjectable, ApprovalRequired) as exc:
+        return {"error": str(exc)}
+    except BackendError as exc:
+        return {"error": str(exc)}
+    return {"path": path}
 
 
 def run_server() -> None:

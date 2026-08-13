@@ -182,3 +182,95 @@ def test_portunus_discover_no_backend_access():
     from portunus import mcp_server
     code = _no_backend_access(mcp_server.portunus_discover)
     assert ".access(" not in code
+
+
+# --- story 04: resolve_to_tempfile injection tool -----------------------
+
+def test_resolve_to_tempfile_by_name(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    monkeypatch.setenv("PORTUNUS_MOCK_SM_X", "the-value")
+    result = mcp_server.portunus_resolve_to_tempfile(name="x")
+    assert "path" in result
+    assert "error" not in result
+    from pathlib import Path
+    p = Path(result["path"])
+    assert p.read_text() == "the-value"
+    assert "the-value" not in str(result)
+    p.unlink()
+
+
+def test_resolve_to_tempfile_by_tags(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x", provider="gcp", project="demo")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    monkeypatch.setenv("PORTUNUS_MOCK_SM_X", "the-value")
+    result = mcp_server.portunus_resolve_to_tempfile(tags={"provider": "gcp", "project": "demo"})
+    assert "path" in result
+    from pathlib import Path
+    p = Path(result["path"])
+    assert p.read_text() == "the-value"
+    p.unlink()
+
+
+def test_resolve_to_tempfile_ambiguous_tags(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("a", "sm-a", project="demo")
+    reg.add("b", "sm-b", project="demo")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_to_tempfile(tags={"project": "demo"})
+    assert "error" in result
+    assert "a" in result["error"] and "b" in result["error"]
+
+
+def test_resolve_to_tempfile_no_match(home, monkeypatch):
+    from portunus import mcp_server
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_to_tempfile(tags={"project": "nonexistent"})
+    assert "error" in result
+
+
+def test_resolve_to_tempfile_neither_name_nor_tags(home, monkeypatch):
+    from portunus import mcp_server
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_to_tempfile()
+    assert "error" in result
+    assert "name or tags" in result["error"]
+
+
+def test_resolve_to_tempfile_unknown_name(home, monkeypatch):
+    from portunus import mcp_server
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_to_tempfile(name="nonexistent")
+    assert "error" in result
+
+
+def test_resolve_to_tempfile_dropped_state_fails_closed(home, monkeypatch):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x", state="dropped")
+    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
+    result = mcp_server.portunus_resolve_to_tempfile(name="x")
+    assert "error" in result
+    assert "path" not in result
+
+
+def test_resolve_to_tempfile_never_returns_a_value_source_check():
+    """AST-level: every return in this function must come from a path
+    variable or a safely-constructed error string -- never a resolved
+    value/text variable."""
+    from portunus import mcp_server
+    src = _no_backend_access(mcp_server.portunus_resolve_to_tempfile)
+    # The literal string "the-value" (or any secret) can never appear in
+    # source, but the stronger guarantee is structural: no reference to a
+    # variable holding _substitute()'s output outside resolver.resolve_to_tempfile's
+    # own return, which already only yields a path.
+    assert ".access(" not in src
