@@ -1,0 +1,75 @@
+id: 02-gcloud-backend-account-passthrough
+epic: portunus-gcp-multi-account
+title: GcloudBackend.access() passes --account= (mutually exclusive with WIF token)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-binding-account-field]
+
+description: |
+  GcloudBackend.access(sm_name, project) resolves the project's binding; when it has a
+  non-empty account AND no WIF credential_provider is being used for this call (WIF and
+  --account are mutually exclusive -- a minted access token already carries identity),
+  --account=<binding.account> is added to the gcloud invocation. When a WIF token IS used,
+  --account is never added (avoids sending conflicting identity signals in one command). This
+  is the actual value-fetch path (real SM injection) -- the fix that lets resolve/inject work
+  correctly per-project regardless of gcloud's ambient active account.
+
+acceptance_criteria:
+  - "Given a binding with account='user@example.com' and no wif_audience, when access(sm_name, project=that_project) is called, then the gcloud command includes --account=user@example.com"
+  - "Given a binding with BOTH account and wif_audience set, when access() is called, then the command includes --access-token-file=... but NOT --account= (WIF wins, mutually exclusive)"
+  - "Given a project with no binding at all, when access() is called, then no --account= flag appears (unchanged ambient-active-account behavior, exactly as before this epic)"
+  - "Given two different GcloudBackend.access() calls in the same process for two different projects, each with a different binding.account, when both run, then each gcloud invocation carries its own correct --account= value (proves multi-account works within one process)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm GcloudBackend.access()'s current binding-resolution flow (_credential_provider_for) and exact cmd-list construction site to extend.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the four acceptance criteria above, using the existing runner-injection test pattern (no real gcloud calls).
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Resolve the binding's account in access(); append --account= only in the non-WIF branch.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm --account and --access-token-file never appear together in the same command, and that the zero-binding path is byte-identical to pre-epic behavior.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: GcloudBackend.access()/_credential_provider_for() this story extends
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: Resolve binding.account in access(); append --account= in the non-WIF branch only
+  - file: tests/test_backend_gcp_wif.py
+    change: Add account-passthrough and WIF-mutual-exclusion tests
+
+design_decisions:
+  - decision: --account only appended when no WIF token file is used for that call
+    rationale: "Design-discussion §4 highest risk -- sending both --account and --access-token-file would be a nonsensical, conflicting identity signal to gcloud"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "This is the real value-fetch (SM injection) path -- verified the fix doesn't change any value-handling logic, only which local identity authenticates the gcloud call."
+  - concern: audit-chain-integrity
+    action: "N/A -- resolve's existing audit entry (resolve/ok, ref/sm name only) is unaffected by which account performed the underlying gcloud call."
+
+risks:
+  - severity: high
+    description: A bug here could cause a value fetch to silently use the wrong account's credentials against the wrong project's secret
+    mitigation: Acceptance criterion 4 explicitly proves two concurrent-in-process calls each use their own correct account -- the exact failure mode this epic exists to prevent
+
+references:
+  - path: .pHive/epics/portunus-gcp-multi-account/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- GcloudBackend.access() passes --account="
