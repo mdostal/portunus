@@ -1,7 +1,9 @@
 id: 01-binding-account-field
 epic: portunus-gcp-multi-account
 title: GcpProjectBinding gains account; load/save_gcp_bindings serialize it
-status: pending
+status: shipped
+shipped_at: "2026-08-13T21:30:00Z"
+release_id: "v0.9.0"
 complexity: low
 methodology: tdd
 depends_on: []

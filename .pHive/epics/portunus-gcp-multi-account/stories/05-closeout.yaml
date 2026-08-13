@@ -1,7 +1,9 @@
 id: 05-closeout
 epic: portunus-gcp-multi-account
 title: Live multi-account verification, README/CONTEXT.md, version bump, changelog
-status: pending
+status: shipped
+shipped_at: "2026-08-13T21:30:00Z"
+release_id: "v0.9.0"
 complexity: low
 methodology: classic
 depends_on:

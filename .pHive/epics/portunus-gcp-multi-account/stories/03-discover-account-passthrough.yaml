@@ -1,7 +1,9 @@
 id: 03-discover-account-passthrough
 epic: portunus-gcp-multi-account
 title: discover.py list_gcp_secrets() gains account param; cmd_discover wires it
-status: pending
+status: shipped
+shipped_at: "2026-08-13T21:30:00Z"
+release_id: "v0.9.0"
 complexity: medium
 methodology: tdd
 depends_on: [01-binding-account-field]
