@@ -283,6 +283,41 @@ def cmd_ask(args) -> int:
     return _inject_resolved_ref(resolver, broker, ref, args, "semantic_op")
 
 
+def cmd_retag(args) -> int:
+    """Update a reference's provider/project/env/tags in place. Metadata
+    only -- never touches a value. Delegates entirely to Registry.retag()
+    for the collision check (no hand-rolled CLI-level tag merge)."""
+    registry, _audit, broker, _resolver = _build()
+    try:
+        tags = _parse_tags(args.tags) if args.tags else None
+    except ValueError as exc:
+        return _err(str(exc))
+
+    kwargs = {}
+    if args.provider:
+        kwargs["provider"] = args.provider
+    if args.project:
+        kwargs["project"] = args.project
+    if args.env:
+        kwargs["env"] = args.env
+    if tags is not None:
+        kwargs["tags"] = tags
+
+    try:
+        ref = registry.retag(args.name, **kwargs)
+    except AmbiguousMatch as exc:
+        _err(f"retagging {args.name!r} would collide with: {', '.join(exc.candidates)}")
+        return EXIT_AMBIGUOUS
+    except KeyError:
+        _err(f"unknown reference: {args.name}")
+        return EXIT_NO_MATCH
+
+    broker.audit.append("retag", ref.sm_name, "ok")
+    print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
+          f"(provider={ref.provider}, project={ref.project}, env={ref.env}, tags={ref.tags})")
+    return 0
+
+
 def cmd_drop(args) -> int:
     """Put a secret INTO Arca. Harness-side only: the value never enters the
     LLM chat, ~/.claude, or a provider — it comes from stdin or a local file
@@ -469,6 +504,14 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--tags", default="",
                       help="required for an 'add' request: comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
     ask.set_defaults(func=cmd_ask)
+
+    rt = sub.add_parser("retag", help="update a reference's provider/project/env/tags in place")
+    rt.add_argument("name")
+    rt.add_argument("--provider", default="")
+    rt.add_argument("--project", default="")
+    rt.add_argument("--env", default="")
+    rt.add_argument("--tags", default="", help="comma-separated k=v pairs, replaces the open tags dict")
+    rt.set_defaults(func=cmd_retag)
 
     dr = sub.add_parser(
         "drop",
