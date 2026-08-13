@@ -6,6 +6,16 @@ import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import InjectControls from "./InjectControls";
 
+/** {a: "1", b: "2"} -> "a=1,b=2" -- the same k=v,k2=v2 convention tags/
+ * injected_as already use everywhere else (AddSecretForm, /api/retag). A
+ * local helper, not imported from ui/lib/portunus.ts, since that module
+ * pulls in node:child_process and must never load in a client component. */
+function dictToKvString(dict: Record<string, string> | undefined): string {
+  return Object.entries(dict || {})
+    .map(([k, v]) => `${k}=${v}`)
+    .join(",");
+}
+
 export default function DetailDrawer({
   reference,
   onClose,
@@ -24,6 +34,9 @@ export default function DetailDrawer({
     provider: reference.provider,
     project: reference.project,
     env: reference.env,
+    description: reference.description,
+    purpose: reference.purpose,
+    injected_as: dictToKvString(reference.injected_as),
   });
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveStatus, setMoveStatus] = useState<string | null>(null);
@@ -156,6 +169,33 @@ export default function DetailDrawer({
               />
             </label>
           </div>
+          <div className="form-row">
+            <label className="form-field">
+              <span>description</span>
+              <input
+                className="field"
+                value={moveDraft.description}
+                onChange={(e) => setMoveDraft((d) => ({ ...d, description: e.target.value }))}
+              />
+            </label>
+            <label className="form-field">
+              <span>purpose</span>
+              <input
+                className="field"
+                value={moveDraft.purpose}
+                onChange={(e) => setMoveDraft((d) => ({ ...d, purpose: e.target.value }))}
+              />
+            </label>
+          </div>
+          <label className="form-field">
+            <span>injected_as (env=target,env2=target2)</span>
+            <input
+              className="field"
+              value={moveDraft.injected_as}
+              onChange={(e) => setMoveDraft((d) => ({ ...d, injected_as: e.target.value }))}
+              placeholder="prod=env:STRIPE_KEY,staging=file:.env.staging"
+            />
+          </label>
           <button className="btn solid" type="submit" disabled={moveBusy}>
             {moveBusy ? "Moving…" : "Save move"}
           </button>
