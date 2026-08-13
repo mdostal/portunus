@@ -1,0 +1,79 @@
+id: 02-list-sessions-and-closeout
+epic: portunus-session-ttl-and-list
+title: list_sessions() + CONTEXT.md session vocabulary
+status: pending
+complexity: low
+methodology: tdd
+depends_on: ["01-session-ttl-enforcement"]
+
+description: |
+  Refactors inspect_session()'s metadata-shaping logic into a shared _session_view(record)
+  helper, then adds list_sessions() which iterates the vault's raw keys, filters to the
+  "session:" prefix, decrypts+parses each, and returns _session_view() for all of them
+  (including expired ones -- same non-raising posture as inspect_session). A corrupt/
+  undecryptable entry is skipped, not fatal to enumeration. Also folds in the CONTEXT.md
+  update flagged by this epic's own grill pass (V1): session-storage vocabulary was never
+  documented, even though it shipped before this epic via PAN-7831.
+
+acceptance_criteria:
+  - "Given two stored sessions (one expired, one not), when list_sessions() runs, then it returns metadata for both, with expired flagged correctly on each, and never includes either session's payload"
+  - "Given a corrupt/undecryptable vault entry under the session: prefix, when list_sessions() runs, then it is skipped and every other valid session is still returned"
+  - "Given non-session entries in the vault (regular secrets), when list_sessions() runs, then they are excluded"
+  - "Given CONTEXT.md, when read after this story, then it defines SESSION_SCHEMA/session storage, SessionExpired, and list_sessions()"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm inspect_session()'s exact current metadata shape (post story 01) to extract into _session_view() without changing its output.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for list_sessions() (multiple sessions, expired flagging, corrupt-entry skip, non-session exclusion).
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Extract _session_view(), implement list_sessions(), update CONTEXT.md.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm inspect_session()'s output is byte-identical after the _session_view() refactor (no accidental behavior change).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/localvault.py
+      purpose: inspect_session() this story refactors, and where list_sessions() is added
+    - path: .pHive/CONTEXT.md
+      purpose: Glossary this story updates
+
+files_to_modify:
+  - file: src/portunus/localvault.py
+    change: Extract _session_view(); add list_sessions()
+  - file: tests/test_localvault.py
+    change: Extend with list_sessions() tests
+  - file: .pHive/CONTEXT.md
+    change: Add session-storage, SessionExpired, list_sessions() Terminology entries
+
+design_decisions:
+  - decision: A corrupt/undecryptable session entry is skipped, not fatal, during enumeration
+    rationale: "Mirrors _load()'s existing graceful-degradation posture on a corrupt vault file -- one bad entry shouldn't hide everything else"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "list_sessions() returns metadata views only (same shape as inspect_session), never a session payload -- explicit test asserts this."
+  - concern: documentation
+    action: "This story is the documentation cross-cutting concern's discharge point -- CONTEXT.md update lands here."
+
+risks:
+  - severity: low
+    description: The _session_view() refactor accidentally changes inspect_session()'s existing output shape
+    mitigation: Review step explicitly diffs inspect_session()'s output before/after the refactor
+
+references:
+  - path: .pHive/epics/portunus-session-ttl-and-list/docs/grill-record.md
+    relevant_excerpt: "V1 -- CONTEXT.md's Terminology section has no entry at all for session storage... fold into story 2"
