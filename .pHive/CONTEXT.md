@@ -25,6 +25,24 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - **Audit chain** — the tamper-evident hash-chain access log (`audit.py`) underneath every
   resolution/gate decision; `portunus verify` proves it untampered. Records ref/target/when,
   never the value.
+- **Tag schema** — `Reference`'s structured `provider`/`project`/`env` fields plus an open
+  `tags{}` dict, alongside the legacy `scope`/`kind` strings kept for back-compat. Populated
+  via `portunus drop --provider/--project/--env/--tags` or `reg add`; migrated additively from
+  legacy references by `Registry.migrate_legacy_tags()`.
+- **`resolve_by_tags()`** — `Registry`'s fail-closed metadata lookup: a partial tag query
+  returns exactly one `Reference` or raises `NoMatch`/`AmbiguousMatch` — never a guess. The
+  foundation every other metadata-lookup path (CLI `find`, `ask`, the UI) builds on.
+- **Adapter** (`SecretAdapter`, `adapters.py`) — a boundary-only injection sink beyond the
+  original three (callable/temp-file/subprocess-argv): `EnvVarAdapter` (process env),
+  `FileAdapter` (templated `.env`/JSON/YAML), `HttpHeaderAdapter`/`HttpBodyAdapter` (outbound
+  HTTP). Every adapter's `inject()` must never return, log, or print the value, including on
+  its failure path. Dispatched via `Resolver.resolve_call`'s boundary-callable sink.
+- **`parse_intent()`** (`intent.py`) — the semantic front door's text-to-tags step: maps a
+  natural-language request to a partial tag dict using deterministic matching against the
+  registry's own known vocabulary (no NLP model). Fails closed (`AmbiguousIntent`) on anything
+  unrecognized or internally conflicting; downstream ambiguity across multiple still-matching
+  references is `resolve_by_tags()`'s job, not this function's. Backs `portunus ask` and the
+  UI's Ask Bar.
 
 ## Key paths
 
@@ -33,7 +51,13 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/backend.py`, `localvault.py` — ARCA: `SecretBackend` implementations.
 - `src/portunus/registry.py` — the reference registry (metadata only, no values).
 - `src/portunus/audit.py` — the hash-chain audit log.
-- `src/portunus/cli.py` — the `portunus` CLI entry point.
+- `src/portunus/adapters.py` — boundary injection adapters (env/file/HTTP header/HTTP body).
+- `src/portunus/intent.py` — `parse_intent()`, the semantic front door's text-to-tags step.
+- `src/portunus/cli.py` — the `portunus` CLI entry point (`find`, `inject`, `ask`, `drop`, ...).
+- `ui/` — the standalone localhost-only UI (Console / Vault Map / Ask Bar). Every API route
+  under `ui/app/api/` shells out to the same gated `portunus` console script rather than
+  reimplementing any gating logic in TypeScript — see `ui/lib/portunus.ts`.
+- `.claude/skills/portunus-ask/` — thin Claude skill wrapping `portunus ask` for agent use.
 - `.pHive/epics/` — in-flight Hive epics/stories for this repo.
 
 ## Conventions

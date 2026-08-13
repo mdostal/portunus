@@ -1,7 +1,7 @@
 id: 07-glossary-verify-closeout
 epic: portunus-standalone-core
 title: CONTEXT.md update, full-chain verify, session-vault reconciliation
-status: pending
+status: completed
 complexity: low
 methodology: classic
 depends_on: ["01-tag-schema-migration-lock", "02-cli-tag-query", "03-env-file-adapters", "04-semantic-front-door", "05-http-adapters", "06-ui-v1"]
@@ -11,15 +11,23 @@ description: |
   updates CONTEXT.md's Terminology section for the vocabulary this epic introduced (tag
   schema, adapter, resolve_by_tags, parse_intent — per grill finding C1), runs portunus
   verify once against a full chain spanning every entry type from stories 01-06 together
-  (not just per-story in isolation), and resolves portunus-session-vault's disposition:
-  folding stories 01/02 into the new tag schema, and closing or re-scoping 03-05 against
-  what actually shipped.
+  (not just per-story in isolation), and resolves portunus-session-vault's disposition.
+
+  Reconciliation finding (differs from the original speculation below): every
+  portunus-session-vault story's context.codebase/key_files points at a Minerva ephemeral
+  run workspace (target_codebase in that epic's epic.yaml) and TypeScript files that never
+  existed in this repo (src/arca/vault.ts, src/ostiarius/gate.ts, etc. — this repo is
+  Python). That epic was planned against a different/orphaned target, not this codebase, and
+  committed here by mistake. It is NOT superseded/foldable as originally guessed — session
+  storage (TTL-bound Playwright state) and role-scoped access gating are genuinely distinct
+  capabilities from tag-based secret lookup — but none of its 5 stories are directly
+  executable as written. See .pHive/epics/portunus-session-vault/epic.yaml -> reconciliation.
 
 acceptance_criteria:
   - "Given the epic's shipped code, when CONTEXT.md is read, then tag schema, adapter, resolve_by_tags, and parse_intent are defined in the Terminology section"
   - "Given a registry/audit chain exercised across stories 01-06's features together, when portunus verify runs, then it passes against the full combined chain"
-  - "Given portunus-session-vault's stories 01/02, when reviewed, then they are updated to reference the new tag schema instead of a separate storage model"
-  - "Given portunus-session-vault's stories 03-05, when reviewed, then each is explicitly closed-as-superseded or re-scoped — none left silently orphaned"
+  - "Given portunus-session-vault's 5 stories, when reviewed against this repo's actual source tree, then each is explicitly marked with its real disposition (invalid-target, in this case) rather than left silently pending forever"
+  - "Given portunus-session-vault's epic.yaml, when read, then it documents the finding (wrong target codebase) and a concrete recommendation (re-plan fresh against this repo if the capability is still wanted) rather than a vague TODO"
 
 methodology: classic
 steps:
@@ -53,19 +61,15 @@ context:
 
 files_to_modify:
   - file: .pHive/CONTEXT.md
-    change: Add Terminology entries for tag schema, adapter, resolve_by_tags, parse_intent
+    change: Add Terminology entries for tag schema, adapter, resolve_by_tags, parse_intent, plus Key paths for adapters.py/intent.py/ui/
   - file: tests/test_audit_full_chain.py
     change: New test — portunus verify against a chain spanning all entry types from this epic
-  - file: .pHive/epics/portunus-session-vault/stories/01-arca-storage-model.yaml
-    change: Update to reference the new tag schema
-  - file: .pHive/epics/portunus-session-vault/stories/02-session-api.yaml
-    change: Update to reference the new tag schema
-  - file: .pHive/epics/portunus-session-vault/stories/03-ostiarius-gate.yaml
-    change: Close as superseded by Broker.check_injectable, or document why it's still distinct
-  - file: .pHive/epics/portunus-session-vault/stories/04-cli-broker-seam.yaml
-    change: Re-scope against what shipped, or close
-  - file: .pHive/epics/portunus-session-vault/stories/05-playwright-integration-tests.yaml
-    change: Re-scope against what shipped, or close
+  - file: .pHive/epics/portunus-session-vault/epic.yaml
+    change: Add a reconciliation block documenting the wrong-target-codebase finding and recommendation
+  - file: .pHive/epics/portunus-session-vault/stories/*.yaml
+    change: "status: invalid-target on all 5, pointing back to epic.yaml's reconciliation block"
+  - file: README.md
+    change: Add find/inject/ask usage examples and a UI section
 
 design_decisions:
   - decision: Full-chain verify runs once at closeout, in addition to each story's own per-story verify test
