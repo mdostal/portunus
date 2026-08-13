@@ -37,6 +37,8 @@ export default function DetailDrawer({
     description: reference.description,
     purpose: reference.purpose,
     injected_as: dictToKvString(reference.injected_as),
+    group: reference.group,
+    related: (reference.related || []).join(","),
   });
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveStatus, setMoveStatus] = useState<string | null>(null);
@@ -105,7 +107,8 @@ export default function DetailDrawer({
         ))}
       </div>
 
-      {(reference.description || reference.purpose || Object.keys(reference.injected_as || {}).length > 0) && (
+      {(reference.description || reference.purpose || Object.keys(reference.injected_as || {}).length > 0
+        || reference.group || (reference.related || []).length > 0) && (
         <div className="metadata-block">
           {reference.description && (
             <p className="metadata-line">
@@ -121,6 +124,16 @@ export default function DetailDrawer({
             <p className="metadata-line">
               <span className="k">injected_as</span>{" "}
               {Object.entries(reference.injected_as).map(([env, target]) => `${env}=${target}`).join(", ")}
+            </p>
+          )}
+          {reference.group && (
+            <p className="metadata-line">
+              <span className="k">group</span> {reference.group}
+            </p>
+          )}
+          {(reference.related || []).length > 0 && (
+            <p className="metadata-line">
+              <span className="k">related</span> {reference.related.join(", ")}
             </p>
           )}
         </div>
@@ -196,6 +209,26 @@ export default function DetailDrawer({
               placeholder="prod=env:STRIPE_KEY,staging=file:.env.staging"
             />
           </label>
+          <div className="form-row">
+            <label className="form-field">
+              <span>group (hierarchical path)</span>
+              <input
+                className="field"
+                value={moveDraft.group}
+                onChange={(e) => setMoveDraft((d) => ({ ...d, group: e.target.value }))}
+                placeholder="project-y/supabase/auth"
+              />
+            </label>
+            <label className="form-field">
+              <span>related (comma-separated reference names)</span>
+              <input
+                className="field"
+                value={moveDraft.related}
+                onChange={(e) => setMoveDraft((d) => ({ ...d, related: e.target.value }))}
+                placeholder="project-y-mongodb-prod"
+              />
+            </label>
+          </div>
           <button className="btn solid" type="submit" disabled={moveBusy}>
             {moveBusy ? "Moving…" : "Save move"}
           </button>
