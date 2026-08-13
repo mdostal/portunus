@@ -60,6 +60,9 @@ class Reference:
     project: str = ""    # e.g. a project/site slug such as "mdostal.com"
     env: str = ""        # e.g. "prod" | "staging" | "dev"
     tags: dict = field(default_factory=dict)  # open, forward-compat key/value tags
+    description: str = ""  # what this secret is, e.g. "Stripe billing API key"
+    purpose: str = ""      # what it's for, e.g. "Charges customers for subscriptions"
+    injected_as: dict = field(default_factory=dict)  # {env_name: "env:VAR" | "file:path"}
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -149,6 +152,9 @@ class Registry:
         provider: str = "",
         env: str = "",
         tags: Optional[dict] = None,
+        description: str = "",
+        purpose: str = "",
+        injected_as: Optional[dict] = None,
     ) -> Reference:
         """Register (or overwrite) a reference. Value is never accepted here."""
         if state not in VALID_STATES:
@@ -159,6 +165,8 @@ class Registry:
                 name=name, sm_name=sm_name, scope=scope, kind=kind,
                 state=state, approval=approval, sm_path=sm_path,
                 provider=provider, project=project, env=env, tags=dict(tags or {}),
+                description=description, purpose=purpose,
+                injected_as=dict(injected_as or {}),
             )
             self._data[name] = ref
         return ref
@@ -300,6 +308,23 @@ class Registry:
         if len(matches) > 1:
             raise AmbiguousMatch([m.name for m in matches])
         return matches[0]
+
+    def list_by_project(
+        self, project: str, *, provider: Optional[str] = None, env: Optional[str] = None
+    ) -> List[Reference]:
+        """Metadata-only browse: every reference for `project`, optionally
+        narrowed by provider/env. Zero-to-many, never raises on zero or many
+        matches -- deliberately a different method from resolve_by_tags()
+        (a fail-closed single-match resolve), not an overload of it, so an
+        LLM-facing "what's available" query can't accidentally change
+        resolve_by_tags's existing contract. Never touches a backend --
+        this is a pure read over already-loaded Reference metadata."""
+        return [
+            ref for ref in self._data.values()
+            if ref.project == project
+            and (provider is None or ref.provider == provider)
+            and (env is None or ref.env == env)
+        ]
 
     def __contains__(self, name: object) -> bool:
         return name in self._data

@@ -1,0 +1,91 @@
+id: 04-gcp-discovery
+epic: portunus-vault-metadata
+title: Read-only GCP Secret Manager discovery
+status: shipped
+shipped_at: "2026-08-13T18:30:00Z"
+release_id: "v0.7.0"
+complexity: medium
+methodology: tdd
+depends_on: [01-reference-metadata-fields, 03-gcp-project-binding-backend]
+
+description: |
+  Slice C. `portunus discover --provider gcp --project <id>` calls `gcloud secrets list
+  --project=<id> --format=json` (names + labels + create-time only) and diffs against the
+  current registry: already-registered vs. not-yet-registered. Implemented as its own module
+  (discover.py) with NO import of GcloudBackend.access at all -- structurally incapable of a
+  value fetch, not just documented as not doing one. `--register` writes not-yet-registered
+  secrets as new Reference entries in state=requested (fails closed automatically via the
+  existing check_injectable allowlist), sm_name from the discovered name, description seeded
+  from the GCP secret's own labels if present. The local registry key is derived as
+  <project>-<discovered-sm-name> (grill U1) to avoid collisions between same-named secrets in
+  different projects; a derived name that already points at a different sm_name/project is
+  skipped and reported as a naming conflict, never overwritten.
+
+acceptance_criteria:
+  - "Given discover.py's module source, when statically inspected, then it contains no import of or call to GcloudBackend.access or any SecretBackend.access method"
+  - "Given a mocked gcloud transport returning secret names ['API_KEY'] with no labels, when `portunus discover --provider gcp --project demo-project` runs (no --register), then it prints API_KEY as not-yet-registered and writes nothing to the registry"
+  - "Given the same mocked list, when run with --register, then a new Reference is created with name=demo-project-api_key, sm_name=API_KEY, provider=gcp, project=demo-project, state=requested"
+  - "Given a discovered secret has a label {'purpose': 'stripe billing key'}, when --register runs, then the new Reference's description is seeded from that label"
+  - "Given a discovered name would derive to a local name that already exists pointing at a different sm_name/project, when --register runs, then that entry is skipped and reported as a naming conflict, and the existing reference is unchanged"
+  - "Given check_injectable (Broker) is called against any reference created by --register, when checked, then it fails closed (state=requested is non-injectable, per the existing allowlist)"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm GcloudBackend's existing subprocess.run pattern (for the runner-injection style to reuse) and Registry.add()'s exact signature for writing new requested-state references.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the diff-only mode, --register mode, label-seeded description, and the naming-collision-skip behavior, all against an injected/mocked gcloud runner (no real network).
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement discover.py (gcloud secrets list/describe wrapper, diff logic, name-derivation, --register write path) and wire the `discover` CLI subcommand.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Statically confirm discover.py has zero references to any value-fetching method anywhere in the module (the structural safety claim in the design discussion).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: GcloudBackend's subprocess-injection pattern (runner param) to mirror for discover.py's own gcloud invocation
+    - path: src/portunus/registry.py
+      purpose: Registry.add() and VALID_STATES this story writes through
+
+files_to_modify:
+  - file: src/portunus/discover.py
+    change: New file -- gcloud secrets list/describe wrapper, diff + --register logic
+  - file: src/portunus/cli.py
+    change: Add `discover` subcommand
+  - file: tests/test_discover.py
+    change: New test file
+
+design_decisions:
+  - decision: discover.py has zero import of GcloudBackend or any SecretBackend implementation
+    rationale: "Design-discussion Slice C -- makes the read-only safety guarantee structural (can't call access() because it never holds a backend reference) rather than a matter of discipline; reviewed explicitly at the review step"
+  - decision: local reference name derived as <project>-<sm-name>, lowercased
+    rationale: "Grill U1 -- resolved in design-discussion: prevents same-named secrets across different GCP projects from silently colliding in the local registry"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Structural: this module never imports a value-fetching method. Explicit test (acceptance criterion 1) verifies this statically, not just by omission."
+  - concern: audit-chain-integrity
+    action: "Registry.add() calls made by --register go through the existing Registry write path and its existing audit conventions -- no new audit entry type needed for this story."
+
+risks:
+  - severity: high
+    description: A future refactor could accidentally add a SecretBackend import to discover.py, silently breaking the structural safety guarantee
+    mitigation: The static-inspection test (acceptance criterion 1) is a regression guard, not just a one-time check -- it runs in the normal pytest suite on every future change
+
+references:
+  - path: .pHive/epics/portunus-vault-metadata/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- GCP discovery (read-only)"
+  - path: .pHive/epics/portunus-vault-metadata/docs/research-brief.md
+    relevant_excerpt: "Real infra confirmed this session -- personalsites-487021 (19 secrets), firefly-events-inc (0 secrets)"

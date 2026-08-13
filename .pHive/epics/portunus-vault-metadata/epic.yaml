@@ -1,0 +1,65 @@
+name: portunus-vault-metadata
+title: Vault Metadata, Multi-Backend ARCA, Keyless GCP + LLM Key Discovery
+description: >
+  Completes the long-deferred multi-backend ARCA / metadata-query OSTIARIUS piece of the
+  north star: richer Reference metadata (description/purpose/injected_as), a real
+  Workload-Identity-Federation-authenticated multi-project GCP Secret Manager backend
+  (porting tested code from origin/dos-81-keyless-wif), read-only GCP secret discovery
+  (validated against the real personalsites-487021 and firefly-events-inc projects), an
+  LLM-facing metadata-only "list keys for project" query, and a stubbed-only AWS backend.
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [backend, cli, security, cloud]
+  roster: [researcher, technical-writer]
+  per_tag_reasoning:
+    backend: "Registry metadata fields, new discover/list_by_project modules"
+    security: "WIF token minting is a second value-class alongside secret values that must never leak"
+    cloud: "Real GCP Secret Manager project binding, discovery, and keyless auth"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1 converged after revision -- 3/3 findings resolved: V1 vocabulary, H1 hidden assumption, U1 unresolved tension)
+    scale: medium, H/V skipped per design-discussion.md Scale Assessment
+
+stories:
+  - id: 01-reference-metadata-fields
+    title: Richer Reference metadata (description, purpose, injected_as)
+    complexity: low
+    depends_on: []
+  - id: 02-port-wif-auth-module
+    title: Port keyless WIF/OIDC auth module from dos-81-keyless-wif
+    complexity: medium
+    depends_on: []
+  - id: 03-gcp-project-binding-backend
+    title: Multi-project GCP backend with WIF credential binding
+    complexity: high
+    depends_on: ["02-port-wif-auth-module"]
+  - id: 04-gcp-discovery
+    title: Read-only GCP Secret Manager discovery
+    complexity: medium
+    depends_on: ["01-reference-metadata-fields", "03-gcp-project-binding-backend"]
+  - id: 05-list-by-project-query
+    title: LLM-facing "list keys for project" query
+    complexity: medium
+    depends_on: ["01-reference-metadata-fields"]
+  - id: 06-aws-backend-stub
+    title: AWS Secrets Manager backend stub
+    complexity: low
+    depends_on: []
+  - id: 07-closeout
+    title: ARCA/OSTIARIUS README narrative, CONTEXT.md, version bump, changelog
+    complexity: low
+    depends_on:
+      - "01-reference-metadata-fields"
+      - "02-port-wif-auth-module"
+      - "03-gcp-project-binding-backend"
+      - "04-gcp-discovery"
+      - "05-list-by-project-query"
+      - "06-aws-backend-stub"

@@ -18,7 +18,9 @@ from typing import List, Optional
 
 from . import __version__
 from .audit import AuditChain
-from .backend import BackendError, GcloudBackend, MockBackend
+from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
+from .backend import AWSSecretsManagerBackend, BackendError, GcloudBackend, MockBackend, load_gcp_bindings
+from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
@@ -50,7 +52,15 @@ def _build(project: str = ""):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
     elif backend_kind == "gcloud":
-        backend = GcloudBackend(project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""))
+        backend = GcloudBackend(
+            project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""),
+            bindings=load_gcp_bindings(),
+            audit=audit,
+        )
+    elif backend_kind == "aws":
+        # Stub: fails clearly rather than silently falling through to the
+        # local-encrypted default (grill V1 -- the real pre-epic gap).
+        backend = AWSSecretsManagerBackend()
     else:
         # Stage 1 default: the local-encrypted ARCA tier. No plaintext ever
         # leaves this machine, let alone an LLM context.
@@ -226,6 +236,61 @@ def _cmd_ask_rotate(tag_set, registry, broker) -> int:
     return 0
 
 
+def _cmd_ask_list(tag_set, registry, broker) -> int:
+    """Agent-facing "what secrets exist for project X" query. Metadata only,
+    zero-to-many, never a value -- routes through Registry.list_by_project(),
+    which has no path to a backend at all. Requires a project in the
+    inferred tags (a list without a project has nothing to scope the
+    browse to); fails closed with a clear message otherwise, same
+    no-guessing discipline as fetch/rotate."""
+    project = tag_set.get("project", "")
+    if not project:
+        broker.audit.append("semantic_op", "-", "list-no-project")
+        return _err(
+            "a 'list' request needs a recognizable project "
+            "(e.g. \"what secrets are available for mdostal.com\")"
+        )
+    refs = registry.list_by_project(
+        project, provider=tag_set.get("provider") or None, env=tag_set.get("env") or None,
+    )
+    broker.audit.append("semantic_op", f"project:{project}", f"listed:{len(refs)}")
+    if not refs:
+        print(f"no references found for project={project}")
+        return 0
+    _print_reference_list(refs)
+    return 0
+
+
+def _print_reference_list(refs) -> None:
+    """Metadata only, never a value."""
+    for ref in sorted(refs, key=lambda r: r.name):
+        print(
+            f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
+            f"(provider={ref.provider}, env={ref.env}, state={ref.state})"
+        )
+        if ref.description:
+            print(f"    description: {ref.description}")
+        if ref.purpose:
+            print(f"    purpose:     {ref.purpose}")
+        if ref.injected_as:
+            print(f"    injected_as: {ref.injected_as}")
+
+
+def cmd_list(args) -> int:
+    """portunus list --project <id> -- direct CLI access to list_by_project(),
+    the same metadata-only method the LLM-facing `ask` list intent uses."""
+    registry, *_ = _build()
+    refs = registry.list_by_project(args.project, provider=args.provider or None, env=args.env or None)
+    if args.json:
+        print(json.dumps([r.to_dict() for r in sorted(refs, key=lambda r: r.name)]))
+        return 0
+    if not refs:
+        print(f"no references found for project={args.project}")
+        return 0
+    _print_reference_list(refs)
+    return 0
+
+
 def cmd_ask(args) -> int:
     """Semantic front door: natural-language request -> parse_intent -> a tag
     set -> resolve_by_tags -> the same boundary-injection dispatch as inject.
@@ -256,6 +321,9 @@ def cmd_ask(args) -> int:
 
     if intent_kind == "rotate":
         return _cmd_ask_rotate(tag_set, registry, broker)
+
+    if intent_kind == "list":
+        return _cmd_ask_list(tag_set, registry, broker)
 
     try:
         ref = registry.resolve_by_tags(**tag_set)
@@ -590,6 +658,61 @@ def cmd_verify(args) -> int:
     return 0 if ok else 2
 
 
+def cmd_auth_gcp(args) -> int:
+    """Mint a GCP WIF access token and report identity/scope/expiry -- never the token."""
+    audit = AuditChain()
+    project = args.project or os.environ.get("PORTUNUS_GCP_PROJECT", "")
+    bindings = load_gcp_bindings()
+    audience = args.audience
+    if not audience and project in bindings:
+        audience = bindings[project].wif_audience
+    if not audience:
+        audience = os.environ.get("PORTUNUS_GCP_WIF_AUDIENCE", "")
+    try:
+        auth = GCPWorkloadIdentityAuth(
+            audience=audience, token_source=EnvOIDCTokenSource(), audit=audit,
+        )
+        minted = auth.mint()
+    except AuthError as exc:
+        return _err(str(exc))
+    print(
+        "gcp:wif ok "
+        f"identity={minted.identity} scope={minted.scope} expires_at={minted.expires_at}"
+    )
+    return 0
+
+
+def cmd_discover(args) -> int:
+    """Read-only: list what already exists in a live GCP project (names/labels
+    only, never a value). --register writes not-yet-registered ones as
+    state=requested placeholders. See discover.py -- this command never
+    touches SecretBackend.access()."""
+    registry = Registry()
+    try:
+        discovered = list_gcp_secrets(args.project)
+    except DiscoverError as exc:
+        return _err(str(exc))
+
+    if args.register:
+        report = register_discovered(registry, args.project, discovered)
+        for name in report.registered:
+            print(f"registered  {name} (state=requested)")
+        for name in report.conflicts:
+            print(f"conflict    {name} -- already points at a different secret, skipped")
+        for name in report.already_registered:
+            print(f"unchanged   {name} (already registered)")
+        return 0
+
+    from .discover import diff_against_registry
+    already, not_yet = diff_against_registry(registry, args.project, discovered)
+    for name in already:
+        print(f"registered      {name}")
+    for d in not_yet:
+        label_note = f" labels={d.labels}" if d.labels else ""
+        print(f"not-registered  {d.sm_name}{label_note}")
+    return 0
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -614,6 +737,16 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
+
+    ls = sub.add_parser(
+        "list",
+        help="list every reference for a project (metadata only, never a value)",
+    )
+    ls.add_argument("--project", required=True)
+    ls.add_argument("--provider", default="")
+    ls.add_argument("--env", default="")
+    ls.add_argument("--json", action="store_true", help="machine-readable output")
+    ls.set_defaults(func=cmd_list)
 
     fd = sub.add_parser("find", help="find a reference by tags (metadata only, never a value)")
     fd.add_argument("--tags", required=True,
@@ -744,6 +877,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")
     ve.set_defaults(func=cmd_verify)
+
+    auth_p = sub.add_parser("auth", help="check keyless cloud credential minting")
+    auth_sub = auth_p.add_subparsers(dest="provider", required=True)
+    auth_gcp = auth_sub.add_parser("gcp", help="mint a GCP WIF access token without printing it")
+    auth_gcp.add_argument("--project", default="")
+    auth_gcp.add_argument("--audience", default="")
+    auth_gcp.set_defaults(func=cmd_auth_gcp)
+
+    disc = sub.add_parser(
+        "discover",
+        help="read-only: list what already exists in a live provider project (never a value)",
+    )
+    disc.add_argument("--provider", required=True, choices=("gcp",))
+    disc.add_argument("--project", required=True)
+    disc.add_argument("--register", action="store_true",
+                       help="write not-yet-registered secrets as state=requested placeholders")
+    disc.set_defaults(func=cmd_discover)
 
     return p
 

@@ -64,3 +64,23 @@ def test_keyword_matching_is_whole_word_not_substring(home):
     tag matching."""
     result = parse_intent("scroll to the vercel secret for mdostal.com in prod", _reg(home))
     assert result.intent_kind == "fetch"
+
+
+def test_list_keyword_classifies_as_list(home):
+    result = parse_intent("list secrets for project mdostal.com", _reg(home))
+    assert result.intent_kind == "list"
+
+
+def test_what_secrets_phrase_classifies_as_list(home):
+    result = parse_intent("what secrets are available for mdostal.com", _reg(home))
+    assert result.intent_kind == "list"
+
+
+def test_available_for_phrase_classifies_as_list(home):
+    result = parse_intent("secrets available for vercel mdostal.com", _reg(home))
+    assert result.intent_kind == "list"
+
+
+def test_conflicting_list_and_add_keywords_raise_ambiguous_intent(home):
+    with pytest.raises(AmbiguousIntent):
+        parse_intent("add or list the vercel secret for mdostal.com", _reg(home))

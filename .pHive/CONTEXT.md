@@ -8,9 +8,11 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - **OSTIARIUS** — the gatekeeper API: the only path to request a secret from the vault or
   deposit one into it. Lives in `resolver.py` (boundary substitution) + `cli.py` (the
   `portunus` command).
-- **ARCA** — the vault store itself, behind one `SecretBackend` interface: `LocalEncryptedBackend`
-  (default, local-encrypted tier) and `GcloudBackend` (GCP Secret Manager tier, Stage 2+).
-  `MockBackend` is the in-memory test double.
+- **ARCA** — the vault store, behind one `SecretBackend` interface, selected per-`Reference` by
+  `provider`+`project`: `LocalEncryptedBackend` (default, local-encrypted tier), `GcloudBackend`
+  (GCP Secret Manager, keyless via WIF, multi-project via `GcpProjectBinding`), and
+  `AWSSecretsManagerBackend` (interface-conformant stub — `access()` raises, no real AWS calls
+  yet). `MockBackend` is the in-memory test double.
 - **Petitio** — the approval-gate wrapper (`broker.py`, class `Broker`). Wraps every OSTIARIUS
   request so access is always gated: grant / gate / approve + lifecycle guard.
 - **Reference** — a registry entry: `name -> Secret Manager location`, plus scope, kind,
@@ -43,10 +45,11 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   unrecognized or internally conflicting; downstream ambiguity across multiple still-matching
   references is `resolve_by_tags()`'s job, not this function's. Backs `portunus ask` and the
   UI's Ask Bar.
-- **`intent_kind`** — `classify_intent_kind()`'s output (`fetch` | `add` | `rotate`), carried
-  on `parse_intent()`'s return value (`ParsedIntent`, a dict subclass — still unpacks via
-  `**result` unchanged). Narrow, whole-word keyword classification; defaults to `fetch` (the
-  safe default) on anything not recognized as add/rotate language.
+- **`intent_kind`** — `classify_intent_kind()`'s output (`fetch` | `add` | `rotate` | `list`),
+  carried on `parse_intent()`'s return value (`ParsedIntent`, a dict subclass — still unpacks
+  via `**result` unchanged). Narrow, whole-word keyword classification; defaults to `fetch` (the
+  safe default) on anything not recognized. More than one kind's keywords matching raises
+  `AmbiguousIntent` rather than picking one.
 - **`requested` state** — an agent-initiated placeholder lifecycle state (`Registry.request()`):
   a value-less `Reference` an agent asked for, fails closed via `Broker.check_injectable`
   exactly like `dropped`/`revoked`. An agent can only ever *request* an add/rotate — the actual
@@ -59,6 +62,31 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   targeting, not automatic multi-vault federation — that's still out of scope). Implemented as
   a save/set/restore of the env var around dispatch in `cli.py::main()`, not a threaded
   parameter, so every `Registry()`/`AuditChain()` construction site is covered automatically.
+- **`description`/`purpose`/`injected_as`** — additive `Reference` metadata (default `""`/
+  `""`/`{}`): what a secret is, what it's for, and `{env_name: "env:VAR" | "file:path"}`
+  documenting how it's injected per environment. Descriptive only — NOT in
+  `_STRUCTURED_TAG_FIELDS`, so they never participate in `resolve_by_tags()` matching.
+- **`list_by_project()`** — `Registry`'s metadata-only browse query (zero-to-many, no
+  fail-closed single-match requirement — a sibling method to `resolve_by_tags()`, not an
+  overload of it). Backs `portunus list --project` and `ask`'s `list` intent
+  ("what secrets are available for X"). Structurally cannot reach a backend/value.
+- **`intent_kind`** now includes `list`, alongside `fetch`/`add`/`rotate` (see below) —
+  routes to `list_by_project()` via `_cmd_ask_list`, fails closed if no project is recognized.
+- **`GcpProjectBinding`** (`backend.py`) — a GCP project id + optional WIF audience, loaded via
+  `load_gcp_bindings()` from `PORTUNUS_HOME/gcp-bindings.json` (`0600`), falling back to
+  `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` when no bindings file exists. `GcloudBackend`
+  mints a short-lived access token per binding on `access(sm_name, project=...)`, written to a
+  `0600` tempfile passed via `--access-token-file` and unlinked in a `finally` block — the token
+  is a second value-class, alongside secret values themselves, that must never be logged,
+  printed, or returned (see `auth.py`'s `OIDCToken`/`GCPAccessToken` — token fields are
+  `repr=False`, audit entries carry only identity, never token material).
+- **`discover`** (`discover.py`, `portunus discover --provider gcp --project <id> [--register]`)
+  — read-only enumeration of what already exists in a live GCP Secret Manager project (names +
+  labels + create-time, never a value). Holds no reference to `GcloudBackend`/any
+  `SecretBackend.access()` at all — structurally, not just by discipline. `--register` writes
+  not-yet-registered secrets as `state=requested` (fails closed automatically); local name is
+  `<project>-<sm-name>` to avoid collisions across projects that share a secret name; never
+  overwrites an existing reference.
 - **Session storage** (`localvault.py`, `SESSION_SCHEMA = "portunus.session.v1"`) — Arca can
   persist a Playwright-style `storageState` or other JSON-serializable session object under a
   `session:<site>:<account>` namespace (`LocalEncryptedBackend.store_session()`), with TTL and
@@ -72,6 +100,8 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/resolver.py` — OSTIARIUS: boundary-only `{{secret:NAME}}` substitution.
 - `src/portunus/broker.py` — Petitio: approval-gate wrapper around every request.
 - `src/portunus/backend.py`, `localvault.py` — ARCA: `SecretBackend` implementations.
+- `src/portunus/auth.py` — keyless WIF/OIDC credential minting (GCP + AWS token exchange).
+- `src/portunus/discover.py` — read-only GCP secret discovery; no backend import.
 - `src/portunus/registry.py` — the reference registry (metadata only, no values).
 - `src/portunus/audit.py` — the hash-chain audit log.
 - `src/portunus/adapters.py` — boundary injection adapters (env/file/HTTP header/HTTP body).
