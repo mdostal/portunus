@@ -170,17 +170,48 @@ portunus retag vercel-mdostal --tags team=platform
 Rejects any change that would collide with a different existing reference's tag combination —
 fails closed, same contract as `resolve_by_tags`.
 
-### Richer metadata — what a secret is, what it's for, how it's injected
+### Richer metadata — what a secret is, what it's for, how it's injected, and how it relates to others
 
-References carry `description` (what it is), `purpose` (what it's for), and `injected_as`
-(`{env_name: "env:VAR" | "file:path"}`, documenting how it gets injected per environment) —
-all optional, all additive to the existing tag schema:
+References carry `description` (what it is), `purpose` (what it's for), `injected_as`
+(`{env_name: "env:VAR" | "file:path"}`, documenting how it gets injected per environment),
+`group` (a hierarchical path placing it in a tree, e.g. `project-y/supabase/auth`), and
+`related` (explicit cross-references to other reference names) — all optional, all additive
+to the existing tag schema:
 
 ```bash
 portunus reg add stripe-prod dostal-stripe-live \
-  --scope shared --kind stripe --project mdostal.com --env prod
-# description/purpose/injected_as are set via drop/retag or the UI's edit form today
+  --scope shared --kind stripe --project mdostal.com --env prod \
+  --group mdostal.com/stripe --related mdostal-com-mongodb-prod
+# description/purpose/injected_as/group/related are also settable via retag or the UI's edit form
 ```
+
+### `portunus tree` — navigate secrets by hierarchy and relationship
+
+The LLM-facing structure query: renders every reference's `group` as a real tree, with
+`related` links shown per leaf. A reference with no `group` never disappears — it renders
+under an `(ungrouped)` bucket rather than being silently dropped:
+
+```bash
+$ portunus tree --project ffe-cicd
+ffe-cicd/
+  clerk-webhook/
+    ffe-cicd-clerk-webhook-secret-dev
+    ffe-cicd-clerk-webhook-secret-prod
+  event-api/
+    dev/
+      ffe-cicd-event-api-dev-mongo-uri
+      ffe-cicd-event-api-dev-jwt-secret
+      ... (48 more)
+    prod/
+      ffe-cicd-event-api-prod-mongo-uri
+      ... (39 more)
+  ... (18 more apps)
+```
+
+`--json` gives the same structure as nested JSON for programmatic/UI consumption. A `related`
+entry naming a reference outside the current result set is marked `(unresolved)`, never
+silently dropped. The Project Explorer UI tab renders the identical tree client-side from
+the same data.
 
 ### "What secrets exist for this project?" — an LLM-facing metadata query
 

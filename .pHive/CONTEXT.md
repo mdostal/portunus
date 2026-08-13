@@ -66,6 +66,24 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `""`/`{}`): what a secret is, what it's for, and `{env_name: "env:VAR" | "file:path"}`
   documenting how it's injected per environment. Descriptive only — NOT in
   `_STRUCTURED_TAG_FIELDS`, so they never participate in `resolve_by_tags()` matching.
+- **`group`/`related`** — additive `Reference` metadata (default `""`/`[]`), also excluded from
+  `_STRUCTURED_TAG_FIELDS`. `group` is a hierarchical path (e.g. `project-y/supabase/auth`)
+  placing a secret in a tree — organizational, distinct from `project` (which IS tag-matchable
+  identity, used by `resolve_by_tags`/`list_by_project`). `related` is a list of other
+  reference *names* this one relates to (e.g. an auth key naming the database key it sits next
+  to) — not validated against the registry at write time (forward-declaration is allowed);
+  `portunus tree`/the UI mark an unresolved name rather than dropping or erroring on it.
+- **`portunus tree [--project X] [--json]`** (`cmd_tree`, `_build_tree()`) — the LLM-facing
+  hierarchy/relationship query. Splits each reference's `group` on `/` into a nested structure;
+  a reference with no `group` renders under an `(ungrouped)` bucket at the root rather than
+  being silently dropped — the common case in practice (a freshly-discovered project has zero
+  grouped references until a human organizes it). Structurally cannot reach a backend/value,
+  same discipline as `list_by_project()`/`discover.py`. The Project Explorer UI tab
+  (`ProjectExplorer.tsx`'s `buildTree()`) is an independent TypeScript implementation of the
+  same normalization rule (trim, split on `/`, drop empty segments) — no shared code with the
+  Python side, but a shared, written-down contract; verified to agree byte-for-byte against
+  real vault data (both the `personalsites-487021/resend` pair and all 342 `ffe-cicd`
+  secrets, grouped into ~20 real apps by naming convention).
 - **`list_by_project()`** — `Registry`'s metadata-only browse query (zero-to-many, no
   fail-closed single-match requirement — a sibling method to `resolve_by_tags()`, not an
   overload of it). Backs `portunus list --project` and `ask`'s `list` intent
