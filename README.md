@@ -9,8 +9,8 @@ their own (Latin, theme-consistent) names:
 
 | Component | Role | Where it lives today |
 |---|---|---|
-| **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary) | `resolver.py` + the `portunus` CLI (`cli.py`) |
-| **ARCA** | The vault store itself — the local-encrypted tier (default, Stage 1) and the GCP Secret Manager tier (Stage 2+) behind one interface | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`) |
+| **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project" | `resolver.py` + the `portunus` CLI (`cli.py`) |
+| **ARCA** | The vault store — **pluggable backends behind one interface**, selected per-Reference by `provider`+`project`, not one global choice: local-encrypted (default), GCP Secret Manager (keyless, via Workload Identity Federation), AWS Secrets Manager (interface-conformant stub — no real AWS calls yet) | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `AWSSecretsManagerBackend`); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
 | **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
@@ -63,8 +63,10 @@ pip install -e ".[test]"
 Requires Python ≥ 3.9. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
 `cryptography`'s Fernet recipe — AES-128-CBC + HMAC-SHA256; we never hand-roll a cipher). The master key
 lives in its own `0600` file, separate from the encrypted vault file, both under `PORTUNUS_HOME` (default
-`~/.portunus`, `0700`). Set `PORTUNUS_BACKEND=gcloud` (+ `PORTUNUS_GCP_PROJECT`) to use GCP Secret Manager
-instead (Stage 2+); `PORTUNUS_BACKEND=mock` is for tests/dry-runs.
+`~/.portunus`, `0700`). Set `PORTUNUS_BACKEND=gcloud` to use GCP Secret Manager instead — keyless by
+default via Workload Identity Federation, multi-project aware (see "GCP: multi-project + discovery"
+below); `PORTUNUS_BACKEND=aws` selects the AWS Secrets Manager stub (fails clearly — not yet
+implemented); `PORTUNUS_BACKEND=mock` is for tests/dry-runs.
 
 ## Usage
 
@@ -167,6 +169,64 @@ portunus retag vercel-mdostal --tags team=platform
 
 Rejects any change that would collide with a different existing reference's tag combination —
 fails closed, same contract as `resolve_by_tags`.
+
+### Richer metadata — what a secret is, what it's for, how it's injected
+
+References carry `description` (what it is), `purpose` (what it's for), and `injected_as`
+(`{env_name: "env:VAR" | "file:path"}`, documenting how it gets injected per environment) —
+all optional, all additive to the existing tag schema:
+
+```bash
+portunus reg add stripe-prod dostal-stripe-live \
+  --scope shared --kind stripe --project mdostal.com --env prod
+# description/purpose/injected_as are set via drop/retag or the UI's edit form today
+```
+
+### "What secrets exist for this project?" — an LLM-facing metadata query
+
+An agent can ask what's available without ever seeing a value — metadata only, zero-to-many,
+never a fail-closed single-match requirement (it's a browse, not a resolve):
+
+```bash
+portunus list --project mdostal.com
+portunus ask "what secrets are available for mdostal.com"
+```
+
+### GCP: multi-project + keyless auth (WIF) + discovery
+
+`GcloudBackend` authenticates keyless by default — no static service-account JSON, no long-lived
+AWS-style key pairs (`assert_no_long_lived_cloud_keys()` enforces this). Per-project bindings
+live in `PORTUNUS_HOME/gcp-bindings.json` (`0600`, project → WIF audience); with no bindings
+file, `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` give today's zero-config single-project
+behavior unchanged. Two references can point at two different GCP projects and each resolves
+against its own binding in the same process.
+
+```bash
+portunus auth gcp --project personalsites-487021   # mint + report identity/scope/expiry only
+```
+
+Discovery is read-only and opt-in — it enumerates what already exists in a live GCP Secret
+Manager project (names + labels + create-time, **never a value** — `discover.py` holds no
+reference to any backend's `access()` method at all) so you register real secrets instead of
+re-creating them blind. Worked example, against a real project:
+
+```bash
+$ portunus discover --provider gcp --project personalsites-487021
+not-registered  AUTH_SECRET
+not-registered  SANITY_API_ADMIN_TOKEN labels={'project': 'dafshiq1', 'scope': 'admin', 'service': 'sanity', ...}
+not-registered  dostal-shared-gemini labels={'app': 'dostal-swarm', 'kind': 'gemini', 'scope': 'shared'}
+... (19 secrets total)
+
+$ portunus discover --provider gcp --project personalsites-487021 --register
+registered  personalsites-487021-auth_secret (state=requested)
+registered  personalsites-487021-sanity_api_admin_token (state=requested)
+...
+```
+
+Every `--register`ed reference lands in `state=requested` — the same fail-closed placeholder
+state agent-initiated `ask "add ..."` requests use — so nothing becomes injectable until a
+human reviews and promotes it. The local reference name is derived as `<project>-<sm-name>`
+so two different projects that happen to share a secret name never collide.
 
 ### Target a different vault (`--home`)
 
@@ -276,14 +336,21 @@ log, or a non-`0600` file.
 
 ```
 src/portunus/
-  registry.py    reference registry (name -> SM path); tags/provider/project/env; no value field
-  backend.py     ARCA — SecretBackend protocol; MockBackend (tests) + GcloudBackend (Stage 2+)
+  registry.py    reference registry (name -> SM path); tags/provider/project/env; description/
+                 purpose/injected_as metadata; list_by_project() browse query; no value field
+  backend.py     ARCA — SecretBackend protocol; MockBackend (tests); GcloudBackend (keyless WIF,
+                 multi-project via GcpProjectBinding); AWSSecretsManagerBackend (stub)
   localvault.py  ARCA — LocalEncryptedBackend, the Stage 1 default (encrypted at rest)
+  auth.py        keyless WIF/OIDC credential minting (GCP + AWS token exchange); never logs/
+                 returns/prints minted credentials
+  discover.py    ARCA discovery — read-only enumeration of a live provider project's secrets
+                 (names/labels only); structurally cannot reach a value (no backend import)
   broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit
   audit.py       tamper-evident hash-chain access log
   resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
   adapters.py    boundary injection adapters (env var, file, HTTP header, HTTP body)
-  intent.py      semantic front door — natural language -> tag set (portunus ask)
+  intent.py      semantic front door — natural language -> tag set + intent_kind
+                 (fetch/add/rotate/list) (portunus ask)
   cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
 ui/              standalone localhost-only UI (Console / Vault Map / Ask Bar)
 .claude/skills/portunus-ask/  thin Claude skill wrapping `portunus ask`

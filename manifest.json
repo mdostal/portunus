@@ -1,7 +1,7 @@
 {
   "name": "portunus",
   "type": "core",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Secret broker for the Dostal harness — reference registry + boundary-only resolver so a plaintext secret never enters an LLM/agent context.",
   "author": "Mathew Dostal",
   "license": "MIT",
