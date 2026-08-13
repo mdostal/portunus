@@ -23,6 +23,104 @@ interface DiscoverRegisterResult {
   wif_configured: boolean;
 }
 
+interface TreeNode {
+  refs: PortunusReference[];
+  children: Record<string, TreeNode>;
+}
+
+/** Same normalization rule as the Python CLI's portunus tree: trim, split
+ * on "/", drop empty segments. Two independent implementations (Python,
+ * TypeScript), no shared code -- but they must agree on this rule (design-
+ * discussion §4 risk). A reference with no group is never dropped -- it's
+ * the caller's job to bucket it under (ungrouped), same as the CLI. */
+function buildTree(refs: PortunusReference[]): { ungrouped: PortunusReference[]; root: TreeNode } {
+  const ungrouped: PortunusReference[] = [];
+  const root: TreeNode = { refs: [], children: {} };
+  for (const r of refs) {
+    const segments = (r.group || "").split("/").map((s) => s.trim()).filter(Boolean);
+    if (segments.length === 0) {
+      ungrouped.push(r);
+      continue;
+    }
+    let node = root;
+    for (const seg of segments) {
+      if (!node.children[seg]) node.children[seg] = { refs: [], children: {} };
+      node = node.children[seg];
+    }
+    node.refs.push(r);
+  }
+  return { ungrouped, root };
+}
+
+function RelatedChips({ reference, presentNames }: { reference: PortunusReference; presentNames: Set<string> }) {
+  if (!reference.related || reference.related.length === 0) return null;
+  return (
+    <span className="tags-row">
+      {reference.related.map((name) => (
+        <span className={`chip ${presentNames.has(name) ? "" : "chip-unresolved"}`} key={name}>
+          {name}
+          {!presentNames.has(name) && " (unresolved)"}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function TreeRefRow({
+  reference,
+  presentNames,
+  onSelect,
+}: {
+  reference: PortunusReference;
+  presentNames: Set<string>;
+  onSelect: (ref: PortunusReference) => void;
+}) {
+  return (
+    <button className="explorer-row" onClick={() => onSelect(reference)}>
+      <span className="ref-name">{reference.name}</span>
+      <span>
+        {reference.sm_name} <StatePill state={reference.state} />
+      </span>
+      <RelatedChips reference={reference} presentNames={presentNames} />
+    </button>
+  );
+}
+
+function TreeBranch({
+  label,
+  node,
+  presentNames,
+  onSelect,
+  depth,
+}: {
+  label: string;
+  node: TreeNode;
+  presentNames: Set<string>;
+  onSelect: (ref: PortunusReference) => void;
+  depth: number;
+}) {
+  return (
+    <div className="tree-branch" style={{ marginLeft: depth === 0 ? 0 : "1rem" }}>
+      <div className="tree-branch-label">{label}/</div>
+      {node.refs.map((r) => (
+        <TreeRefRow reference={r} presentNames={presentNames} onSelect={onSelect} key={r.name} />
+      ))}
+      {Object.entries(node.children)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([seg, child]) => (
+          <TreeBranch
+            label={seg}
+            node={child}
+            presentNames={presentNames}
+            onSelect={onSelect}
+            depth={depth + 1}
+            key={seg}
+          />
+        ))}
+    </div>
+  );
+}
+
 export default function ProjectExplorer({ onSelect }: { onSelect: (ref: PortunusReference) => void }) {
   const [project, setProject] = useState("");
   const [loading, setLoading] = useState(false);
@@ -123,15 +221,34 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
       {registered.length > 0 && (
         <>
           <span className="eyebrow">Registered</span>
-          <div className="explorer-list">
-            {registered.map((r) => (
-              <button className="explorer-row" key={r.name} onClick={() => onSelect(r)}>
-                <span className="ref-name">{r.name}</span>
-                <span>{r.sm_name}</span>
-                <StatePill state={r.state} />
-              </button>
-            ))}
-          </div>
+          {(() => {
+            const { ungrouped, root } = buildTree(registered);
+            const presentNames = new Set(registered.map((r) => r.name));
+            return (
+              <div className="explorer-list">
+                {ungrouped.length > 0 && (
+                  <div className="tree-branch">
+                    <div className="tree-branch-label">(ungrouped)</div>
+                    {ungrouped.map((r) => (
+                      <TreeRefRow reference={r} presentNames={presentNames} onSelect={onSelect} key={r.name} />
+                    ))}
+                  </div>
+                )}
+                {Object.entries(root.children)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([seg, child]) => (
+                    <TreeBranch
+                      label={seg}
+                      node={child}
+                      presentNames={presentNames}
+                      onSelect={onSelect}
+                      depth={0}
+                      key={seg}
+                    />
+                  ))}
+              </div>
+            );
+          })()}
         </>
       )}
 

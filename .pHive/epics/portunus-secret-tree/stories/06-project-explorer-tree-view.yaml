@@ -1,0 +1,76 @@
+id: 06-project-explorer-tree-view
+epic: portunus-secret-tree
+title: Project Explorer's Registered list renders as a nested tree
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
+complexity: high
+methodology: classic
+depends_on: [04-ui-plumbing]
+
+description: |
+  ProjectExplorer.tsx's "Registered" list always renders as a nested tree now, replacing the
+  flat list: grouped references nest by group path, ungrouped ones render under an
+  "(ungrouped)" node at the root (Grill H1 -- same resolution as the CLI's portunus tree, one
+  code path: an all-ungrouped project is just the degenerate case of a tree that's entirely
+  one bucket). Built client-side from the same /api/list data already fetched -- no new route,
+  mirroring the CLI's tree-building algorithm (same normalization rule: trim, split on "/",
+  drop empty segments) as an independent TypeScript implementation. related names render as
+  small inline chips; an unresolved chip (name not in the current project's result set) is
+  visually distinct.
+
+acceptance_criteria:
+  - "Given a project with references having group='a/b', 'a/c', and one with no group, when Project Explorer renders the Registered list, then it shows a nested a/{b,c} subtree AND an (ungrouped) node containing the third"
+  - "Given a reference with related=['other-ref'] present in the same project, when rendered, then it shows as a plain chip"
+  - "Given a reference with related=['missing-ref'] NOT present in the current project's result set, when rendered, then the chip is visually marked unresolved, not silently omitted"
+  - "Given a project where every reference is ungrouped, when rendered, then the tree is a single (ungrouped) bucket -- same code path as a mixed project, not a separate flat-list branch"
+  - "Given `npm run build`, when run, then it completes with zero TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Replace ProjectExplorer's flat Registered-list rendering with client-side tree-building (group-path split, ungrouped bucket, related-chip rendering with unresolved marking).
+    agent: developer
+  - id: test
+    description: npm run build; live smoke test (Playwright) -- seed a temp PORTUNUS_HOME with a real 2-3-level group tree and a cross-project related link, confirm the Project Explorer renders it correctly including the unresolved case.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the TS tree-building logic uses the exact same normalization rule documented for the Python implementation (trim, split on '/', drop empty segments) -- the two independent implementations must agree on behavior even though they share no code.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/ProjectExplorer.tsx
+      purpose: The flat Registered-list rendering this story replaces with a tree
+
+files_to_modify:
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: Replace flat Registered list with client-side nested tree rendering (group path + ungrouped bucket + related chips)
+
+design_decisions:
+  - decision: Tree replaces the flat list unconditionally, no separate flat-vs-tree toggle
+    rationale: "Grill H1 -- an all-ungrouped project renders as one (ungrouped) bucket, which looks identical to today's flat list but is the same code path as a grouped project, not a special case to maintain separately"
+  - decision: Built client-side from existing /api/list data, no new route
+    rationale: "Design-discussion Slice F -- ProjectExplorer already fetches the full flat list; a second Python-vs-TS implementation of the same small algorithm is acceptable (matches this codebase's existing _parse_tags()/tagsToArg() precedent) and avoids adding a route just to pre-nest data the client already has"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Tree rendering is a pure client-side transform of already-fetched metadata (group/related/name fields) -- no new data fetch, no path to a value."
+  - concern: audit-chain-integrity
+    action: "N/A -- read-only rendering, no new write path."
+
+risks:
+  - severity: medium
+    description: The TypeScript tree-building logic could subtly disagree with the Python CLI's on edge cases (e.g. leading/trailing slashes in a group path), producing a different-looking tree in the UI vs. the CLI for the same data
+    mitigation: Review step explicitly checks both implementations against the same normalization rule; not shared code, but a shared, written-down contract (design-discussion §4 risk)
+
+references:
+  - path: .pHive/epics/portunus-secret-tree/docs/design-discussion.md
+    relevant_excerpt: "Slice F -- Project Explorer tree view / Grill H1"

@@ -1,0 +1,78 @@
+id: 04-ui-plumbing
+epic: portunus-secret-tree
+title: UI types + /api/retag forward group/related
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
+complexity: low
+methodology: classic
+depends_on: [02-cli-write-support]
+
+description: |
+  Add group/related to both PortunusReference definitions (ui/lib/portunus.ts,
+  ui/app/types.ts). Extend /api/retag's POST body handling to forward --group/--related to
+  the CLI, mirroring provider/project/env/description/purpose/injected_as exactly. related is
+  forwarded as a comma-separated string (Array<string> -> "a,b" via a small join, the same
+  convention used for injected_as's k=v,k2=v2 -- just without the "=v" half since related is a
+  bare name list).
+
+acceptance_criteria:
+  - "Given ui/lib/portunus.ts's PortunusReference, when read, then it has group: string, related: string[]"
+  - "Given ui/app/types.ts's PortunusReference, when read, then it has the same two fields"
+  - "Given a POST to /api/retag with {name, group, related: ['a','b']}, when handled, then the route calls runPortunus with --group and --related 'a,b'"
+  - "Given `npm run build`, when run, then it completes with zero TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add group/related to both PortunusReference definitions; extend /api/retag/route.ts to forward them (related joined from string[] to a comma string).
+    agent: developer
+  - id: test
+    description: npm run build; confirm /api/retag forwards the new fields via a manual curl against a temp PORTUNUS_HOME.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm both PortunusReference copies stayed in sync (known pre-existing duplication, flagged in portunus-vault-metadata-ui, kept consistent again here).
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/lib/portunus.ts
+      purpose: One of two PortunusReference definitions this story extends
+    - path: ui/app/types.ts
+      purpose: The second PortunusReference definition
+    - path: ui/app/api/retag/route.ts
+      purpose: Existing field-forwarding pattern this story extends with group/related
+
+files_to_modify:
+  - file: ui/lib/portunus.ts
+    change: Add group/related to PortunusReference
+  - file: ui/app/types.ts
+    change: Add group/related to PortunusReference
+  - file: ui/app/api/retag/route.ts
+    change: Forward group/related to the CLI, joining related: string[] into a comma string
+
+design_decisions:
+  - decision: related is typed string[] in TS (not a comma string) at the type level, joined only at the API-call boundary
+    rationale: "Cleaner UI-side representation for list rendering/editing (story 05/06 render/edit related as an array); the comma-string convention is a wire-format detail of /api/retag, not the type's natural shape"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- metadata-only fields, no value ever flows through these types/routes."
+  - concern: audit-chain-integrity
+    action: "N/A -- goes through the existing retag audit point, unchanged mechanism."
+
+risks:
+  - severity: low
+    description: The two PortunusReference copies could drift again
+    mitigation: Acceptance criteria explicitly check both files, same discipline as every prior metadata-field addition this session
+
+references:
+  - path: .pHive/epics/portunus-secret-tree/docs/design-discussion.md
+    relevant_excerpt: "Slice D -- UI plumbing"

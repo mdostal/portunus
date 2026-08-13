@@ -1,0 +1,70 @@
+id: 05-detaildrawer-display-edit
+epic: portunus-secret-tree
+title: DetailDrawer shows and edits group/related
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.10.0"
+complexity: low
+methodology: classic
+depends_on: [04-ui-plumbing]
+
+description: |
+  DetailDrawer's metadata block gains group/related lines (show-only-if-set, same as
+  description/purpose/injected_as). The existing Move form gains a group text input and a
+  related comma-separated-names input, same one-form-one-handler pattern used for every prior
+  metadata extension (provider/project/env, then description/purpose/injected_as, now
+  group/related).
+
+acceptance_criteria:
+  - "Given a reference with group/related set, when DetailDrawer renders it, then both appear in the metadata block"
+  - "Given a reference with neither set, when DetailDrawer renders it, then no empty group/related lines appear"
+  - "Given the Move form is open, when rendered, then it includes group and related inputs alongside the existing fields"
+  - "Given a user fills group and related and submits, when the form posts, then /api/retag receives both fields correctly and the change persists"
+  - "Given `npm run build`, when run, then it completes with zero TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add group/related to DetailDrawer's metadata-block rendering and to the Move form/moveDraft state.
+    agent: developer
+  - id: test
+    description: npm run build; live smoke test -- edit a seeded reference's group/related via the form, confirm persistence and display.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm the form reuses the existing submitMove/retag mechanism, no second write path introduced.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: Metadata block + Move form this story extends a third time (provider/project/env, then description/purpose/injected_as, now group/related)
+
+files_to_modify:
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Add group/related to the metadata block and Move form/moveDraft state
+
+design_decisions:
+  - decision: related edited as a comma-separated-names text input, same convention as injected_as's k=v,k2=v2 minus the "=v"
+    rationale: "Consistency with the established form-field convention for list/dict-shaped metadata across this codebase"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- group/related are non-secret metadata; this form never handles a value."
+  - concern: audit-chain-integrity
+    action: "N/A -- goes through the existing retag audit point, unchanged mechanism."
+
+risks:
+  - severity: low
+    description: A very long related list or deep group path could visually crowd the metadata block
+    mitigation: Same show-only-if-set + CSS wrapping approach already used for tags/description -- not a new pattern
+
+references:
+  - path: .pHive/epics/portunus-secret-tree/docs/design-discussion.md
+    relevant_excerpt: "Slice E -- DetailDrawer display + edit"

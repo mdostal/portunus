@@ -63,6 +63,8 @@ class Reference:
     description: str = ""  # what this secret is, e.g. "Stripe billing API key"
     purpose: str = ""      # what it's for, e.g. "Charges customers for subscriptions"
     injected_as: dict = field(default_factory=dict)  # {env_name: "env:VAR" | "file:path"}
+    group: str = ""       # hierarchical path, e.g. "project-y/supabase/auth" -- for `portunus tree`
+    related: list = field(default_factory=list)  # other reference names this one relates to
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -155,6 +157,8 @@ class Registry:
         description: str = "",
         purpose: str = "",
         injected_as: Optional[dict] = None,
+        group: str = "",
+        related: Optional[list] = None,
     ) -> Reference:
         """Register (or overwrite) a reference. Value is never accepted here."""
         if state not in VALID_STATES:
@@ -167,6 +171,7 @@ class Registry:
                 provider=provider, project=project, env=env, tags=dict(tags or {}),
                 description=description, purpose=purpose,
                 injected_as=dict(injected_as or {}),
+                group=group, related=list(related or []),
             )
             self._data[name] = ref
         return ref
@@ -246,18 +251,20 @@ class Registry:
         description: Optional[str] = None,
         purpose: Optional[str] = None,
         injected_as: Optional[dict] = None,
+        group: Optional[str] = None,
+        related: Optional[list] = None,
     ) -> Reference:
         """Update a reference's provider/project/env/tags/description/purpose/
-        injected_as in place.
+        injected_as/group/related in place.
 
         Only fields explicitly passed (non-None) change. provider/project/
         env/tags are collision-checked against every other reference (reuses
         matches_tag(), the same exact-match logic resolve_by_tags() uses, so
         there is one collision definition, not two; retagging to a
         reference's own current tags always succeeds). description/purpose/
-        injected_as are deliberately NOT collision-checked -- they're not in
-        _STRUCTURED_TAG_FIELDS, so two references can never collide over
-        them by definition.
+        injected_as/group/related are deliberately NOT collision-checked --
+        they're not in _STRUCTURED_TAG_FIELDS, so two references can never
+        collide over them by definition.
         """
         with self._locked():
             ref = self.require(name)
@@ -268,6 +275,8 @@ class Registry:
             new_description = description if description is not None else ref.description
             new_purpose = purpose if purpose is not None else ref.purpose
             new_injected_as = injected_as if injected_as is not None else ref.injected_as
+            new_group = group if group is not None else ref.group
+            new_related = related if related is not None else ref.related
 
             full_tags: Dict[str, str] = {}
             for field_name, val in (
@@ -292,6 +301,8 @@ class Registry:
             ref.description = new_description
             ref.purpose = new_purpose
             ref.injected_as = dict(new_injected_as)
+            ref.group = new_group
+            ref.related = list(new_related)
         return ref
 
     # --- lookup ----------------------------------------------------------
