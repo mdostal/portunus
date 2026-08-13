@@ -1,7 +1,9 @@
 id: 04-cli-retag
 epic: portunus-agent-ops-federation
 title: portunus retag subcommand
-status: completed
+status: shipped
+shipped_at: "2026-08-13T13:53:17Z"
+release_id: "v0.3.0"
 complexity: low
 methodology: tdd
 depends_on: ["01-registry-request-and-retag"]
