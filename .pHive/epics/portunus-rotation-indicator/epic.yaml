@@ -1,0 +1,29 @@
+name: portunus-rotation-indicator
+title: Surface rotation_requested in the UI
+description: >
+  Closes the loop portunus-agent-ops-federation opened: an agent's rotate request sets
+  tags.rotation_requested, but nothing in the UI ever showed it. Pure frontend display change.
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: patch
+sidecar_retention: transient
+
+git_flow:
+  base_branch: main
+  branch_strategy: per-epic
+
+planning_team:
+  matched_tags: [ui]
+  roster: [technical-writer]
+  per_tag_reasoning:
+    ui: "New RotationBadge component + 3 call sites, no backend change"
+  confidence: high
+  gate_decisions:
+    grill: single-pass (round 1, 0 findings -- converged immediately)
+    scale: small, design-discussion only
+
+stories:
+  - id: 01-rotation-badge
+    title: RotationBadge component in Console, Vault Map, DetailDrawer
+    complexity: low
+    depends_on: []

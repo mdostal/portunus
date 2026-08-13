@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { PortunusReference } from "../types";
 import StatePill from "./StatePill";
+import RotationBadge from "./RotationBadge";
 
 export default function Console({
   refs,
@@ -82,6 +83,7 @@ export default function Console({
             <span>{r.env || "—"}</span>
             <span>
               <StatePill state={r.state} />
+              <RotationBadge reference={r} />
             </span>
           </button>
         ))}

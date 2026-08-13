@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AuditEntry, PortunusReference } from "../types";
 import StatePill from "./StatePill";
+import RotationBadge from "./RotationBadge";
 import InjectControls from "./InjectControls";
 
 export default function DetailDrawer({
@@ -79,6 +80,7 @@ export default function DetailDrawer({
         </button>
       </div>
       <StatePill state={reference.state} />
+      <RotationBadge reference={reference} prominent />
       <div className="tags-row">
         {reference.provider && <span className="chip">provider={reference.provider}</span>}
         {reference.project && <span className="chip">project={reference.project}</span>}
