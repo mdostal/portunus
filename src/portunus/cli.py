@@ -22,8 +22,9 @@ from . import __version__
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import (
-    AWSSecretsManagerBackend, BackendError, GcloudBackend, SyncingBackend, VaultBinding,
-    MockBackend, load_vault_bindings, save_vault_bindings,
+    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, DopplerBackend,
+    GcloudBackend, InfisicalBackend, MockBackend, OnePasswordConnectBackend, SyncingBackend,
+    VaultBinding, VaultServerBackend, load_vault_bindings, save_vault_bindings,
 )
 from .paths import home
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
@@ -66,6 +67,16 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
             inst = GcloudBackend(bindings=vault_bindings, audit=audit)
         elif kind == "aws":
             inst = AWSSecretsManagerBackend()
+        elif kind == "vault":
+            inst = VaultServerBackend()
+        elif kind == "infisical":
+            inst = InfisicalBackend()
+        elif kind == "doppler":
+            inst = DopplerBackend()
+        elif kind == "onepassword":
+            inst = OnePasswordConnectBackend()
+        elif kind == "azure":
+            inst = AzureKeyVaultBackend()
         else:
             inst = fallback_backend
         instances[kind] = inst
@@ -1352,8 +1363,13 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_sub = bnd.add_subparsers(dest="action", required=True)
     bnd_set = bnd_sub.add_parser("set", help="upsert a project's binding -- only passed fields change")
     bnd_set.add_argument("project")
-    bnd_set.add_argument("--backend", choices=("local", "gcp", "aws"), default="",
-                          help="which vault backend serves this project's secrets (default: gcp)")
+    bnd_set.add_argument(
+        "--backend",
+        choices=("local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),
+        default="",
+        help="which vault backend serves this project's secrets (default: gcp; "
+             "vault/infisical/doppler/onepassword/azure are stubs, not yet implemented)",
+    )
     bnd_set.add_argument("--sync-mode", choices=("direct", "cached"), default="",
                           help="direct = live-fetch every access (default); cached = recency-aware pull-only sync-down")
     bnd_set.add_argument("--account", default="",
