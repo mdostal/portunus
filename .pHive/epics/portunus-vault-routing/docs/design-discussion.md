@@ -178,7 +178,19 @@ key" button on the reference DetailDrawer — visual placeholder only, no route,
 tooltip along the lines of "coming soon" — signals the future key-rotation direction without
 building it.
 
-### Slice F — Closeout
+### Slice F — Bulk import
+
+New `portunus_drop_bulk(entries: List[dict]) -> dict` (MCP) / `portunus drop --bulk <file.json>`
+(CLI), motivated directly by the "coin finder" scenario (§6): accepts a list of entries, each
+with `portunus_drop`'s same field set (`name`, `sm_name`, `value`, plus the optional metadata
+fields). Same per-entry logic as `portunus_drop` — same backend gate, same empty-value guard,
+same `state="dropped"` landing, same audit entry per secret — just looped, with one summary
+report back: `{"created": [names...], "failed": [{"name": ..., "error": ...}]}` — names and error
+strings only, never a value, on any entry, on any path. A partial failure (entry 47 of 100 is
+malformed) doesn't abort the whole batch — every valid entry still lands, exactly like running
+`portunus_drop` 100 times would, just in one call.
+
+### Slice G — Closeout
 
 Docs (README's MCP/CLI sections, `.pHive/CONTEXT.md`'s ARCA terminology entry — this is exactly
 what that entry should have described from the start), version bump (this changes core resolution
@@ -229,9 +241,37 @@ inventing new credential-minting logic — not pulled into this epic's scope.
 None blocking. §4's "secure store package" note is the one deliberately deferred, non-blocking
 item.
 
+**Real-world validation from the user's own examples, and one added slice.** Three concrete
+scenarios surfaced this conversation, each checked against this design:
+
+- **Gig tracker with mixed local/cloud secrets, medical tracker "local personal things"** — both
+  are exactly the per-project-default + per-reference-override model in §3 Slices A/B. No design
+  change; these are the worked examples that motivated it.
+- **"Coin finder"** — a user enters ~100 candidate passwords/keys, an agent tries each against a
+  wallet-unlock operation via `portunus_resolve_exec` (one candidate per call, agent sees only
+  success/failure, never the value) until one works. The *try-many-candidates* loop needs nothing
+  new — `portunus_list` already enumerates candidate names (metadata only) and `resolve_exec`
+  already injects one at a time boundary-safely. The one real gap: creating ~100 references today
+  means ~100 individual `portunus_drop` calls. **Adding Slice F — a bulk-import tool
+  (`portunus_drop_bulk` / `portunus drop --bulk`, accepting a list of `{name, sm_name, value,
+  ...}` entries, same per-entry validation and boundary discipline as `portunus_drop`, one summary
+  report back — names only, counts, never values) is small, low-risk, and directly serves this
+  exact use case.** Folded into this epic rather than deferred, since it's additive to work
+  already in flight (Slice A/story 01's model) and meaningfully cheap.
+- **"An installable application with its own local encrypted vault" (medical tracker as a
+  distributable product, not a Claude Code dev-tool user)** — this is a materially different
+  direction: Portunus's local vault becoming an embeddable/redistributable component inside a
+  *third-party end-user application*, not just a CLI+MCP server this session's agents call.
+  That's packaging, API-stability, and possibly distribution-model questions well beyond this
+  epic's scope (or this session's standing north star of "standalone secret manager, harness
+  plugin second" — this pushes toward a third mode, "embeddable library," not yet decided).
+  **Explicitly deferred as its own future epic, not started here** — noted so it doesn't get lost,
+  not designed prematurely.
+
 ## 7. Scale assessment
 
 **Large.** Touches core resolution logic (`Resolver`), an existing production config file, a new
 caching subsystem with real correctness requirements, CLI + MCP + UI surfaces, and a version
-bump. Six slices, likely 6-7 stories. Presenting this design to the user for confirmation before
-story decomposition, per the size and the real-data migration risk in Slice A.
+bump. Seven slices (A-G), likely 7-8 stories. Design confirmed with the user across several
+rounds of refinement this conversation (per-reference override, bulk import, deferred
+embeddable-app direction) — proceeding to story decomposition.
