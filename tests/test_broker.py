@@ -49,3 +49,62 @@ def test_gate_off_clears_requirement(home):
     b.gate("x", on=True)
     b.gate("x", on=False)
     assert b.check_injectable("x").sm_name == "dostal-x"
+
+
+# --- story 03 (portunus-swappable-trio): Identity + inert requester ------
+
+def test_identity_from_env_prefers_agent(monkeypatch):
+    from portunus.broker import Identity
+    monkeypatch.setenv("DOSTAL_AGENT", "dostal-dev")
+    monkeypatch.setenv("USER", "mdostal")
+    ident = Identity.from_env()
+    assert ident == Identity(name="dostal-dev", kind="agent")
+
+
+def test_identity_from_env_falls_back_to_user(monkeypatch):
+    from portunus.broker import Identity
+    monkeypatch.delenv("DOSTAL_AGENT", raising=False)
+    monkeypatch.setenv("USER", "mdostal")
+    ident = Identity.from_env()
+    assert ident == Identity(name="mdostal", kind="human")
+
+
+def test_check_injectable_with_no_requester_is_byte_identical(home):
+    """Every existing call site -- behavior must be completely unchanged."""
+    reg, b = _broker(home)
+    assert b.check_injectable("x").sm_name == "dostal-x"
+
+
+def test_check_injectable_requester_is_genuinely_inert(home):
+    """Passing ANY Identity must never change the result -- proves the
+    parameter is unused, not silently gated."""
+    from portunus.broker import Identity
+    reg, b = _broker(home)
+    someone = Identity(name="anyone", kind="agent")
+    nobody = Identity(name="a-completely-different-name", kind="human")
+    assert b.check_injectable("x", requester=someone).sm_name == "dostal-x"
+    assert b.check_injectable("x", requester=nobody).sm_name == "dostal-x"
+
+
+def test_check_injectable_source_never_branches_on_requester():
+    """AST-level: requester's attributes must never appear inside any
+    conditional -- structurally proving it's unreferenced, not just
+    untested."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus.broker import Broker
+
+    src = textwrap.dedent(inspect.getsource(Broker.check_injectable))
+    tree = ast.parse(src)
+    func = tree.body[0]
+    for node in ast.walk(func):
+        if isinstance(node, (ast.If, ast.IfExp, ast.BoolOp)):
+            names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+            assert "requester" not in names, ast.unparse(node)
+
+
+def test_check_injectable_docstring_states_enforcement_not_built():
+    from portunus.broker import Broker
+    doc = (Broker.check_injectable.__doc__ or "").lower()
+    assert "not" in doc and ("enforce" in doc or "built" in doc)
