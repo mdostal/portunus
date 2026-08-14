@@ -1,0 +1,81 @@
+id: 07-closeout
+epic: portunus-vault-routing
+title: Docs, version bump, live proof (Slice G)
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [05-ui-vault-menu, 06-bulk-import]
+
+description: |
+  Full pytest suite green; `cd ui && npm run build` clean. README's MCP/CLI sections and
+  .pHive/CONTEXT.md's ARCA terminology entry updated to describe real per-project/
+  per-reference routing (closing the gap between the docstring's existing claim and
+  reality). Version bump (minor: 0.12.0 -> 0.13.0). CHANGELOG entry. Live proof against
+  the real vault: bind personalsites-487021 to sync_mode="cached", run `portunus sync
+  personalsites-487021`, confirm a real local encrypted cache gets created, confirm a
+  second sync run reports already_fresh (no redundant GCP fetch) via the real
+  latest_version check, and confirm ffe-cicd (left at sync_mode="direct", untouched)
+  still resolves exactly as before through the legacy-file fallback path.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given `cd ui && npm run build`, when run, then it completes clean"
+  - "Given README.md, when read, then it documents VaultBinding/backend routing/sync_mode/portunus sync with a worked example"
+  - "Given .pHive/CONTEXT.md's ARCA entry, when read, then it accurately describes per-Reference/per-project backend selection as implemented, not aspirational"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry 0.13.0 in lockstep"
+  - "Given the live proof against personalsites-487021, when run, then it demonstrates: cache created on first sync, already_fresh reported on second sync (no redundant gcloud value-fetch), and ffe-cicd's existing direct-mode resolution is unaffected"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest + npm build; update docs; apply version bump; write CHANGELOG entry; run the live proof against the real vault.
+    agent: developer
+  - id: review
+    description: Confirm the live proof's own output never contains a secret value, and that ffe-cicd's existing behavior is genuinely unaffected (not just assumed).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: MCP/CLI sections this story extends with routing/sync/bulk-import documentation
+    - path: .pHive/CONTEXT.md
+      purpose: ARCA terminology entry -- this is exactly what it should have described from the start
+
+files_to_modify:
+  - file: README.md
+    change: Document VaultBinding, backend routing precedence, sync_mode, portunus sync, portunus_drop_bulk
+  - file: .pHive/CONTEXT.md
+    change: Update ARCA entry to describe real per-reference/per-project routing
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Live proof targets personalsites-487021 (smaller, lower-stakes project), leaves ffe-cicd untouched as the control proving nothing regressed
+    rationale: "Matches this session's established pattern of proving real behavior against real data while minimizing blast radius on the larger, higher-stakes project"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The closeout's own live proof is the final, real-world check of this epic's central risk (the router/sync-cache correctly serving real values without ever leaking one) -- explicitly re-verified against actual conversation output."
+  - concern: audit-chain-integrity
+    action: "Live proof confirms `portunus verify` stays INTACT after the real sync operations."
+
+risks:
+  - severity: low
+    description: The live proof could reveal an edge case in the real gcp-bindings.json's exact structure not covered by unit tests
+    mitigation: If found, treat as a real bug to fix before shipping, not something to work around or skip -- the whole point of this closeout step is catching exactly this class of issue
+
+references:
+  - path: .pHive/epics/portunus-vault-routing/docs/design-discussion.md
+    relevant_excerpt: "Slice G -- Closeout"

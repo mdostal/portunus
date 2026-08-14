@@ -1,0 +1,98 @@
+id: 03-sync-down-cache
+epic: portunus-vault-routing
+title: Recency-aware sync-down cache (Slice C)
+status: pending
+complexity: high
+methodology: tdd
+depends_on: [02-backend-router]
+
+description: |
+  New GcloudBackend.latest_version(sm_name, project="") -> str: calls `gcloud secrets
+  versions describe latest --secret=<sm_name> --project=<project> --format=json`, returns
+  the version's createTime as the recency marker (distinct from discover.py's existing
+  create_time, which is the secret RESOURCE's creation time, not the latest VALUE's).
+  Cheap, metadata-only -- no value ever touches this call.
+
+  New SyncingBackend (backend.py): wraps a remote: SecretBackend + local:
+  LocalEncryptedBackend + a SyncState store (PORTUNUS_HOME/sync-state.json, 0600,
+  {key: last_synced_marker}). access(sm_name, project): if remote doesn't implement
+  latest_version, always fetch live + cache (correct, just not optimally cached). Else,
+  compare remote.latest_version(...) to the stored marker; if it matches AND a local copy
+  exists, serve from the local cache with zero remote value-fetch; else fetch the real
+  value, cache it, update the marker, serve it. Local-store key is f"{project}:{sm_name}"
+  (grill H1) -- never bare sm_name, to avoid colliding with a genuinely-local
+  portunus_drop-ped secret that happens to share a name. Cached copies are Fernet-encrypted
+  at rest identically to directly-dropped secrets (grill H3) -- no new plaintext location.
+
+  The router (story 02) constructs SyncingBackend(GcloudBackend(...), LocalEncryptedBackend(),
+  ...) for a project bound with sync_mode="cached", a bare GcloudBackend(...) for
+  sync_mode="direct" (today's behavior, and the default for every existing/migrated
+  binding).
+
+acceptance_criteria:
+  - "Given a mocked gcloud runner, when GcloudBackend.latest_version() is called, then it invokes `gcloud secrets versions describe latest --secret=X --project=Y --format=json` and returns the version's createTime, never a value"
+  - "Given a project in sync_mode=cached, first access, when SyncingBackend.access() runs, then it fetches the real value from remote, stores it locally keyed as f'{project}:{sm_name}', and records the version marker"
+  - "Given a second access where the remote's latest_version matches the stored marker, when SyncingBackend.access() runs, then it serves from the local cache and the remote's .access() (the value-fetching call, not latest_version) is never called"
+  - "Given a third access where the remote's latest_version has changed (simulating a real rotation), when SyncingBackend.access() runs, then it re-fetches from remote, updates the local cache and marker, and serves the new value"
+  - "Given a remote backend that doesn't implement latest_version (e.g. a bare MockBackend), when SyncingBackend.access() runs, then it always fetches live and still caches the result -- correct behavior, not an error"
+  - "Given two different projects each portunus_drop a secret with the same sm_name locally, and one of those projects also has a sync_mode=cached remote secret sharing that same sm_name, when all three are accessed, then none of their local-store entries collide (project-prefixed keys keep them apart)"
+  - "Given SyncState's on-disk file, when inspected, then it never contains a secret value -- markers/version identifiers only"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm `gcloud secrets versions describe latest --format=json`'s real output shape (matching this session's established gcloud-output-parsing style in discover.py/backend.py).
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for latest_version(), SyncingBackend's fresh/stale/first-sync/no-latest_version-support paths, and the project-prefixed key collision test.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement GcloudBackend.latest_version() and SyncingBackend with the SyncState store.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm SyncState never holds a value, and the project-prefixed key genuinely prevents the collision it's meant to prevent.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: GcloudBackend.access() (existing gcloud subprocess pattern to mirror for latest_version); AWSSecretsManagerBackend/MockBackend as examples of the SecretBackend Protocol
+    - path: src/portunus/discover.py
+      purpose: "_default_runner/list_gcp_secrets -- the existing gcloud-output-parsing style this story's latest_version() mirrors, and the create_time field this story's version-level marker is explicitly distinct from"
+    - path: src/portunus/localvault.py
+      purpose: LocalEncryptedBackend.store()/access() -- reused unchanged as SyncingBackend's local cache tier
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: Add GcloudBackend.latest_version(); add SyncingBackend + SyncState
+  - file: tests/test_backend_gcp*.py
+    change: Add latest_version and SyncingBackend tests
+
+design_decisions:
+  - decision: SyncState is a separate file, not a Reference field
+    rationale: "Cache-invalidation bookkeeping, not registry metadata -- shouldn't show up in portunus list/the UI's metadata views (research-brief design question 3)"
+  - decision: Local-store key is project-prefixed (f'{project}:{sm_name}'), not bare sm_name
+    rationale: "grill H1 -- prevents a cached remote copy from silently colliding with a genuinely-local portunus_drop-ped secret sharing the same sm_name"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Cached copies get no new at-rest exposure (grill H3) -- SyncingBackend reuses LocalEncryptedBackend.store()/access() unchanged, same Fernet encryption as any directly-dropped secret. SyncState itself never holds a value."
+  - concern: audit-chain-integrity
+    action: "A cache-hit (served from local, no remote fetch) still goes through the same broker.audit.append('resolve', ...) as any other access -- unchanged from the caller's perspective; the audit log doesn't need to distinguish cache-hit from live-fetch since it's already logging outcome, not mechanism."
+
+risks:
+  - severity: high
+    description: SyncingBackend serves a stale value past a real rotation without any signal to the caller
+    mitigation: Recency check runs on every access() call by design -- staleness is structurally checked every time, not on a timer; story 04's explicit portunus_sync trigger exists for callers who want a guaranteed-fresh point-in-time refresh ahead of relying on incidental access timing
+
+references:
+  - path: .pHive/epics/portunus-vault-routing/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- Recency-aware sync-down cache"
