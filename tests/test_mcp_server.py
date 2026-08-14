@@ -157,6 +157,40 @@ def test_portunus_bindings_show_reports_backend_and_sync_mode(home):
     assert result["demo"]["sync_mode"] == "cached"
 
 
+# --- portunus-metadata-and-rotation-provenance story 02: rotation status --
+
+def test_portunus_rotation_status_no_backend_access():
+    from portunus import mcp_server
+    code = _no_backend_access(mcp_server.portunus_rotation_status)
+    assert ".access(" not in code
+
+
+def test_portunus_rotation_status_returns_configured_bindings(home):
+    from portunus.rotation import RotationBinding, save_rotation_bindings
+    from portunus import mcp_server
+    save_rotation_bindings({"vercel": RotationBinding("vercel", account="my-team-slug")})
+    result = mcp_server.portunus_rotation_status()
+    assert result["vercel"]["account"] == "my-team-slug"
+    assert result["vercel"]["status"] == "stub"
+
+
+def test_portunus_rotation_status_single_provider(home):
+    from portunus.rotation import RotationBinding, save_rotation_bindings
+    from portunus import mcp_server
+    save_rotation_bindings({
+        "vercel": RotationBinding("vercel", account="v-team"),
+        "github": RotationBinding("github", account="gh-org"),
+    })
+    result = mcp_server.portunus_rotation_status("vercel")
+    assert list(result.keys()) == ["vercel"]
+
+
+def test_portunus_rotation_status_unknown_provider_returns_empty(home):
+    from portunus import mcp_server
+    result = mcp_server.portunus_rotation_status("nonexistent")
+    assert result == {}
+
+
 # --- story 03: discovery tool ------------------------------------------
 
 def _mock_gcloud_list(monkeypatch, secrets):
