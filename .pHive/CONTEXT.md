@@ -162,7 +162,10 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   needed in this repo. Portunus's real facts (health endpoint, capabilities, port 7802) are
   registered there via a separate PR, not this repo. `manifest.json`'s `capabilities` list is
   the source those facts are drawn from.
-- `.claude/skills/portunus-ask/` — thin Claude skill wrapping `portunus ask` for agent use.
+- `.claude/skills/` — thin Claude skills wrapping the CLI/MCP surface for agent use:
+  `portunus-ask` (fetch/inject by description), `portunus-drop` (create a secret, single/bulk),
+  `portunus-vault-setup` (configure/check a project's backend + sync mode). Also installed at
+  Claude Code's user scope (`~/.claude/skills/`) so any session on the machine sees them.
 - `.pHive/epics/` — in-flight Hive epics/stories for this repo.
 
 ## Conventions
