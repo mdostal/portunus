@@ -10,8 +10,12 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::updater;
+
 pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open_item = MenuItem::with_id(app, "open", "Open Vault", true, None::<&str>)?;
+    let check_updates_item =
+        MenuItem::with_id(app, "check_updates", "Check for Updates…", true, None::<&str>)?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart_item = CheckMenuItemBuilder::with_id("autostart", "Launch at Login")
         .checked(autostart_enabled)
@@ -22,6 +26,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         app,
         &[
             &open_item,
+            &check_updates_item,
             &PredefinedMenuItem::separator(app)?,
             &autostart_item,
             &PredefinedMenuItem::separator(app)?,
@@ -35,6 +40,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open" => show_main_window(app),
+            "check_updates" => updater::check_now(app),
             "autostart" => {
                 let autolaunch = app.autolaunch();
                 let enabled = autolaunch.is_enabled().unwrap_or(false);

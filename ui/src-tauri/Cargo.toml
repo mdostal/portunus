@@ -27,6 +27,8 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 ureq = "2"
 wait-timeout = "0.2"
+tauri-plugin-dialog = "2.7.2"
+semver = "1.0.28"
 
 [dev-dependencies]
 # unit tests for the pure version-comparison logic land in story 03 (updater.rs)

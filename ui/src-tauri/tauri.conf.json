@@ -17,7 +17,8 @@
     "active": true,
     "targets": ["app"],
     "resources": {
-      "resources/web": "web"
+      "resources/web": "web",
+      "resources/relauncher.sh": "relauncher.sh"
     },
     "macOS": {
       "signingIdentity": "-"

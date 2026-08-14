@@ -1,5 +1,6 @@
 mod sidecar;
 mod tray;
+mod updater;
 
 use std::process::Child;
 use std::sync::Mutex;
@@ -39,6 +40,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -56,6 +58,7 @@ pub fn run() {
             });
 
             tray::build_tray(app.handle())?;
+            updater::spawn_background_checker(app.handle().clone());
 
             // Show the loading placeholder immediately; swap to the real
             // sidecar URL (or show an error state) once health-checked --
