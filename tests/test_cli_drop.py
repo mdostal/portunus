@@ -98,3 +98,34 @@ def test_drop_accepts_provider_project_env_tags(home, capsys):
     assert ref.env == "prod"
     assert ref.tags == {"team": "platform"}
     assert ref.state == "dropped"
+
+
+def test_drop_accepts_backend_flag(home, capsys):
+    """story 01 (portunus-metadata-and-rotation-provenance): cmd_drop gained
+    --backend, matching Reference.backend / registry.add's existing kwarg --
+    portunus_drop (MCP) and drop-bulk's per-entry backend already supported
+    this; the CLI's one-off drop command didn't."""
+    value_file = home / "value.txt"
+    value_file.write_text(SECRET + "\n")
+
+    rc = main([
+        "drop", "local-only-secret", "sm-local-only", "--value-file", str(value_file),
+        "--backend", "local",
+    ])
+    assert rc == 0
+
+    from portunus import Registry
+    ref = Registry().require("local-only-secret")
+    assert ref.backend == "local"
+
+
+def test_drop_backend_defaults_empty(home, capsys):
+    value_file = home / "value.txt"
+    value_file.write_text(SECRET + "\n")
+
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--value-file", str(value_file)])
+    assert rc == 0
+
+    from portunus import Registry
+    ref = Registry().require("shared-test")
+    assert ref.backend == ""

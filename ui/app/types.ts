@@ -31,8 +31,16 @@ export interface AuditEntry {
 export interface AddSecretDraft {
   name: string;
   sm_name: string;
+  kind: string;
+  scope: string;
+  backend: string;
   provider: string;
   project: string;
   env: string;
   tags: string;
+  description: string;
+  purpose: string;
+  injected_as: string;
+  group: string;
+  related: string;
 }

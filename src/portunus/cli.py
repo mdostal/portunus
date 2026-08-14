@@ -652,7 +652,7 @@ def cmd_drop(args) -> int:
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
         provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related,
+        group=args.group, related=related, backend=args.backend,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -1280,6 +1280,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     dr.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     dr.add_argument("--related", default="", help="comma-separated reference names")
+    dr.add_argument(
+        "--backend",
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),
+        default="",
+        help="override which backend this one reference uses (default: '' -- follow the "
+             "project's VaultBinding/PORTUNUS_BACKEND as normal)",
+    )
     src = dr.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument("--value-file", help="read the value from this local file")
