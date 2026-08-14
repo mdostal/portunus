@@ -145,8 +145,11 @@ portunus ask "the vercel secret for mdostal.com in prod"   # resolve-only previe
 ```
 
 `ask` never guesses either: an unrecognized or ambiguous request gets a clarifying question
-on stderr instead of a pick. A thin Claude skill at `.claude/skills/portunus-ask/` wraps `ask`
-for agent tool-call use.
+on stderr instead of a pick. Three thin Claude skills under `.claude/skills/` (also installed at
+Claude Code's user scope so any session on the machine sees them, not just this repo) wrap the
+CLI/MCP surface for agent tool-call use: `portunus-ask` (fetch/inject by description),
+`portunus-drop` (store a new secret you were just handed, single or bulk), and
+`portunus-vault-setup` (configure/check a project's backend + sync mode, force a sync).
 
 `ask` also recognizes add/rotate language ("add"/"create"/"new secret", "rotate"/"roll"/
 "regenerate") and routes to a **request**, not a fulfillment — an agent never supplies or sees
@@ -528,7 +531,8 @@ src/portunus/
                  (fetch/add/rotate/list) (portunus ask)
   cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
 ui/              standalone localhost-only UI (Console / Vault Map / Ask Bar)
-.claude/skills/portunus-ask/  thin Claude skill wrapping `portunus ask`
+.claude/skills/       thin Claude skills wrapping the CLI/MCP surface: portunus-ask (fetch),
+                 portunus-drop (create, single/bulk), portunus-vault-setup (bindings/sync)
 manifest.json    Dostal plugin manifest (type: core, engine: tool)
 ```
 
