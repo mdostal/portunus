@@ -85,15 +85,28 @@ is strictly additive — no existing test, no existing `Resolver(registry, backe
 site changes.
 
 `_build()` (cli.py) constructs the real router: a small closure/class that, given a `Reference`,
-looks up `vault_bindings.get(ref.project)`. If found, dispatches on `.backend` (`local` →
-`LocalEncryptedBackend()`, `gcp` → `GcloudBackend(...)` configured from that binding, `aws` →
-`AWSSecretsManagerBackend()`) — caching one instance per backend type per `Resolver` lifetime, not
-reconstructing per call. If no binding matches `ref.project` (or the reference has no `project`
-set at all — e.g. every reference created via this session's `portunus_drop`), falls back to the
-single globally-selected backend from today's `PORTUNUS_BACKEND` env var, **unchanged**. This
-means: a project with a real vault binding routes automatically; everything else behaves exactly
-as it does today. No existing reference stops working; `PORTUNUS_BACKEND=gcloud` is no longer
-*required* for the two real bound projects, but nothing breaks if someone keeps setting it.
+resolves a backend through three precedence levels:
+
+1. **`ref.backend` (new field, per-reference override)** — if explicitly set, use it directly.
+   This is what makes "gig-tracker is local-only overall, but its Gemini key should still be
+   cloud-vaulted while its site-login passwords stay local-only" expressible: the project binding
+   sets the *default* for the project, one reference can still opt out of that default. Kept
+   deliberately separate from `Reference.provider` (H4 still holds — `provider` is who issued a
+   secret, `ref.backend` is where it's stored; a reference can freely have `provider="google"` and
+   `backend="gcp"` on the same row, or `provider="google"` and `backend="local"` if that particular
+   Gemini key is meant to stay local instead).
+2. **The project's `VaultBinding`** — `vault_bindings.get(ref.project)`, dispatching on
+   `.backend` (`local` → `LocalEncryptedBackend()`, `gcp` → `GcloudBackend(...)` configured from
+   that binding, `aws` → `AWSSecretsManagerBackend()`) — caching one instance per backend type per
+   `Resolver` lifetime, not reconstructing per call.
+3. **Today's global `PORTUNUS_BACKEND` env var**, unchanged — the final fallback when neither of
+   the above applies (no `ref.backend`, no project binding, or no `project` set at all — e.g.
+   every reference created via this session's `portunus_drop` before this epic).
+
+No existing reference stops working; `PORTUNUS_BACKEND=gcloud` is no longer *required* for the
+two real bound projects, but nothing breaks if someone keeps setting it. `portunus_drop`/`cmd_drop`
+gain an optional `backend` parameter (alongside their existing full metadata field set) so a
+reference can declare its override at creation time, matching how `group`/`tags` already work.
 
 **`PORTUNUS_BACKEND=mock` always short-circuits the router entirely** (grill H2) — `_build()`
 only constructs the router when `PORTUNUS_BACKEND` is unset or one of today's real modes
@@ -180,13 +193,27 @@ it does today through the legacy-file fallback path.
 ## 4. What "the secure store was supposed to be a package" means here
 
 The user recalled (uncertain themselves — "pretty sure there were good options we found before")
-earlier research into a third-party Python secret-storage library as a possible foundation for
-the local vault tier. No trace of that research exists in this session's memory or in the
-codebase's history/comments. Rather than guess or block on it, this epic treats it as a genuinely
-open, non-blocking item: `LocalEncryptedBackend`'s current implementation (`cryptography`'s
-Fernet recipe, already reviewed and shipped) is untouched by this epic, and evaluating a
-replacement library is explicitly deferred — worth a short, separate research pass later, not a
-prerequisite for per-project routing or sync-down caching to ship.
+earlier research into a third-party secret-storage tool as a possible foundation for the local
+vault tier, and later named a concrete candidate: Infisical, run locally, as the `"local"`
+backend option instead of (or alongside) the hand-rolled `LocalEncryptedBackend`. No trace of the
+original research exists in this session's memory or the codebase's history/comments, and the
+user's own framing ("ideally," "whatever is best") treats this as a direction to evaluate, not a
+locked decision. This epic treats it as a genuinely open, **non-blocking** item for exactly the
+reason the plug-and-play adapter shape (§3 Slice A/B) exists: `"local"` is just another value of
+`VaultBinding.backend`/`ref.backend`, resolving to whatever `SecretBackend`-conformant adapter
+that value maps to. Swapping what `"local"` *means* later (hand-rolled Fernet today, a local
+Infisical instance later, an operator's choice between the two) is a new adapter implementation
+behind the same interface, not a redesign of anything built in this epic. `LocalEncryptedBackend`
+stays exactly as-is here; evaluating Infisical (or alternatives) as a genuinely new adapter is
+explicitly deferred to a later epic.
+
+**Sequencing, confirmed by the user this conversation**: this epic delivers the routing/adapter
+foundation plus a real, working recency-aware sync-down cache — and ships the key-rotation UI
+control as an inert, greyed-out stub only. Building the *real* rotation integrations ("start
+building the integrations to roll keys, and control and work with the WIF etc") is explicitly
+the **next** epic after this one, reusing this session's existing WIF/auth machinery
+(`auth.py`'s `GCPWorkloadIdentityAuth`, the `portunus auth login/status` commands) rather than
+inventing new credential-minting logic — not pulled into this epic's scope.
 
 ## 5. Risks
 
