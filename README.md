@@ -7,10 +7,113 @@
 Built by [Mathew Dostal](https://mdostal.com) — fractional CTO, Dostal Technology.
 <!-- /shared:byline -->
 
-**A secret broker for the Dostal harness.** Named for the Roman god of keys and gates.
+> Choose your vault. Give your AI agents safe tooling to use it — without secrets ever touching
+> the LLM.
+
+**portunus** is a thin broker between your AI agents and the secret vault you already run. It
+doesn't store your secrets or reinvent vault security — it resolves them by metadata and injects
+them at the boundary, so an agent can **use** a secret (call an API, deploy, sign) without the
+raw value ever landing in the model's context, logs, or tool output.
+
+*(Portunus — the Roman god of keys and doors. Fitting.)*
 
 **[portunus site →](https://mdostal.github.io/portunus/)** — landing page, install snippets, and
 the component-model pitch in one place.
+
+## The problem
+
+AI agents need real secrets to do real work — deploy tokens, API keys, DB creds. But the moment a
+secret touches an LLM's context, a log line, or a tool result, it's leaked. Most teams already
+have a vault. What's missing is the layer that lets an **agent** use that vault safely.
+
+That's portunus.
+
+## What works today
+
+- **The secret value never enters the LLM's context, logs, or tool output.** Enforced by code —
+  every boundary path (the resolver's three sinks, every MCP tool, every adapter's failure path)
+  is covered by a test that asserts the value never appears in a return value, stdout/stderr, or
+  the audit log, including on the failure path, not just the happy one.
+- **Resolve by metadata.** Ask for `anthropic / demo / prod` by what it *is*, not by memorizing a
+  key name. **Fail-closed** — an ambiguous match refuses and lists candidates, never returns the
+  wrong secret.
+- **Inject at the boundary** — env var, file (env/json/yaml), subprocess argv, or a `0600`
+  tempfile. The agent gets a *reference* or a *path*, never the value.
+- **Bring your own vault** — **GCP Secret Manager** (keyless, via Workload Identity Federation)
+  and a **local-encrypted vault** (Fernet: AES-128-CBC + HMAC-SHA256, zero cloud setup) work
+  today.
+- **One core, three doors** — an **MCP server** (13 tools, metadata-only by default), a
+  **35-command CLI**, and a **Next.js UI** (plus a native macOS desktop shell around the UI).
+- **Tamper-evident, hash-chained audit log** — keyed by secret *name*, never value. `portunus
+  verify` proves the chain.
+
+## Roadmap (help wanted)
+
+- [ ] More vault backends — HashiCorp Vault, AWS, Azure, 1Password, Doppler, Infisical *(fail-closed
+      stubs today — [request the one you need](.github/ISSUE_TEMPLATE/adapter-request.yaml) and it
+      jumps the queue)*
+- [ ] Native HTTP-client injection adapter *(today it's `portunus resolve --exec curl ...`, or a
+      caller-supplied boundary callable via the library's `resolve_call` — works, but there's no
+      built-in `HttpHeaderAdapter`/`HttpBodyAdapter` class yet, only `EnvVarAdapter`/`FileAdapter`)*
+- [ ] Secret rotation *(the provenance layer is real — `RotationBinding`, three stub adapters — but
+      every adapter still unconditionally raises; nothing rotates yet)*
+- [ ] Role-based / per-agent access control *(the seam exists — `Identity` + a `requester` param on
+      the one gate check — every caller is currently allowed regardless of who's asking)*
+
+## Honest scope
+
+Portunus guarantees that **its own** paths never leak the value. It can't stop a command *you*
+wrap from echoing its own argument — `echo {{secret}}` will print the secret, because that's the
+command's doing, not portunus's. That's the correct, defensible boundary, and it's documented in
+the code.
+
+## Built in the open
+
+Solo-built and moving fast. The core is real and tested; the backends and rotation are where the
+growth is. Break it, tell me where it leaks, open issues, send PRs — poking a hole in the security
+model is a *gift*, open it as an issue.
+
+## Quick start
+
+```bash
+pip install -e ".[test]"   # or: pipx install portunus, once published
+
+# store a secret -- stdin/file only, never an inline flag (would land in shell history)
+echo -n "sk-ant-..." | portunus drop shared-anthropic dostal-shared-anthropic --stdin
+portunus state shared-anthropic enabled     # lands dropped/fail-closed by default; this makes it injectable
+
+# resolve it only at the boundary -- the value never touches your shell history, a log, or an LLM turn
+portunus resolve --exec curl -H "Authorization: Bearer {{secret:shared-anthropic}}" \
+  https://api.anthropic.com/v1/messages
+```
+
+See [Install](#install) and [Usage](#usage) below for the full picture — registering an existing
+secret instead of dropping a new one, tag-based lookup, the MCP server, and the UI.
+
+## Architecture, vision & design decisions
+
+- **[docs/architecture.md](docs/architecture.md)** — the adopter-facing reference: a component
+  diagram, ARCA's backend-selection precedence as a decision tree, Petitio today-vs-the-designed-
+  future, the full request/resolve sequence, and the rotation-provenance design — five diagrams,
+  kept honest about what's real versus what's a stub.
+- **Long-term direction** (from this project's own planning doc,
+  [`.pHive/project-profile.yaml`](.pHive/project-profile.yaml)):
+  > Portunus is a standalone, releasable, containable secret finder/manager — not just a
+  > Dostal-harness plugin. [...] GCP Secret Manager is the store; Portunus is the
+  > resolver+injector layer on top — that split is decided, not open. Long-term it should also
+  > self-declare as an L2 Pantheon plugin [...] while still standing up its own harness
+  > integration (skill/CLI) and UI when run standalone.
+- **Every design decision, with the reasoning, not just the outcome** —
+  [`.pHive/epics/`](.pHive/epics/) holds a research brief + design discussion (often with an
+  adversarial "grill" pass) for every feature this project has shipped: why local+GCP are the
+  only real ARCA backends today, why rotation ships as provenance-only, why the desktop app
+  shells out to `gh` instead of embedding a token, and more. This is the actual paper trail, not
+  a curated highlight reel.
+- **[CHANGELOG.md](CHANGELOG.md)** — what shipped, release by release.
+- **Adapter pattern** — a new ARCA backend implements one method
+  (`access(sm_name, project="") -> str`, see `SecretBackend` in `backend.py`) and fails closed
+  with a clear error until it's real; [request one](.github/ISSUE_TEMPLATE/adapter-request.yaml)
+  or see an existing stub (e.g. `InfisicalBackend`) as a template.
 
 ## Component model
 
@@ -575,7 +678,7 @@ src/portunus/
                  an inert requester param on check_injectable (real enforcement not yet built)
   audit.py       tamper-evident hash-chain access log
   resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
-  adapters.py    boundary injection adapters (env var, file, HTTP header, HTTP body)
+  adapters.py    boundary injection adapters (env var, file) -- see Roadmap for HTTP-client
   intent.py      semantic front door — natural language -> tag set + intent_kind
                  (fetch/add/rotate/list) (portunus ask)
   cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
