@@ -4,6 +4,34 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-14
+
+### Added
+
+- **Tauri desktop app (macOS).** A native menu-bar shell around the existing Next.js Vault UI
+  (`ui/src-tauri/`) — no more `cd ui && npm run dev` every time; `npm run dev` stays fully
+  valid alongside it. Wraps the UI's existing `output: "standalone"` build as a sidecar,
+  capturing the real login-shell PATH before spawning it (GUI-launched processes get a
+  near-empty one, confirmed live, not assumed) and always picking a fresh free port (never a
+  hardcoded one). Tray icon: Open Vault / Check for Updates… / Launch at Login / Quit —
+  closing the window hides it (sidecar keeps running); Quit explicitly kills the sidecar,
+  verified against the actual Apple Event quit path (Cmd+Q/Dock), not just a raw signal.
+  Single-instance enforced — a second launch focuses the existing window.
+- **Self-update, without an embedded credential.** Checks this (private) repo's latest GitHub
+  release via the user's own already-authenticated `gh` CLI — never a token baked into the
+  shipped app, the exact credential-in-a-binary anti-pattern this project exists to prevent.
+  Always asks before installing (a native dialog, never a silent unattended swap). The actual
+  swap is a detached relauncher script with a required, tested failure path: verifies the new
+  bundle (Info.plist + codesign) before touching anything, backs up the original during the
+  swap, and restores it on any failure — verified live with a deliberately corrupted download
+  (rejected cleanly, original untouched) and a simulated mid-swap failure (original correctly
+  restored from backup).
+- Ad-hoc signed (macOS Apple Silicon) — a deliberate v1 scope decision for a single-user,
+  single-machine tool, not a gap; full Apple notarization is a separable follow-up only needed
+  for public distribution. `.github/workflows/release-desktop.yml` builds and attaches the
+  `.app` to the same `vX.Y.Z` release this project's Python package already ships under — one
+  version number, one release, no second parallel versioning scheme.
+
 ## [0.15.0] - 2026-08-14
 
 ### Added

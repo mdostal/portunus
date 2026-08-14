@@ -1,0 +1,59 @@
+name: Release Desktop App
+# Builds the Tauri desktop shell on the same vX.Y.Z tag this project's
+# existing `gh release create` flow already produces -- one version
+# number, one release, covering the Python package AND the desktop app
+# (design-discussion.md §6). Ad-hoc signed (no Apple Developer Program
+# secrets needed -- see design-discussion.md §5: this targets a single
+# user's own machine, not public distribution/notarization).
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop:
+    runs-on: macos-latest # Apple Silicon by default, matches this project's target arch
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build Next.js standalone
+        working-directory: ui
+        run: npm run build
+
+      - name: Stage sidecar resources
+        working-directory: ui
+        run: bash src-tauri/build-resources.sh
+
+      - name: Build Tauri app (ad-hoc signed)
+        working-directory: ui
+        run: cargo tauri build
+
+      - name: Zip the .app bundle
+        working-directory: ui/src-tauri/target/release/bundle/macos
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          zip -qr "portunus-desktop-${VERSION}.zip" Portunus.app
+          mv "portunus-desktop-${VERSION}.zip" "$GITHUB_WORKSPACE/"
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" portunus-desktop-*.zip --clobber
