@@ -4,6 +4,34 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-14
+
+### Added
+
+- **Unified metadata form.** `AddSecretForm` (the UI's create-time form) now exposes
+  `kind`/`scope`/`backend` plus `description`/`purpose`/`injected_as`/`group`/`related` —
+  the full field set `DetailDrawer`'s edit-time Move form already had, all wired through the
+  existing `/api/drop` → `portunus drop` path. No new backend concepts; every field but one
+  already had full CLI/route support.
+- **`portunus drop --backend`.** Closes a confirmed, small gap: `portunus_drop`'s MCP tool and
+  `drop-bulk`'s per-entry `backend` already let a caller override which backend a single
+  reference uses; the CLI's one-off `drop` command didn't. Now it does, matching
+  `Reference.backend`/`Registry.add`'s existing kwarg exactly.
+- **Rotation provenance.** New `rotation.py`: `RotationBinding` (provider/status/account),
+  keyed by provider like `VaultBinding` is keyed by project, persisted at
+  `PORTUNUS_HOME/rotation-bindings.json`. Three stub `RotationAdapter`s (Vercel — the
+  confirmed priority target for the first real one — GitHub, Stripe), each `.rotate()`
+  unconditionally raising, matching every ARCA stub backend's own restraint. CLI
+  `rotation-bindings set/show`, MCP `portunus_rotation_status` — metadata only, never a
+  credential. `DetailDrawer`'s "Auto-rotate…" button (inert since v0.14.0) is now wired to
+  this registry's derived real/stub state instead of a hardcoded `disabled` attribute —
+  behaviorally unchanged today (every provider is still a stub) but structurally real, and
+  verified live in-browser to flip both directions when a binding's status changes.
+- **`docs/architecture.md` §5** — rotation provenance, including the recursive design decision
+  that a future real adapter would authenticate using its own admin credential, itself just
+  another Portunus-managed `Reference` resolved through the same boundary-only
+  `resolver.resolve_call()` every other value uses. Aspirational — zero real adapters exist yet.
+
 ## [0.14.0] - 2026-08-14
 
 ### Added
