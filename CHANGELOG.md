@@ -4,6 +4,16 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-14
+
+### Added
+
+- Two new Claude Code skills, installed both in-repo and at Claude Code's user scope alongside
+  the existing `portunus-ask`: `portunus-drop` (store a secret you were just handed, single or
+  bulk, local-vault only) and `portunus-vault-setup` (configure/check a project's backend +
+  sync mode, force a sync). All three now cross-reference each other so an agent lands on the
+  right one regardless of which it reaches for first.
+
 ## [0.13.0] - 2026-08-14
 
 ### Added
