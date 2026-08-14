@@ -12,11 +12,18 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   other agents/harnesses — not just this one — can query and inject secrets directly, in-process
   library calls since it's Python-in-the-same-package). No entry point reimplements gating —
   `Broker.check_injectable`/`Resolver` stay the single implementation everywhere.
-- **ARCA** — the vault store, behind one `SecretBackend` interface, selected per-`Reference` by
-  `provider`+`project`: `LocalEncryptedBackend` (default, local-encrypted tier), `GcloudBackend`
-  (GCP Secret Manager, keyless via WIF, multi-project via `GcpProjectBinding`), and
-  `AWSSecretsManagerBackend` (interface-conformant stub — `access()` raises, no real AWS calls
-  yet). `MockBackend` is the in-memory test double.
+- **ARCA** — the vault store, behind one `SecretBackend` interface. **Actually selected
+  per-Reference/per-project, not one global choice** (portunus-vault-routing closed the gap
+  between this claim and reality): `Resolver`'s router picks a backend via 3-level precedence —
+  a reference's own `backend` override, else its project's `VaultBinding.backend`, else the
+  process-wide `PORTUNUS_BACKEND` env var as the final fallback. Backends: `LocalEncryptedBackend`
+  (default, local-encrypted tier), `GcloudBackend` (GCP Secret Manager, keyless via WIF,
+  multi-project via `VaultBinding`), `AWSSecretsManagerBackend` (interface-conformant stub —
+  `access()` raises, no real AWS calls yet). A project's `VaultBinding` may also set
+  `sync_mode="cached"` — a recency-aware, pull-only sync-down cache (`SyncingBackend`, GCP → local
+  only, never the reverse) instead of a live fetch every access. `MockBackend` is the in-memory
+  test double; `PORTUNUS_BACKEND=mock` always short-circuits the router entirely, regardless of
+  any configured binding.
 - **Petitio** — the approval-gate wrapper (`broker.py`, class `Broker`). Wraps every OSTIARIUS
   request so access is always gated: grant / gate / approve + lifecycle guard.
 - **Reference** — a registry entry: `name -> Secret Manager location`, plus scope, kind,
@@ -94,10 +101,13 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   ("what secrets are available for X"). Structurally cannot reach a backend/value.
 - **`intent_kind`** now includes `list`, alongside `fetch`/`add`/`rotate` (see below) —
   routes to `list_by_project()` via `_cmd_ask_list`, fails closed if no project is recognized.
-- **`GcpProjectBinding`** (`backend.py`) — a GCP project id + optional WIF audience + optional
-  `account`, loaded via `load_gcp_bindings()` from `PORTUNUS_HOME/gcp-bindings.json` (`0600`),
-  falling back to `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` when no bindings file
-  exists. `GcloudBackend` mints a short-lived access token per binding on `access(sm_name,
+- **`VaultBinding`** (`backend.py`, renamed from `GcpProjectBinding` in portunus-vault-routing) —
+  a project id + `backend` (`local`|`gcp`|`aws`) + `sync_mode` (`direct`|`cached`) + optional WIF
+  audience + optional `account`, loaded via `load_vault_bindings()` from
+  `PORTUNUS_HOME/vault-bindings.json` (`0600`) — migration-safe fallback to the legacy
+  `gcp-bindings.json` (old schema, defaults to `backend="gcp", sync_mode="direct"`) when the new
+  file doesn't exist yet, then to `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` when neither
+  file exists. `GcloudBackend` mints a short-lived access token per binding on `access(sm_name,
   project=...)`, written to a `0600` tempfile passed via `--access-token-file` and unlinked in a
   `finally` block — the token is a second value-class, alongside secret values themselves, that
   must never be logged, printed, or returned (see `auth.py`'s `OIDCToken`/`GCPAccessToken` —

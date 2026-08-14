@@ -10,7 +10,7 @@ their own (Latin, theme-consistent) names:
 | Component | Role | Where it lives today |
 |---|---|---|
 | **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project". **Three entry points, one implementation**: the `portunus` CLI, the standalone UI's API routes, and an MCP stdio server for other agents/harnesses | `resolver.py` + the `portunus` CLI (`cli.py`) + `mcp_server.py` (`portunus mcp`) |
-| **ARCA** | The vault store — **pluggable backends behind one interface**, selected per-Reference by `provider`+`project`, not one global choice: local-encrypted (default), GCP Secret Manager (keyless, via Workload Identity Federation), AWS Secrets Manager (interface-conformant stub — no real AWS calls yet) | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `AWSSecretsManagerBackend`); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
+| **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice: local-encrypted (default), GCP Secret Manager (keyless, via Workload Identity Federation, optionally with a recency-aware pull-only sync-down cache), AWS Secrets Manager (interface-conformant stub — no real AWS calls yet) | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `AWSSecretsManagerBackend`, `VaultBinding`); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
 | **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
@@ -227,10 +227,11 @@ portunus ask "what secrets are available for mdostal.com"
 
 `GcloudBackend` authenticates keyless by default — no static service-account JSON, no long-lived
 AWS-style key pairs (`assert_no_long_lived_cloud_keys()` enforces this). Per-project bindings
-live in `PORTUNUS_HOME/gcp-bindings.json` (`0600`, project → WIF audience + account); with no
-bindings file, `PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` give today's zero-config
-single-project behavior unchanged. Two references can point at two different GCP projects and
-each resolves against its own binding in the same process.
+live in `PORTUNUS_HOME/vault-bindings.json` (`0600`, project → backend/sync_mode/WIF
+audience/account — see "Per-project/per-reference vault routing" below); with no bindings file,
+`PORTUNUS_GCP_PROJECT`/`PORTUNUS_GCP_WIF_AUDIENCE` give today's zero-config single-project
+behavior unchanged. Two references can point at two different GCP projects and each resolves
+against its own binding in the same process.
 
 ```bash
 portunus auth gcp --project personalsites-487021   # mint + report identity/scope/expiry only
@@ -239,7 +240,7 @@ portunus auth gcp --project personalsites-487021   # mint + report identity/scop
 **Multiple GCP accounts at once.** `gcloud` already stores multiple credentialed accounts
 simultaneously (`gcloud auth login <email>` adds one without removing others) — but any command
 with no explicit identity follows whichever account gcloud considers "active," a single mutable
-pointer. `gcp-bindings.json`'s `account` field fixes this: set it per project and every
+pointer. `vault-bindings.json`'s `account` field fixes this: set it per project and every
 Portunus GCP call for that project passes `--account=<email>` explicitly, regardless of
 gcloud's ambient active account. (Mutually exclusive with a WIF binding on the same
 project — a minted access token already carries identity.)
@@ -275,6 +276,52 @@ Every `--register`ed reference lands in `state=requested` — the same fail-clos
 state agent-initiated `ask "add ..."` requests use — so nothing becomes injectable until a
 human reviews and promotes it. The local reference name is derived as `<project>-<sm-name>`
 so two different projects that happen to share a secret name never collide.
+
+### Per-project/per-reference vault routing + sync-down caching
+
+A reference resolves through whichever backend its own project (or the reference itself) is
+actually bound to — **not** one global `PORTUNUS_BACKEND` choice for the whole process. Three
+levels of precedence: a reference's own `backend` override (set via `portunus_drop`/`reg add`/
+`retag --backend {local,gcp,aws}`) wins outright; else the project's `VaultBinding.backend`
+(`portunus bindings set <project> --backend ...`); else today's global `PORTUNUS_BACKEND`
+env var, unchanged, as the final fallback. This means `personalsites-487021` and `ffe-cicd` can
+resolve correctly in the *same process* without ever setting `PORTUNUS_BACKEND=gcloud` by hand.
+
+```bash
+portunus bindings set gig-tracker --backend local              # everything in this project stays local
+portunus bindings set personalsites-487021 --backend gcp --sync-mode cached
+portunus bindings show                                          # backend + sync_mode per project
+```
+
+`--sync-mode cached` opts a project into a **recency-aware, pull-only** sync-down cache — GCP →
+local only, never the reverse. On each access, Portunus checks the remote's current value
+version against what's cached locally (a cheap, metadata-only `gcloud secrets versions describe`
+call); a match serves straight from the local encrypted cache with zero remote fetch, a mismatch
+(a real rotation, or the first sync) re-fetches and re-caches. `portunus sync <project>` forces
+this check explicitly — useful for a deploy that wants to materialize a fresh set of secrets once
+rather than a live Secret Manager round-trip per secret per instance:
+
+```bash
+$ portunus sync personalsites-487021
+  synced        personalsites-487021-resend_audience_id
+  already-fresh personalsites-487021-google_generative_ai_api_key
+```
+
+Config lives in `PORTUNUS_HOME/vault-bindings.json` (0600) — the successor to the earlier
+`gcp-bindings.json`, read with a migration-safe fallback: if only the legacy file exists, every
+entry loads with `backend="gcp", sync_mode="direct"`, byte-for-byte today's real behavior, no
+manual migration step.
+
+Bulk-import many secrets at once — e.g. importing a batch of candidate passwords/keys before
+trying each one against something via `portunus_resolve_exec`, without exposing which one worked
+until you check the result:
+
+```bash
+portunus drop-bulk entries.json   # [{"name": ..., "sm_name": ..., "value": ...}, ...]
+```
+
+A malformed entry is reported under a separate `failed` list and never aborts the rest of the
+batch.
 
 ### Target a different vault (`--home`)
 
@@ -339,12 +386,14 @@ claude mcp add --scope user portunus -- portunus mcp
 | `portunus_list(project)` | Every reference's metadata for a project — never a value |
 | `portunus_tree(project="")` | Group hierarchy + related links, same shape as `portunus tree --json` |
 | `portunus_ask_preview(request)` | What a plain-language fetch request would resolve to — metadata only, previews, never injects |
-| `portunus_bindings_show(project="")` | Configured GCP project bindings (account/WIF audience) |
+| `portunus_bindings_show(project="")` | Configured per-project vault bindings (backend/sync_mode/account/WIF audience) |
 | `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |
 | `portunus_resolve_to_tempfile(name="", tags=None)` | A `0600` temp file **path** holding the resolved value — never the value itself |
 | `portunus_resolve_exec(argv, name="", tags=None)` | `{stdout, stderr, returncode}` from running `argv` with a `{{secret}}` marker substituted — never the resolved command line |
-| `portunus_drop(name, sm_name, value, ...)` | Create a new **local-vault-only** secret — `{name, sm_name, state}`, never the value back |
+| `portunus_drop(name, sm_name, value, ..., backend="")` | Create a new **local-vault-only** secret — `{name, sm_name, state}`, never the value back |
+| `portunus_drop_bulk(entries)` | Create many local-vault secrets in one call — `{"created": [names], "failed": [{"name","error"}]}`, never a value |
 | `portunus_state(name, state)` | Change a reference's lifecycle state — `{name, state}` |
+| `portunus_sync(project)` | Force a recency check for every cached-mode reference in a project — `{"synced", "already_fresh", "failed"}`, names only |
 
 The injection tools use the same **dual addressing** as the CLI's own `inject`/`ask`: give an
 exact `name` (from a prior `portunus_list`/`portunus_tree` call) or `tags` — never raw
@@ -383,7 +432,7 @@ portunus_resolve_exec(
 
 ```bash
 portunus auth login user@example.com   # thin wrapper around `gcloud auth login` -- the one command to remember
-portunus auth status [--json]          # cross-references every gcp-bindings.json account against `gcloud auth list`
+portunus auth status [--json]          # cross-references every vault-bindings.json account against `gcloud auth list`
 ```
 
 Bounded on purpose — not automatic reauth. `login` still opens a real browser (Portunus doesn't
@@ -464,7 +513,8 @@ src/portunus/
   registry.py    reference registry (name -> SM path); tags/provider/project/env; description/
                  purpose/injected_as metadata; list_by_project() browse query; no value field
   backend.py     ARCA — SecretBackend protocol; MockBackend (tests); GcloudBackend (keyless WIF,
-                 multi-project via GcpProjectBinding); AWSSecretsManagerBackend (stub)
+                 multi-project via VaultBinding); SyncingBackend (recency-aware sync-down cache);
+                 AWSSecretsManagerBackend (stub)
   localvault.py  ARCA — LocalEncryptedBackend, the Stage 1 default (encrypted at rest)
   auth.py        keyless WIF/OIDC credential minting (GCP + AWS token exchange); never logs/
                  returns/prints minted credentials

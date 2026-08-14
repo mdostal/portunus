@@ -883,7 +883,7 @@ def cmd_auth_status(args) -> int:
 
 
 def _wif_configured(project: str) -> bool:
-    """True iff `project` has a gcp-bindings.json entry with a non-empty
+    """True iff `project` has a vault-bindings.json entry with a non-empty
     wif_audience. Boolean only -- the audience string itself is never
     returned by this helper's callers (matches `portunus auth gcp`'s own
     restraint: identity/scope/expiry only, never the audience/token)."""
