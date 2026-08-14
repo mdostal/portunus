@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .backend import BackendError, load_vault_bindings
+from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, NotInjectable
 from .cli import _build, _build_tree, _wif_configured
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
@@ -112,15 +112,22 @@ def portunus_ask_preview(request: str) -> dict:
 
 @mcp.tool()
 def portunus_bindings_show(project: str = "") -> dict:
-    """Show configured GCP project bindings (account/WIF audience) -- one
-    project or all. Same values as `portunus bindings show --json`."""
+    """Show configured per-project vault bindings (backend/sync_mode/
+    account/WIF audience) -- one project or all. Same values as
+    `portunus bindings show --json`."""
     bindings = load_vault_bindings()
     if project:
         binding = bindings.get(project)
         if binding is None:
             return {}
         bindings = {project: binding}
-    return {p: {"account": b.account, "wif_audience": b.wif_audience} for p, b in bindings.items()}
+    return {
+        p: {
+            "account": b.account, "wif_audience": b.wif_audience,
+            "backend": b.backend, "sync_mode": b.sync_mode,
+        }
+        for p, b in bindings.items()
+    }
 
 
 @mcp.tool()
@@ -343,6 +350,37 @@ def portunus_state(name: str, state: str) -> dict:
     except ValueError as exc:
         return {"error": str(exc)}
     return {"name": ref.name, "state": ref.state}
+
+
+@mcp.tool()
+def portunus_sync(project: str) -> dict:
+    """Force a recency check (and re-fetch if stale) for every cached-mode
+    reference in a project -- the harness-side counterpart to
+    `portunus sync <project>`. Ahead of relying on incidental access
+    timing: the deploy use case is materializing a fresh set of secrets
+    once, not a live Secret Manager round-trip per secret per instance.
+    Returns {"synced": [names], "already_fresh": [names], "failed":
+    [{"name", "error"}]} -- names and error strings only, never a value.
+    References not currently injectable, or not routed through a
+    sync_mode="cached" project binding, are silently skipped -- nothing to
+    sync, not a failure."""
+    registry, _audit, broker, resolver = _build()
+    synced, fresh, failed = [], [], []
+    for ref in registry.list_by_project(project):
+        try:
+            gated_ref = broker.check_injectable(ref.name)
+        except (NotInjectable, ApprovalRequired):
+            continue
+        backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
+        if not isinstance(backend, SyncingBackend):
+            continue
+        try:
+            backend.access(gated_ref.sm_name, project=gated_ref.project)
+        except BackendError as exc:
+            failed.append({"name": ref.name, "error": str(exc)})
+            continue
+        (synced if backend.last_sync_result == "synced" else fresh).append(ref.name)
+    return {"synced": synced, "already_fresh": fresh, "failed": failed}
 
 
 def run_server() -> None:

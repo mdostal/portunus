@@ -892,7 +892,7 @@ def cmd_discover(args) -> int:
 
 
 def cmd_bindings_set(args) -> int:
-    """Upsert one project's GCP binding -- only explicitly-passed fields
+    """Upsert one project's vault binding -- only explicitly-passed fields
     change, preserving whichever field wasn't passed (mirrors Registry.
     retag()'s only-passed-fields-change pattern). Identity-selector/topology
     strings only (account email, WIF audience) -- never a credential."""
@@ -902,18 +902,24 @@ def cmd_bindings_set(args) -> int:
     wif_audience = (
         args.wif_audience if args.wif_audience else (existing.wif_audience if existing else "")
     )
+    backend = args.backend if args.backend else (existing.backend if existing else "gcp")
+    sync_mode = args.sync_mode if args.sync_mode else (existing.sync_mode if existing else "direct")
     bindings[args.project] = VaultBinding(
         project=args.project, wif_audience=wif_audience, account=account,
+        backend=backend, sync_mode=sync_mode,
     )
     save_vault_bindings(bindings)
-    print(f"binding set: {args.project} (account={account or '-'}, wif_audience={wif_audience or '-'})")
+    print(
+        f"binding set: {args.project} (backend={backend}, sync_mode={sync_mode}, "
+        f"account={account or '-'}, wif_audience={wif_audience or '-'})"
+    )
     return 0
 
 
 def cmd_bindings_show(args) -> int:
-    """Show one or all GCP bindings -- real account/wif_audience values, not
-    presence-only. A local CLI reading the operator's own 0600
-    gcp-bindings.json is the same trust boundary as `cat`ing it directly."""
+    """Show one or all vault bindings -- real account/wif_audience values,
+    not presence-only. A local CLI reading the operator's own 0600
+    vault-bindings.json is the same trust boundary as `cat`ing it directly."""
     bindings = load_vault_bindings()
     if args.project:
         binding = bindings.get(args.project)
@@ -926,7 +932,10 @@ def cmd_bindings_show(args) -> int:
         bindings = {args.project: binding}
     if args.json:
         print(json.dumps({
-            proj: {"account": b.account, "wif_audience": b.wif_audience}
+            proj: {
+                "account": b.account, "wif_audience": b.wif_audience,
+                "backend": b.backend, "sync_mode": b.sync_mode,
+            }
             for proj, b in bindings.items()
         }))
         return 0
@@ -934,7 +943,47 @@ def cmd_bindings_show(args) -> int:
         print("(no bindings configured)")
         return 0
     for proj, b in bindings.items():
-        print(f"  {proj}  account={b.account or '-'}  wif_audience={b.wif_audience or '-'}")
+        print(
+            f"  {proj}  backend={b.backend}  sync_mode={b.sync_mode}  "
+            f"account={b.account or '-'}  wif_audience={b.wif_audience or '-'}"
+        )
+    return 0
+
+
+def cmd_sync(args) -> int:
+    """Force a recency check (and re-fetch if stale) for every cached-mode
+    reference in a project -- ahead of relying on incidental access timing
+    (the deploy use case: materialize a fresh .env once, not a live SM
+    round-trip per secret per instance). Metadata-only report: names and
+    error strings, never a value."""
+    registry, _, broker, resolver = _build()
+    synced, fresh, failed = [], [], []
+    for ref in registry.list_by_project(args.project):
+        try:
+            gated_ref = broker.check_injectable(ref.name)
+        except (NotInjectable, ApprovalRequired):
+            continue  # not currently injectable -- nothing to sync, not a failure
+        backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
+        if not isinstance(backend, SyncingBackend):
+            continue  # not a cached-mode reference -- nothing to report
+        try:
+            backend.access(gated_ref.sm_name, project=gated_ref.project)
+        except BackendError as exc:
+            failed.append({"name": ref.name, "error": str(exc)})
+            continue
+        (synced if backend.last_sync_result == "synced" else fresh).append(ref.name)
+
+    if args.json:
+        print(json.dumps({"synced": synced, "already_fresh": fresh, "failed": failed}))
+        return 0
+    for name in synced:
+        print(f"  synced        {name}")
+    for name in fresh:
+        print(f"  already-fresh {name}")
+    for entry in failed:
+        print(f"  failed        {entry['name']}: {entry['error']}")
+    if not (synced or fresh or failed):
+        print("(no cached-mode references for this project)")
     return 0
 
 
@@ -1237,10 +1286,14 @@ def build_parser() -> argparse.ArgumentParser:
     disc.add_argument("--json", action="store_true", help="machine-readable output (UI consumer)")
     disc.set_defaults(func=cmd_discover)
 
-    bnd = sub.add_parser("bindings", help="configure per-project GCP auth bindings (account/WIF audience)")
+    bnd = sub.add_parser("bindings", help="configure per-project vault bindings (backend/sync/account/WIF audience)")
     bnd_sub = bnd.add_subparsers(dest="action", required=True)
     bnd_set = bnd_sub.add_parser("set", help="upsert a project's binding -- only passed fields change")
     bnd_set.add_argument("project")
+    bnd_set.add_argument("--backend", choices=("local", "gcp", "aws"), default="",
+                          help="which vault backend serves this project's secrets (default: gcp)")
+    bnd_set.add_argument("--sync-mode", choices=("direct", "cached"), default="",
+                          help="direct = live-fetch every access (default); cached = recency-aware pull-only sync-down")
     bnd_set.add_argument("--account", default="",
                           help="local gcloud CLI identity to use for this project, e.g. user@example.com")
     bnd_set.add_argument("--wif-audience", default="", help="WIF provider resource name")
@@ -1249,6 +1302,13 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_show.add_argument("project", nargs="?", default="")
     bnd_show.add_argument("--json", action="store_true")
     bnd_show.set_defaults(func=cmd_bindings_show)
+
+    sy = sub.add_parser(
+        "sync", help="force a recency check (and re-fetch if stale) for every cached-mode reference in a project",
+    )
+    sy.add_argument("project")
+    sy.add_argument("--json", action="store_true")
+    sy.set_defaults(func=cmd_sync)
 
     tr = sub.add_parser(
         "tree",

@@ -79,3 +79,53 @@ def test_bindings_show_json(home, capsys):
     assert rc == 0
     data = json.loads(out)
     assert data["demo"]["account"] == "user@example.com"
+
+
+# --- story 04 (portunus-vault-routing): --backend/--sync-mode -----------
+
+def test_bindings_set_writes_backend_and_sync_mode(home, capsys):
+    rc = main(["bindings", "set", "demo", "--backend", "local", "--sync-mode", "cached"])
+    assert rc == 0
+    bindings = load_vault_bindings()
+    assert bindings["demo"].backend == "local"
+    assert bindings["demo"].sync_mode == "cached"
+
+
+def test_bindings_set_backend_upsert_preserves_account(home, capsys):
+    main(["bindings", "set", "demo", "--account", "user@example.com"])
+    capsys.readouterr()
+    rc = main(["bindings", "set", "demo", "--backend", "gcp", "--sync-mode", "cached"])
+    assert rc == 0
+    bindings = load_vault_bindings()
+    assert bindings["demo"].account == "user@example.com"
+    assert bindings["demo"].backend == "gcp"
+    assert bindings["demo"].sync_mode == "cached"
+
+
+def test_bindings_set_defaults_backend_and_sync_mode_when_not_passed(home, capsys):
+    rc = main(["bindings", "set", "demo", "--account", "user@example.com"])
+    assert rc == 0
+    bindings = load_vault_bindings()
+    assert bindings["demo"].backend == "gcp"
+    assert bindings["demo"].sync_mode == "direct"
+
+
+def test_bindings_show_reports_backend_and_sync_mode(home, capsys):
+    main(["bindings", "set", "demo", "--backend", "local", "--sync-mode", "cached"])
+    capsys.readouterr()
+    rc = main(["bindings", "show", "demo"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "local" in out
+    assert "cached" in out
+
+
+def test_bindings_show_json_includes_backend_and_sync_mode(home, capsys):
+    main(["bindings", "set", "demo", "--backend", "local", "--sync-mode", "cached"])
+    capsys.readouterr()
+    rc = main(["bindings", "show", "demo", "--json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    data = json.loads(out)
+    assert data["demo"]["backend"] == "local"
+    assert data["demo"]["sync_mode"] == "cached"

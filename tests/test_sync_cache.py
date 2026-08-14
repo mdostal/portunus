@@ -129,6 +129,22 @@ def test_syncing_backend_project_prefixed_key_never_collides_with_local_drop(hom
     assert local.access("demo:X") == "CACHED-REMOTE-VALUE"
 
 
+def test_last_sync_result_reports_synced_then_fresh(home):
+    remote_runner, _ = _mock_gcloud_runner([
+        (0, json.dumps({"name": "v1", "createTime": "T1"}), ""),
+        (0, "VALUE", ""),
+        (0, json.dumps({"name": "v1", "createTime": "T1"}), ""),
+    ])
+    remote = GcloudBackend(runner=remote_runner)
+    local = LocalEncryptedBackend()
+    sync = SyncingBackend(remote, local, home / "sync-state.json")
+
+    sync.access("X", project="demo")
+    assert sync.last_sync_result == "synced"
+    sync.access("X", project="demo")
+    assert sync.last_sync_result == "fresh"
+
+
 def test_sync_state_file_never_holds_a_value(home):
     remote_runner, _ = _mock_gcloud_runner([
         (0, json.dumps({"name": "v1", "createTime": "T1"}), ""),

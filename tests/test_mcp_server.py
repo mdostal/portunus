@@ -148,6 +148,15 @@ def test_portunus_bindings_show_single_project(home):
     assert list(result.keys()) == ["a"]
 
 
+def test_portunus_bindings_show_reports_backend_and_sync_mode(home):
+    from portunus.backend import VaultBinding, save_vault_bindings
+    from portunus import mcp_server
+    save_vault_bindings({"demo": VaultBinding("demo", backend="local", sync_mode="cached")})
+    result = mcp_server.portunus_bindings_show("demo")
+    assert result["demo"]["backend"] == "local"
+    assert result["demo"]["sync_mode"] == "cached"
+
+
 # --- story 03: discovery tool ------------------------------------------
 
 def _mock_gcloud_list(monkeypatch, secrets):
@@ -590,3 +599,51 @@ def test_state_no_backend_access():
     from portunus import mcp_server
     code = _no_backend_access(mcp_server.portunus_state)
     assert ".access(" not in code
+
+
+# --- story 04 (portunus-vault-routing): portunus_sync tool ---------------
+
+def test_portunus_sync_reports_synced(home, monkeypatch):
+    import json as _json
+    from types import SimpleNamespace as _NS
+    from portunus import Registry, mcp_server
+    from portunus.backend import VaultBinding, save_vault_bindings
+
+    def fake_run(cmd, capture_output, text, timeout):
+        if "describe" in cmd:
+            return _NS(returncode=0, stdout=_json.dumps({"name": "v1", "createTime": "T1"}), stderr="")
+        return _NS(returncode=0, stdout="VALUE", stderr="")
+
+    monkeypatch.setattr("portunus.backend.subprocess.run", fake_run)
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    save_vault_bindings({"demo": VaultBinding("demo", backend="gcp", sync_mode="cached")})
+    Registry().add("x", "sm-x", project="demo")
+
+    result = mcp_server.portunus_sync("demo")
+    assert result == {"synced": ["x"], "already_fresh": [], "failed": []}
+
+
+def test_portunus_sync_no_cached_references(home):
+    from portunus import Registry, mcp_server
+    Registry().add("x", "sm-x", project="demo")
+    result = mcp_server.portunus_sync("demo")
+    assert result == {"synced": [], "already_fresh": [], "failed": []}
+
+
+def test_portunus_sync_never_returns_a_value_source_check():
+    """portunus_sync legitimately calls backend.access() to force a sync
+    check (unlike the pure-metadata tools) -- the real guarantee here is
+    structural: no Return node's expression tree references anything but
+    the report dict's own name/error-string lists."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_sync))
+    tree = ast.parse(src)
+    func = tree.body[0]
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return) and node.value is not None:
+            names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+            assert names <= {"synced", "fresh", "failed"}, ast.unparse(node.value)

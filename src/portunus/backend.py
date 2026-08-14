@@ -325,6 +325,11 @@ class SyncingBackend:
         self.remote = remote
         self.local = local
         self.state_path = Path(state_path)
+        # "synced" | "fresh" -- which path the most recent access() took.
+        # Metadata about the cache's own behavior, never a value; lets
+        # `portunus sync`/`portunus_sync` report synced vs. already_fresh
+        # without re-deriving it from the state file.
+        self.last_sync_result: str = ""
 
     def _load_state(self) -> Dict[str, str]:
         if self.state_path.exists():
@@ -345,18 +350,22 @@ class SyncingBackend:
         if latest_version is None:
             value = self.remote.access(sm_name, project=project)
             self.local.store(cache_key, value)
+            self.last_sync_result = "synced"
             return value
 
         state = self._load_state()
         marker = latest_version(sm_name, project=project)
         if state.get(cache_key) == marker:
             try:
-                return self.local.access(cache_key)
+                value = self.local.access(cache_key)
+                self.last_sync_result = "fresh"
+                return value
             except BackendError:
                 pass  # marker recorded but local copy missing -- refetch below
 
         value = self.remote.access(sm_name, project=project)
         self.local.store(cache_key, value)
         state[cache_key] = marker
+        self.last_sync_result = "synced"
         self._save_state(state)
         return value
