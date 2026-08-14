@@ -59,14 +59,14 @@ class MockBackend:
 
 
 @dataclass(frozen=True)
-class GcpProjectBinding:
+class VaultBinding:
     """Which GCP project a Reference's secret lives in, and how to auth to it.
 
     `wif_audience` is the Workload Identity Federation provider resource name
     (e.g. "//iam.googleapis.com/projects/<num>/locations/global/
     workloadIdentityPools/<pool>/providers/<provider>") -- infrastructure
     topology, not a credential, but kept out of world-readable files anyway
-    (see load_gcp_bindings/save_gcp_bindings 0600 handling).
+    (see load_vault_bindings/save_vault_bindings 0600 handling).
 
     `account` is a local gcloud CLI identity email (e.g. "user@example.com")
     to pass as `--account=` when no WIF token is minted for this project --
@@ -84,8 +84,8 @@ def _gcp_bindings_path(path: Optional[Path] = None) -> Path:
     return path or (home() / "gcp-bindings.json")
 
 
-def load_gcp_bindings(path: Optional[Path] = None) -> Dict[str, GcpProjectBinding]:
-    """Load PORTUNUS_HOME/gcp-bindings.json (project -> GcpProjectBinding).
+def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
+    """Load PORTUNUS_HOME/gcp-bindings.json (project -> VaultBinding).
 
     Falls back to a single binding derived from PORTUNUS_GCP_PROJECT /
     PORTUNUS_GCP_WIF_AUDIENCE when no bindings file exists -- preserves
@@ -95,7 +95,7 @@ def load_gcp_bindings(path: Optional[Path] = None) -> Dict[str, GcpProjectBindin
     if bindings_path.exists():
         raw = json.loads(bindings_path.read_text() or "{}")
         return {
-            proj: GcpProjectBinding(
+            proj: VaultBinding(
                 project=proj,
                 wif_audience=cfg.get("wif_audience", ""),
                 account=cfg.get("account", ""),
@@ -106,11 +106,11 @@ def load_gcp_bindings(path: Optional[Path] = None) -> Dict[str, GcpProjectBindin
     if not fallback_project:
         return {}
     audience = os.environ.get("PORTUNUS_GCP_WIF_AUDIENCE", "")
-    return {fallback_project: GcpProjectBinding(project=fallback_project, wif_audience=audience)}
+    return {fallback_project: VaultBinding(project=fallback_project, wif_audience=audience)}
 
 
-def save_gcp_bindings(
-    bindings: Dict[str, GcpProjectBinding], path: Optional[Path] = None
+def save_vault_bindings(
+    bindings: Dict[str, VaultBinding], path: Optional[Path] = None
 ) -> None:
     """Persist project bindings, 0600 on disk (grill H1)."""
     bindings_path = _gcp_bindings_path(path)
@@ -132,7 +132,7 @@ class GcloudBackend:
     Zero-config: constructed with just `project` (or PORTUNUS_GCP_PROJECT),
     behaves exactly as before this epic -- ambient `gcloud` credentials,
     single project. Multi-project + keyless: pass `bindings` (from
-    load_gcp_bindings()); access(sm_name, project=...) then picks the
+    load_vault_bindings()); access(sm_name, project=...) then picks the
     matching binding's WIF audience and mints a short-lived access token per
     call, written to a 0600 tempfile passed via --access-token-file and
     unlinked in a finally block -- the token is never logged, printed, or
@@ -145,7 +145,7 @@ class GcloudBackend:
         timeout: float = 30.0,
         credential_provider: Optional[GCPWorkloadIdentityAuth] = None,
         runner=None,
-        bindings: Optional[Dict[str, GcpProjectBinding]] = None,
+        bindings: Optional[Dict[str, VaultBinding]] = None,
         audit: Optional[AuditChain] = None,
     ):
         self.project = project

@@ -51,11 +51,11 @@ def test_auth_login_no_gcloud_on_path(home, monkeypatch, capsys):
 
 def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, capsys):
     from types import SimpleNamespace
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    from portunus.backend import VaultBinding, save_vault_bindings
 
-    save_gcp_bindings({
-        "personalsites-487021": GcpProjectBinding("personalsites-487021", account="mathew.dostal@gmail.com"),
-        "ffe-cicd": GcpProjectBinding("ffe-cicd", account="mdostal@ff.events"),
+    save_vault_bindings({
+        "personalsites-487021": VaultBinding("personalsites-487021", account="mathew.dostal@gmail.com"),
+        "ffe-cicd": VaultBinding("ffe-cicd", account="mdostal@ff.events"),
     })
 
     def fake_run(cmd, capture_output, text, timeout):
@@ -78,11 +78,11 @@ def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, 
 
 def test_auth_status_json_shape(home, monkeypatch, capsys):
     from types import SimpleNamespace
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    from portunus.backend import VaultBinding, save_vault_bindings
 
-    save_gcp_bindings({
-        "a": GcpProjectBinding("a", account="one@example.com"),
-        "b": GcpProjectBinding("b", account="two@example.com"),
+    save_vault_bindings({
+        "a": VaultBinding("a", account="one@example.com"),
+        "b": VaultBinding("b", account="two@example.com"),
     })
 
     def fake_run(cmd, capture_output, text, timeout):

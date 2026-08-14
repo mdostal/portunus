@@ -22,8 +22,8 @@ from . import __version__
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import (
-    AWSSecretsManagerBackend, BackendError, GcloudBackend, GcpProjectBinding, MockBackend,
-    load_gcp_bindings, save_gcp_bindings,
+    AWSSecretsManagerBackend, BackendError, GcloudBackend, VaultBinding, MockBackend,
+    load_vault_bindings, save_vault_bindings,
 )
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
@@ -59,7 +59,7 @@ def _build(project: str = ""):
     elif backend_kind == "gcloud":
         backend = GcloudBackend(
             project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""),
-            bindings=load_gcp_bindings(),
+            bindings=load_vault_bindings(),
             audit=audit,
         )
     elif backend_kind == "aws":
@@ -697,7 +697,7 @@ def cmd_auth_gcp(args) -> int:
     """Mint a GCP WIF access token and report identity/scope/expiry -- never the token."""
     audit = AuditChain()
     project = args.project or os.environ.get("PORTUNUS_GCP_PROJECT", "")
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     audience = args.audience
     if not audience and project in bindings:
         audience = bindings[project].wif_audience
@@ -742,7 +742,7 @@ def cmd_auth_status(args) -> int:
     reports which bindings are authenticated vs. missing, per-binding. Not
     automatic reauth -- a status report plus `auth login` above it. Account
     emails and gcloud's own credential list are not secret values."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     if not bindings:
         if args.json:
             print(json.dumps({}))
@@ -779,7 +779,7 @@ def _wif_configured(project: str) -> bool:
     wif_audience. Boolean only -- the audience string itself is never
     returned by this helper's callers (matches `portunus auth gcp`'s own
     restraint: identity/scope/expiry only, never the audience/token)."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     binding = bindings.get(project)
     return bool(binding and binding.wif_audience)
 
@@ -791,7 +791,7 @@ def cmd_discover(args) -> int:
     touches SecretBackend.access()."""
     registry = Registry()
     account = ""
-    binding = load_gcp_bindings().get(args.project)
+    binding = load_vault_bindings().get(args.project)
     if binding:
         account = binding.account
     try:
@@ -842,16 +842,16 @@ def cmd_bindings_set(args) -> int:
     change, preserving whichever field wasn't passed (mirrors Registry.
     retag()'s only-passed-fields-change pattern). Identity-selector/topology
     strings only (account email, WIF audience) -- never a credential."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     existing = bindings.get(args.project)
     account = args.account if args.account else (existing.account if existing else "")
     wif_audience = (
         args.wif_audience if args.wif_audience else (existing.wif_audience if existing else "")
     )
-    bindings[args.project] = GcpProjectBinding(
+    bindings[args.project] = VaultBinding(
         project=args.project, wif_audience=wif_audience, account=account,
     )
-    save_gcp_bindings(bindings)
+    save_vault_bindings(bindings)
     print(f"binding set: {args.project} (account={account or '-'}, wif_audience={wif_audience or '-'})")
     return 0
 
@@ -860,7 +860,7 @@ def cmd_bindings_show(args) -> int:
     """Show one or all GCP bindings -- real account/wif_audience values, not
     presence-only. A local CLI reading the operator's own 0600
     gcp-bindings.json is the same trust boundary as `cat`ing it directly."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     if args.project:
         binding = bindings.get(args.project)
         if binding is None:

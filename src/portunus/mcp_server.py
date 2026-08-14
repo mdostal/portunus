@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .backend import BackendError, load_gcp_bindings
+from .backend import BackendError, load_vault_bindings
 from .broker import ApprovalRequired, NotInjectable
 from .cli import _build, _build_tree, _wif_configured
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
@@ -114,7 +114,7 @@ def portunus_ask_preview(request: str) -> dict:
 def portunus_bindings_show(project: str = "") -> dict:
     """Show configured GCP project bindings (account/WIF audience) -- one
     project or all. Same values as `portunus bindings show --json`."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     if project:
         binding = bindings.get(project)
         if binding is None:

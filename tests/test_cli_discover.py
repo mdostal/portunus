@@ -64,8 +64,8 @@ def test_discover_json_register(home, monkeypatch, capsys):
 
 
 def test_discover_json_wif_configured_true_when_binding_has_audience(home, monkeypatch, capsys):
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
-    save_gcp_bindings({"demo": GcpProjectBinding("demo", "//iam.googleapis.com/some/audience")})
+    from portunus.backend import VaultBinding, save_vault_bindings
+    save_vault_bindings({"demo": VaultBinding("demo", "//iam.googleapis.com/some/audience")})
     _mock_gcloud_list(monkeypatch, [])
     rc = main(["discover", "--provider", "gcp", "--project", "demo", "--json"])
     out = capsys.readouterr().out
@@ -84,8 +84,8 @@ def test_discover_json_wif_configured_false_with_no_binding(home, monkeypatch, c
 
 
 def test_cmd_discover_passes_binding_account_to_list_gcp_secrets(home, monkeypatch, capsys):
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
-    save_gcp_bindings({"demo": GcpProjectBinding("demo", account="user@example.com")})
+    from portunus.backend import VaultBinding, save_vault_bindings
+    save_vault_bindings({"demo": VaultBinding("demo", account="user@example.com")})
     seen_cmds = []
     _mock_gcloud_list(monkeypatch, [], seen_cmds=seen_cmds)
     rc = main(["discover", "--provider", "gcp", "--project", "demo"])

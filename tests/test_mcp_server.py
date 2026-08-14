@@ -130,19 +130,19 @@ def test_portunus_ask_preview_no_backend_access():
 
 
 def test_portunus_bindings_show_returns_configured_bindings(home):
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    from portunus.backend import VaultBinding, save_vault_bindings
     from portunus import mcp_server
-    save_gcp_bindings({"demo": GcpProjectBinding("demo", account="user@example.com")})
+    save_vault_bindings({"demo": VaultBinding("demo", account="user@example.com")})
     result = mcp_server.portunus_bindings_show()
     assert result["demo"]["account"] == "user@example.com"
 
 
 def test_portunus_bindings_show_single_project(home):
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    from portunus.backend import VaultBinding, save_vault_bindings
     from portunus import mcp_server
-    save_gcp_bindings({
-        "a": GcpProjectBinding("a", account="a@example.com"),
-        "b": GcpProjectBinding("b", account="b@example.com"),
+    save_vault_bindings({
+        "a": VaultBinding("a", account="a@example.com"),
+        "b": VaultBinding("b", account="b@example.com"),
     })
     result = mcp_server.portunus_bindings_show("a")
     assert list(result.keys()) == ["a"]

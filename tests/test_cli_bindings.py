@@ -1,24 +1,24 @@
 """portunus bindings set/show (story 04, portunus-gcp-multi-account).
 
 Only way to configure gcp-bindings.json before this story was hand-editing
-JSON -- save_gcp_bindings() was only ever called by tests."""
+JSON -- save_vault_bindings() was only ever called by tests."""
 import json
 
-from portunus.backend import load_gcp_bindings
+from portunus.backend import load_vault_bindings
 from portunus.cli import main
 
 
 def test_bindings_set_writes_account(home, capsys):
     rc = main(["bindings", "set", "demo", "--account", "user@example.com"])
     assert rc == 0
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     assert bindings["demo"].account == "user@example.com"
 
 
 def test_bindings_set_writes_wif_audience(home, capsys):
     rc = main(["bindings", "set", "demo", "--wif-audience", "//iam.googleapis.com/some/aud"])
     assert rc == 0
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     assert bindings["demo"].wif_audience == "//iam.googleapis.com/some/aud"
 
 
@@ -27,7 +27,7 @@ def test_bindings_set_is_an_upsert_preserving_wif_audience(home, capsys):
     capsys.readouterr()
     rc = main(["bindings", "set", "demo", "--account", "user@example.com"])
     assert rc == 0
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     assert bindings["demo"].account == "user@example.com"
     assert bindings["demo"].wif_audience == "//iam.googleapis.com/some/aud"
 
@@ -37,7 +37,7 @@ def test_bindings_set_is_an_upsert_preserving_account(home, capsys):
     capsys.readouterr()
     rc = main(["bindings", "set", "demo", "--wif-audience", "//iam.googleapis.com/some/aud"])
     assert rc == 0
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     assert bindings["demo"].account == "user@example.com"
     assert bindings["demo"].wif_audience == "//iam.googleapis.com/some/aud"
 
