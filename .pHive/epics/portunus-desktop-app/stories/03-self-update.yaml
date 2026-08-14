@@ -1,0 +1,81 @@
+id: 03-self-update
+epic: portunus-desktop-app
+title: gh-CLI-backed update check + confirmed relauncher swap
+status: pending
+complexity: high
+methodology: classic
+depends_on: [01-tauri-shell-sidecar]
+
+description: |
+  Update check shells out to `gh release view --repo mdostal/portunus latest --json tagName`
+  (the user's own already-authenticated gh CLI -- never an embedded token, per
+  design-discussion.md §4) on a 6-hour background timer plus a manual "Check for Updates" tray
+  item (wired into story 02's tray menu). Compares the returned tag against the running app's
+  own version. If newer: a native dialog asks to install -- never a silent unattended swap.
+
+  On confirm: `gh release download <tag> --pattern 'portunus-desktop-*.zip'` to a temp dir, then
+  hand off to a small bundled relauncher script (a separate process, since a running app can't
+  safely overwrite its own binary): copy the new .app to a temp path, sanity-check it
+  (Info.plist exists, `codesign -dv` succeeds), rename the running .app to `.app.bak`, move the
+  new one into place, delete `.bak` only on success -- restore from `.bak` on any failure. The
+  Tauri app quits (handing off to the already-spawned, detached relauncher), which does the
+  swap and relaunches `open /Applications/Portunus.app`.
+
+acceptance_criteria:
+  - "Given a version-comparison function (running version vs. latest tag), when given equal/older/newer/malformed inputs, then it returns the correct real/false/error result -- covered by a real Rust unit test (this piece is pure, testable logic even though the story overall is classic methodology)"
+  - "Given no update is available, when the background check or manual 'Check for Updates' runs, then nothing is downloaded and no dialog appears (silent no-op)"
+  - "Given an update is available, when detected, then a native dialog asks for confirmation -- no download or swap happens without it"
+  - "Given the user confirms, when the relauncher runs, then it verifies the new .app (Info.plist + codesign check) BEFORE removing the old one -- a corrupted/incomplete download must not destroy the working install"
+  - "Given the relauncher's swap fails partway (simulated: sanity-check step deliberately made to fail in a test run), when that happens, then the original .app is restored from the .bak and the app is still launchable afterward"
+  - "Given a successful swap, when it completes, then the new version relaunches automatically"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Version-comparison Rust function + unit test, gh-CLI check/download commands, native confirmation dialog, relauncher script with the copy-verify-atomic-swap-with-backup sequence.
+    agent: developer
+  - id: review
+    description: Confirm the relauncher's failure path genuinely restores from .bak -- this is the one place in this epic where a bug could actually break the user's install, so verify it directly (simulate a bad download) rather than trusting the happy path alone.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/epics/portunus-desktop-app/docs/design-discussion.md
+      purpose: "§4 -- the full update-flow design this story implements verbatim"
+
+files_to_modify:
+  - file: ui/src-tauri/src/updater.rs
+    change: New -- version comparison (+ unit test), gh CLI check/download wrapper, confirmation dialog wiring
+  - file: ui/src-tauri/resources/relauncher.sh
+    change: New -- copy-verify-atomic-swap-with-backup script, bundled as a Tauri resource
+  - file: ui/src-tauri/src/main.rs
+    change: Wire the 6-hour background timer + tray "Check for Updates" item to updater.rs
+
+design_decisions:
+  - decision: gh CLI instead of Tauri's built-in updater plugin
+    rationale: "The repo is private -- a public signed-feed updater would need an embedded token in the shipped app. gh already holds the user's own credential; the app never touches one. See design-discussion.md §4 for the full reasoning."
+  - decision: Confirmed install, not silent auto-install
+    rationale: "Replacing a running vault app out from under the user is consequential enough to ask, matches this project's general no-consequential-action-without-a-clear-signal posture"
+  - decision: Relauncher is a separate detached process, not the running app overwriting itself
+    rationale: "A process cannot safely overwrite its own running binary on macOS -- standard self-update pattern is spawn-a-helper-then-exit"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- this story handles zero secret values; gh's own credential is never read, logged, or touched by Portunus code, only invoked as a subprocess exactly like every other gh call this session already made"
+  - concern: audit-chain-integrity
+    action: "N/A -- app self-update is outside Portunus's own audit chain scope (it's about the app binary, not a vault access)"
+
+risks:
+  - severity: high
+    description: A buggy relauncher could leave the user without a working app
+    mitigation: "Explicit acceptance criteria (4)-(5) require the copy-verify-before-delete-original sequence and a tested failure-restores-from-backup path -- this is the one place in the epic that gets a REQUIRED failure-path test, not just a happy-path one"
+
+references:
+  - path: .pHive/epics/portunus-desktop-app/docs/design-discussion.md
+    relevant_excerpt: "§4 -- full update mechanism design"

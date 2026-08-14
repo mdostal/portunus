@@ -1,0 +1,69 @@
+id: 02-tray-single-instance
+epic: portunus-desktop-app
+title: Menu-bar tray, single-instance enforcement, close-to-tray, clean sidecar shutdown
+status: pending
+complexity: low
+methodology: classic
+depends_on: [01-tauri-shell-sidecar]
+
+description: |
+  `tauri-plugin-single-instance` so a second launch focuses the existing window instead of
+  spawning a second sidecar/port collision. Tray icon with "Open Vault" / "Check for Updates"
+  (wired in story 03) / "Quit". Closing the window hides it (tray-resident, sidecar stays
+  alive) -- standard menu-bar-app UX. Explicit Quit (from the tray menu, or Cmd+Q) actually
+  terminates: kills the spawned sidecar process explicitly before exiting, rather than leaving
+  it orphaned. Optional "Launch at Login" toggle via `tauri-plugin-autostart`.
+
+acceptance_criteria:
+  - "Given the app is already running, when launched again (e.g. double-clicking the .app), then no second window/sidecar/port is created -- the existing window is focused instead"
+  - "Given the app is running, when the window's close button is clicked, then the window hides but the sidecar keeps running and the tray icon remains"
+  - "Given the tray icon, when 'Open Vault' is clicked, then the window reappears/focuses"
+  - "Given the tray icon, when 'Quit' is clicked, then the sidecar process is explicitly terminated before the app exits -- verified by confirming no `node .../server.js` process survives the quit (e.g. via `pgrep`)"
+  - "Given 'Launch at Login' is toggled on, when the machine is restarted, then the app auto-launches (documented/verified manually, not requiring an actual reboot in CI)"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Wire single-instance plugin, tray icon + menu, close-to-tray window behavior, explicit sidecar-kill on Quit, autostart plugin.
+    agent: developer
+  - id: review
+    description: Confirm Quit genuinely kills the sidecar (not just the Tauri process) -- test with pgrep before/after.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/src-tauri/src/main.rs
+      purpose: Story 01's sidecar-spawn code -- this story adds the PID tracking needed to kill it explicitly on Quit
+
+files_to_modify:
+  - file: ui/src-tauri/Cargo.toml
+    change: Add tauri-plugin-single-instance, tauri-plugin-autostart
+  - file: ui/src-tauri/src/main.rs
+    change: Tray icon/menu, close-to-tray window event handler, explicit sidecar kill on Quit, single-instance wiring
+  - file: ui/src-tauri/tauri.conf.json
+    change: Tray icon config, autostart plugin config
+
+design_decisions:
+  - decision: Close-to-tray rather than quit-on-close
+    rationale: "Standard menu-bar-app UX (matches every other persistent local tool) -- avoids killing the vault UI's sidecar just because the window was clicked closed, and avoids re-paying the sidecar startup cost on every reopen"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- window/process lifecycle only, no value handling touched"
+  - concern: audit-chain-integrity
+    action: "N/A -- no new audited action"
+
+risks:
+  - severity: low
+    description: A force-quit (not via the tray Quit item -- e.g. Activity Monitor, kill -9) bypasses the explicit sidecar-kill handler
+    mitigation: "Documented known limitation (design-discussion.md §7) -- a fresh free port every launch means an orphaned sidecar from a hard kill doesn't block the next launch. Not solved this story; not silently ignored either."
+
+references:
+  - path: .pHive/epics/portunus-desktop-app/docs/design-discussion.md
+    relevant_excerpt: "§7 -- orphaned sidecar known limitation"
