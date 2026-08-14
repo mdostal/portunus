@@ -4,6 +4,8 @@ the reverse."""
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from portunus.backend import GcloudBackend, SyncingBackend, VaultBinding
 from portunus.localvault import LocalEncryptedBackend
 
@@ -157,3 +159,110 @@ def test_sync_state_file_never_holds_a_value(home):
     sync.access("X", project="demo")
 
     assert "SUPER-SECRET-VALUE" not in state_path.read_text()
+
+
+# --- story 02 (portunus-swappable-trio): offline-resilient fallback -----
+
+def test_serves_cached_value_when_remote_unreachable(home):
+    """First sync succeeds and caches; a later access whose latest_version()
+    check fails (simulated network outage) still returns the cached value
+    instead of raising."""
+    from portunus.backend import BackendError
+
+    class FlakyRemote:
+        def __init__(self):
+            self.calls = 0
+
+        def latest_version(self, sm_name, project=""):
+            self.calls += 1
+            if self.calls == 1:
+                return "T1"
+            raise BackendError("network unreachable")
+
+        def access(self, sm_name, project=""):
+            return "REAL-VALUE"
+
+    remote = FlakyRemote()
+    local = LocalEncryptedBackend()
+    sync = SyncingBackend(remote, local, home / "sync-state.json")
+
+    first = sync.access("X", project="demo")
+    assert first == "REAL-VALUE"
+    assert sync.last_sync_result == "synced"
+
+    second = sync.access("X", project="demo")
+    assert second == "REAL-VALUE"
+    assert sync.last_sync_result == "stale-offline"
+
+
+def test_no_fallback_available_propagates_original_error(home):
+    """Never synced before AND remote unreachable -- genuinely nothing to
+    serve, the original BackendError propagates."""
+    from portunus.backend import BackendError
+
+    class AlwaysUnreachable:
+        def latest_version(self, sm_name, project=""):
+            raise BackendError("network unreachable")
+
+        def access(self, sm_name, project=""):
+            raise AssertionError("should never be called")
+
+    remote = AlwaysUnreachable()
+    local = LocalEncryptedBackend()
+    sync = SyncingBackend(remote, local, home / "sync-state.json")
+
+    with pytest.raises(BackendError):
+        sync.access("X", project="demo")
+
+
+def test_stale_offline_serve_does_not_update_sync_state_marker(home):
+    """A stale-offline serve must not falsely mark the cache as
+    verified-fresh -- the marker stays at the last REAL confirmation."""
+    from portunus.backend import BackendError
+    import json as _json
+
+    class FlakyRemote:
+        def __init__(self):
+            self.calls = 0
+
+        def latest_version(self, sm_name, project=""):
+            self.calls += 1
+            if self.calls == 1:
+                return "T1"
+            raise BackendError("network unreachable")
+
+        def access(self, sm_name, project=""):
+            return "REAL-VALUE"
+
+    remote = FlakyRemote()
+    local = LocalEncryptedBackend()
+    state_path = home / "sync-state.json"
+    sync = SyncingBackend(remote, local, state_path)
+
+    sync.access("X", project="demo")
+    state_after_first = _json.loads(state_path.read_text())
+
+    sync.access("X", project="demo")  # stale-offline serve
+    state_after_second = _json.loads(state_path.read_text())
+
+    assert state_after_first == state_after_second
+
+
+def test_value_fetch_failure_after_successful_version_check_is_unchanged(home):
+    """A real (non-connectivity) failure during the value fetch itself --
+    e.g. permission denied -- must NOT be swallowed as 'offline'."""
+    from portunus.backend import BackendError
+
+    class PermissionDenied:
+        def latest_version(self, sm_name, project=""):
+            return "T1"
+
+        def access(self, sm_name, project=""):
+            raise BackendError("permission denied")
+
+    remote = PermissionDenied()
+    local = LocalEncryptedBackend()
+    sync = SyncingBackend(remote, local, home / "sync-state.json")
+
+    with pytest.raises(BackendError, match="permission denied"):
+        sync.access("X", project="demo")

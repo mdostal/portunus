@@ -453,7 +453,24 @@ class SyncingBackend:
             return value
 
         state = self._load_state()
-        marker = latest_version(sm_name, project=project)
+        try:
+            marker = latest_version(sm_name, project=project)
+        except BackendError as network_exc:
+            # Remote unreachable (network/DNS/timeout). Serve the last-known-
+            # good local copy if one exists, rather than hard-failing -- this
+            # is what keeps a cached-mode project usable while disconnected.
+            # Deliberately does NOT update the sync-state marker: the remote's
+            # real current version was never confirmed, so writing it would
+            # falsely mark the cache as verified-fresh once connectivity
+            # returns. If there's no cached copy yet, there's genuinely
+            # nothing to serve -- the ORIGINAL network error propagates, not
+            # LocalEncryptedBackend's own "unknown secret" error.
+            try:
+                value = self.local.access(cache_key)
+            except BackendError:
+                raise network_exc from None
+            self.last_sync_result = "stale-offline"
+            return value
         if state.get(cache_key) == marker:
             try:
                 value = self.local.access(cache_key)
