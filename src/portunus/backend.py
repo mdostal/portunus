@@ -304,6 +304,105 @@ class AWSSecretsManagerBackend:
         )
 
 
+class VaultServerBackend:
+    """HashiCorp Vault / OpenBao -- STUB. No real calls.
+
+    Interface-conformant placeholder, matching AWSSecretsManagerBackend's
+    own restraint. Researched (portunus-swappable-trio): Vault OSS is
+    BUSL-1.1 -- that license applies to whoever *runs* the Vault server,
+    not to this client-side adapter code, so it isn't a blocker for
+    building a real adapter later; if BUSL terms matter to a given
+    deployer, OpenBao (MPL-2.0, Linux Foundation fork, wire-compatible)
+    is a self-hosted alternative a REST-based adapter would work against
+    unchanged. This is informational, not a legal conclusion. No real
+    Vault/OpenBao instance is validated against yet, so this stays a stub.
+    """
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        raise BackendError(
+            "HashiCorp Vault backend is not yet implemented -- "
+            "request it: https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
+        )
+
+
+class InfisicalBackend:
+    """Infisical -- STUB. No real calls.
+
+    Interface-conformant placeholder, matching AWSSecretsManagerBackend's
+    own restraint. Researched (portunus-swappable-trio): Infisical's core
+    (self-hosted secrets engine, CLI, SDKs) is genuinely MIT-licensed --
+    the cleanest license of the researched candidates. Fully self-hostable
+    and container-native (Docker Compose/Helm), fitting this project's
+    no-OS-lock posture. No running Infisical instance is validated against
+    yet, so this stays a stub.
+    """
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        raise BackendError(
+            "Infisical backend is not yet implemented -- "
+            "request it: https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
+        )
+
+
+class DopplerBackend:
+    """Doppler -- STUB. No real calls.
+
+    Interface-conformant placeholder, matching AWSSecretsManagerBackend's
+    own restraint. Researched (portunus-swappable-trio): Doppler's CLI is
+    Apache-2.0, but the actual secret store/service is closed-source,
+    hosted SaaS with no viable self-host option for this project's
+    Docker/podman-Linux, no-vendor-lock posture (its "on-prem" offering is
+    sales-gated with no published architecture). Stays a stub until that
+    changes or a concrete need appears.
+    """
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        raise BackendError(
+            "Doppler backend is not yet implemented -- "
+            "request it: https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
+        )
+
+
+class OnePasswordConnectBackend:
+    """1Password Secrets Automation (Connect) -- STUB. No real calls.
+
+    Interface-conformant placeholder, matching AWSSecretsManagerBackend's
+    own restraint. Researched (portunus-swappable-trio): the Connect
+    server ships as free, self-hostable container images, but is governed
+    by 1Password's proprietary API Terms of Service (no OSS license) and
+    requires a paid Business/Enterprise 1Password tenant just to mint the
+    bootstrap credentials file. No provisioned tenant exists to validate
+    against, so this stays a stub.
+    """
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        raise BackendError(
+            "1Password Secrets Automation backend is not yet implemented -- "
+            "request it: https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
+        )
+
+
+class AzureKeyVaultBackend:
+    """Azure Key Vault -- STUB. No real calls.
+
+    Interface-conformant placeholder, matching AWSSecretsManagerBackend's
+    own restraint. Researched (portunus-swappable-trio): proprietary,
+    cloud-only Azure PaaS -- no self-host story at all (consistent with
+    that constraint, not a special case). A keyless adapter is possible
+    via Entra ID Workload Identity Federation, but needs its own from-
+    scratch Azure tenant/App Registration/federated-credential trust chain
+    that doesn't reuse any of this project's existing GCP WIF plumbing.
+    No Azure tenant is provisioned to validate against, so this stays a
+    stub.
+    """
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        raise BackendError(
+            "Azure Key Vault backend is not yet implemented -- "
+            "request it: https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
+        )
+
+
 class SyncingBackend:
     """Recency-aware, pull-only sync-down cache -- GCP -> local only, never
     the reverse (portunus-vault-routing). Wraps `remote` (the real backend,
@@ -354,7 +453,24 @@ class SyncingBackend:
             return value
 
         state = self._load_state()
-        marker = latest_version(sm_name, project=project)
+        try:
+            marker = latest_version(sm_name, project=project)
+        except BackendError as network_exc:
+            # Remote unreachable (network/DNS/timeout). Serve the last-known-
+            # good local copy if one exists, rather than hard-failing -- this
+            # is what keeps a cached-mode project usable while disconnected.
+            # Deliberately does NOT update the sync-state marker: the remote's
+            # real current version was never confirmed, so writing it would
+            # falsely mark the cache as verified-fresh once connectivity
+            # returns. If there's no cached copy yet, there's genuinely
+            # nothing to serve -- the ORIGINAL network error propagates, not
+            # LocalEncryptedBackend's own "unknown secret" error.
+            try:
+                value = self.local.access(cache_key)
+            except BackendError:
+                raise network_exc from None
+            self.last_sync_result = "stale-offline"
+            return value
         if state.get(cache_key) == marker:
             try:
                 value = self.local.access(cache_key)

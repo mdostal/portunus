@@ -12,20 +12,36 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   other agents/harnesses — not just this one — can query and inject secrets directly, in-process
   library calls since it's Python-in-the-same-package). No entry point reimplements gating —
   `Broker.check_injectable`/`Resolver` stay the single implementation everywhere.
-- **ARCA** — the vault store, behind one `SecretBackend` interface. **Actually selected
+- **ARCA** — the vault store, behind one `SecretBackend` interface (a one-method Protocol —
+  `access()` only; `store()`/`latest_version()` are duck-typed extras some concrete classes
+  happen to implement, not part of the Protocol itself). **Actually selected
   per-Reference/per-project, not one global choice** (portunus-vault-routing closed the gap
   between this claim and reality): `Resolver`'s router picks a backend via 3-level precedence —
   a reference's own `backend` override, else its project's `VaultBinding.backend`, else the
-  process-wide `PORTUNUS_BACKEND` env var as the final fallback. Backends: `LocalEncryptedBackend`
-  (default, local-encrypted tier), `GcloudBackend` (GCP Secret Manager, keyless via WIF,
-  multi-project via `VaultBinding`), `AWSSecretsManagerBackend` (interface-conformant stub —
-  `access()` raises, no real AWS calls yet). A project's `VaultBinding` may also set
-  `sync_mode="cached"` — a recency-aware, pull-only sync-down cache (`SyncingBackend`, GCP → local
-  only, never the reverse) instead of a live fetch every access. `MockBackend` is the in-memory
-  test double; `PORTUNUS_BACKEND=mock` always short-circuits the router entirely, regardless of
-  any configured binding.
+  process-wide `PORTUNUS_BACKEND` env var as the final fallback. **Real backends:**
+  `LocalEncryptedBackend` (default, local-encrypted tier), `GcloudBackend` (GCP Secret Manager,
+  keyless via WIF, multi-project via `VaultBinding`). **Honest stubs** (portunus-swappable-trio
+  — each `access()` unconditionally raises `BackendError` pointing to
+  `.github/ISSUE_TEMPLATE/adapter-request.yaml`, no real calls, no `store()`/`latest_version()`):
+  `AWSSecretsManagerBackend`, `VaultServerBackend` (HashiCorp Vault/OpenBao), `InfisicalBackend`,
+  `DopplerBackend`, `OnePasswordConnectBackend`, `AzureKeyVaultBackend` — researched but deferred
+  until a real validated environment exists for one, same reasoning that made GCP real in the
+  first place. A project's `VaultBinding` may also set `sync_mode="cached"` — a recency-aware,
+  pull-only sync-down cache (`SyncingBackend`, GCP → local only, never the reverse) instead of a
+  live fetch every access; on a real connectivity failure it falls back to the last-known-good
+  local copy (`last_sync_result="stale-offline"`) rather than hard-failing, without ever marking
+  that copy as verified-fresh. `MockBackend` is the in-memory test double;
+  `PORTUNUS_BACKEND=mock` always short-circuits the router entirely, regardless of any
+  configured binding.
 - **Petitio** — the approval-gate wrapper (`broker.py`, class `Broker`). Wraps every OSTIARIUS
   request so access is always gated: grant / gate / approve + lifecycle guard.
+  `check_injectable(name, requester: Optional[Identity] = None)` carries a deliberately inert
+  seam (portunus-swappable-trio) — `Identity` (name + kind: human/agent/system, resolved the
+  same way `AuditChain`'s actor already is) is threaded through but never consulted; every
+  caller is currently allowed regardless of `requester`. Real role-based enforcement (a
+  `PolicyStore`, an `EscalationRequest` state machine modeled on Teleport's request→review→
+  time-boxed-grant pattern) is designed (see `.pHive/epics/portunus-swappable-trio/docs/
+  research-brief.md`) but not yet built — no rush, per explicit product direction.
 - **Reference** — a registry entry: `name -> Secret Manager location`, plus scope, kind,
   lifecycle `state`, and approval gate. Never carries the value itself.
 - **Placeholder** — a `{{secret:NAME}}` token. `Resolver` substitutes it with the live value
@@ -167,6 +183,9 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `portunus-vault-setup` (configure/check a project's backend + sync mode). Also installed at
   Claude Code's user scope (`~/.claude/skills/`) so any session on the machine sees them.
 - `.pHive/epics/` — in-flight Hive epics/stories for this repo.
+- `docs/architecture.md` — adopter-facing reference (component diagram, ARCA backend-selection
+  precedence, Petitio today-vs-tomorrow, request/resolve sequence) — distinct from `.pHive/`,
+  which is planning history, not reader-facing documentation.
 
 ## Conventions
 

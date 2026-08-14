@@ -1,0 +1,78 @@
+id: 02-offline-resilient-sync
+epic: portunus-swappable-trio
+title: SyncingBackend falls back to cached value on connectivity failure (Slice ARCA-2)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  SyncingBackend.access() today calls remote.latest_version() unconditionally when the remote
+  supports it; if that call raises BackendError (network unreachable, gcloud timeout, DNS
+  failure), the whole access() fails even when a good cached copy already exists locally.
+  This is the real gap behind "enables it to still work" / "disconnected LLMs with vaults" --
+  wrap the latest_version() call: on BackendError, fall back to serving the last-known-good
+  local copy if one exists (state="stale-offline", a new distinct value from last_sync_result,
+  never overwriting the sync-state marker since the remote was never actually confirmed);
+  if no local copy exists yet (never synced before AND remote unreachable), the original
+  BackendError propagates -- there's genuinely nothing to serve.
+
+acceptance_criteria:
+  - "Given a project in sync_mode=cached with an existing local cache, when the remote's latest_version() raises BackendError (simulated network failure), then access() returns the cached value instead of raising, and last_sync_result == 'stale-offline'"
+  - "Given the same scenario but no local cache exists yet (first-ever sync attempt, remote unreachable), when access() is called, then the original BackendError propagates -- no value to serve, fails closed"
+  - "Given a stale-offline serve, when inspected, then the sync-state marker is NOT updated (so a subsequent successful connectivity check still correctly detects staleness against the real last-confirmed version, not silently marking the offline-served copy as verified-fresh)"
+  - "Given the remote's access() (not latest_version()) itself fails after a successful version check, when access() runs, then behavior is unchanged from before this story -- this story only changes the latest_version()-failure path, not the value-fetch-failure path"
+  - "Given portunus_sync's report, when a reference was served stale-offline during a prior access (not this command), then the report is unaffected -- portunus_sync still forces its own real recency check and reports synced/already_fresh/failed as today; stale-offline is only ever a live-access()-time fallback, not a sync-command outcome"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for the fallback-to-cache path, the no-cache-and-unreachable failure path, and the sync-state-marker-not-updated assertion.
+    agent: tester
+  - id: implement
+    description: Wrap SyncingBackend's latest_version() call with the fallback logic.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the sync-state marker is genuinely untouched on a stale-offline serve, and that this never masks a real, confirmable staleness later.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: SyncingBackend.access() -- the exact method this story modifies
+    - path: tests/test_sync_cache.py
+      purpose: Existing SyncingBackend test suite (portunus-vault-routing) this story extends
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: Wrap SyncingBackend's latest_version() call in try/except BackendError with cache fallback
+  - file: tests/test_sync_cache.py
+    change: Add offline-fallback tests
+
+design_decisions:
+  - decision: Sync-state marker is never updated on a stale-offline serve
+    rationale: "The remote's actual current version was never confirmed -- writing it would falsely mark the cache as verified-fresh, defeating the whole point of the recency check once connectivity returns"
+  - decision: Only latest_version() failures get the fallback; access() (value-fetch) failures after a successful version check are unchanged
+    rationale: "A successful version check means the remote IS reachable -- a subsequent access() failure there is a different, real error (auth failure, permission denied) that should surface normally, not be silently swallowed as 'offline'"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The fallback path only ever returns a value already held in the local encrypted cache (same LocalEncryptedBackend.access() call the fresh-cache-hit path already uses) -- no new value-handling code path."
+  - concern: audit-chain-integrity
+    action: "Unchanged -- a stale-offline serve still goes through the same broker.audit.append('resolve', ...) as any successful access()."
+
+risks:
+  - severity: medium
+    description: A stale-offline serve could mask a real, ongoing problem (e.g. a secret rotated weeks ago, never re-synced, connectivity down for an extended period)
+    mitigation: last_sync_result='stale-offline' is a distinct, checkable value from 'fresh' -- a future UI/CLI surface can flag it prominently; explicitly not solved by silently treating stale-offline the same as fresh
+
+references:
+  - path: .pHive/epics/portunus-swappable-trio/docs/design-discussion.md
+    relevant_excerpt: "§3.2 -- Offline-resilient sync-down (the real capability)"

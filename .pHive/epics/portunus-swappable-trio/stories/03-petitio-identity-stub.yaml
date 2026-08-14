@@ -1,0 +1,84 @@
+id: 03-petitio-identity-stub
+epic: portunus-swappable-trio
+title: Identity + inert requester parameter (Slice Petitio-0)
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  Identity (new small dataclass: name, kind: Literal["human","agent","system"]), resolved the
+  same way AuditChain's actor already is (DOSTAL_AGENT env for agents, USER for humans) -- no
+  new resolution mechanism. Broker.check_injectable(name, requester: Optional[Identity] =
+  None) gains the new optional parameter; the method body does not reference requester at all
+  -- explicitly documented as a deliberate no-op ("Petitio's access-level enforcement is not
+  built yet -- every caller is currently allowed regardless of requester") in both the
+  docstring and an inline comment at the exact point a future policy check would go. Threaded
+  through as an optional, defaulted param (zero behavior change) at every call site:
+  resolver.py::_fetch, mcp_server.py's resolve/drop/sync tools, cli.py's cmd_resolve/
+  cmd_inject/cmd_ask/cmd_drop. No PolicyStore, no EscalationRequest, no new CLI/MCP commands
+  -- explicitly out of scope, confirmed by the operator ("it just passes through, no rush").
+
+acceptance_criteria:
+  - "Given Identity.from_env(), when called with DOSTAL_AGENT set, then it returns Identity(name=<agent>, kind='agent'); with only USER set, Identity(name=<user>, kind='human')"
+  - "Given Broker.check_injectable(name) called with no requester (every existing call site), when run, then behavior is byte-identical to before this story -- the full pre-existing test suite passes unmodified"
+  - "Given Broker.check_injectable(name, requester=some_identity), when run, then the result is identical regardless of which Identity is passed -- proving the parameter is genuinely inert, not silently gated"
+  - "Given check_injectable's source, when inspected via AST, then no reference to the requester parameter's attributes appears in any conditional/branch -- structurally proving it's unused, not just untested"
+  - "Given check_injectable's docstring, when read, then it explicitly states enforcement is not yet built and every caller is currently allowed regardless of requester"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for Identity.from_env(), the inert requester parameter, and the AST-level proof it's unreferenced in any branch.
+    agent: tester
+  - id: implement
+    description: Add Identity dataclass and the optional requester parameter to check_injectable; thread it through call sites as a defaulted no-op.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm zero behavior change against the full pre-existing suite, and that the no-op is documented clearly enough that a future reader won't mistake it for broken enforcement.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/broker.py
+      purpose: Broker.check_injectable() -- the method gaining the optional requester parameter
+    - path: src/portunus/audit.py
+      purpose: AuditChain's existing actor resolution (DOSTAL_AGENT/USER) -- the exact pattern Identity.from_env() reuses
+
+files_to_modify:
+  - file: src/portunus/broker.py
+    change: Add Identity dataclass (or new identity.py); add optional requester param to check_injectable, documented as inert
+  - file: src/portunus/resolver.py
+    change: Thread an optional requester param through _fetch (still unused/None by every current caller)
+  - file: src/portunus/cli.py
+    change: No behavior change -- call sites keep calling check_injectable without requester (parameter is optional)
+  - file: tests/test_broker.py
+    change: Add Identity + inert-parameter tests including the AST-level check
+
+design_decisions:
+  - decision: requester defaults to None and is never referenced in check_injectable's body
+    rationale: "Confirmed operator instruction -- pure pass-through stub, no rush on real enforcement. The seam exists so future work doesn't need to touch every call site again."
+  - decision: No PolicyStore/EscalationRequest this pass
+    rationale: "Explicit scope cut per operator instruction -- Petitio needs a lot of work, deferred to a future epic entirely, not partially built here"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- Identity carries only a name/kind string, never a value; the parameter is provably unreferenced in any branch (AST check, acceptance criterion 4)."
+  - concern: audit-chain-integrity
+    action: "Unchanged -- no new audit entry shape this story; a future enforcement epic would extend AuditChain entries with requester, not this one."
+
+risks:
+  - severity: low
+    description: A future contributor could assume requester is already enforced somewhere
+    mitigation: Explicit docstring + inline comment + AST-provable inertness (acceptance criterion 4) makes the no-op status structurally checkable, not just documented in prose
+
+references:
+  - path: .pHive/epics/portunus-swappable-trio/docs/design-discussion.md
+    relevant_excerpt: "§4 -- Petitio: Identity + inert requester param"
