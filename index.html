@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portunus — a secret broker that never lets an LLM see the secret</title>
+<meta name="description" content="Portunus is a standalone, boundary-only secret broker. Reference a secret by name; the value is injected only at the execution boundary — never inside an LLM or agent context. Free and open source." />
+<link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="icon" href="assets/favicon-16.png" sizes="16x16" type="image/png" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<meta property="og:title" content="Portunus" />
+<meta property="og:description" content="A secret broker that finds secrets by metadata and injects them — without them ever touching your LLM. Free & open source." />
+<meta property="og:image" content="assets/hero-key.png" />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #f4eee0;
+    --bg-raised: #ffffff;
+    --ink: #241f1a;
+    --ink-muted: #6b6156;
+    --border: #ddd2bd;
+    --accent: #9c7a2e;
+    --accent-strong: #7c5f22;
+    --accent-soft: #efe0bd;
+    --code-bg: #ece3cf;
+    --shadow: 0 1px 2px rgba(36,31,26,0.06), 0 8px 24px rgba(36,31,26,0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14120f;
+      --bg-raised: #1c1916;
+      --ink: #ede8e0;
+      --ink-muted: #9c9284;
+      --border: #2e2a24;
+      --accent: #cb9b4c;
+      --accent-strong: #e6bd6c;
+      --accent-soft: #2a2318;
+      --code-bg: #100e0c;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
+
+  .display {
+    font-family: "Cinzel", "Cormorant Garamond", Georgia, serif;
+    letter-spacing: 0.02em;
+    text-wrap: balance;
+  }
+
+  a { color: var(--accent-strong); }
+  @media (prefers-color-scheme: dark) { a { color: var(--accent); } }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  header.site {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 24px; max-width: 980px; margin: 0 auto;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+  .brand img { width: 26px; height: 26px; border-radius: 7px; }
+  nav.site a { color: var(--ink-muted); text-decoration: none; font-size: 14px; margin-left: 22px; }
+  nav.site a:hover { color: var(--ink); }
+
+  .hero {
+    display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 48px; align-items: center;
+    padding: 56px 0 72px;
+  }
+  @media (max-width: 760px) { .hero { grid-template-columns: 1fr; padding-top: 24px; } }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent-strong); font-weight: 600; margin-bottom: 18px;
+  }
+  @media (prefers-color-scheme: dark) { .eyebrow { color: var(--accent); } }
+
+  h1.display { font-size: clamp(34px, 5vw, 52px); line-height: 1.08; margin: 0 0 20px; }
+  .lede { font-size: 18px; color: var(--ink-muted); max-width: 46ch; margin: 0 0 28px; }
+
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 9px; font-size: 14px; font-weight: 600;
+    text-decoration: none; border: 1px solid transparent; transition: transform 0.1s ease;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn.solid { background: var(--accent-strong); color: #fff8ea; }
+  @media (prefers-color-scheme: dark) { .btn.solid { background: var(--accent); color: #1a1509; } }
+  .btn.quiet { border-color: var(--border); color: var(--ink); background: var(--bg-raised); }
+
+  .hero-art { display: flex; justify-content: center; }
+  .hero-art img {
+    width: min(320px, 80%); border-radius: 28px; box-shadow: var(--shadow);
+  }
+
+  .install-card {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px; margin: 22px 0; overflow-x: auto; white-space: pre;
+  }
+  .install-card .comment { color: var(--ink-muted); }
+
+  section { padding: 56px 0; border-top: 1px solid var(--border); }
+  section > h2.display { font-size: 28px; margin: 0 0 10px; }
+  section > .section-lede { color: var(--ink-muted); max-width: 60ch; margin: 0 0 36px; font-size: 15.5px; }
+
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 760px) { .grid3 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px; box-shadow: var(--shadow);
+  }
+  .card .kicker {
+    font-family: "Cinzel", serif; letter-spacing: 0.06em; font-size: 13px;
+    text-transform: uppercase; color: var(--accent-strong); margin-bottom: 8px; font-weight: 600;
+  }
+  @media (prefers-color-scheme: dark) { .card .kicker { color: var(--accent); } }
+  .card h3 { margin: 0 0 10px; font-size: 18px; }
+  .card p { margin: 0; color: var(--ink-muted); font-size: 14.5px; }
+
+  .flow {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px;
+  }
+  .flow .step {
+    padding: 8px 14px; border-radius: 8px; background: var(--bg-raised);
+    border: 1px solid var(--border);
+  }
+  .flow .sep { color: var(--ink-muted); }
+  .flow .step.blocked { border-color: #a1493f; color: #a1493f; }
+
+  .support-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  .support-list li { padding: 14px 16px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; font-size: 14.5px; }
+  .support-list strong { display: block; margin-bottom: 2px; }
+
+  footer.site {
+    padding: 40px 0 60px; color: var(--ink-muted); font-size: 13.5px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  footer.site a { color: var(--ink-muted); }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="brand">
+    <img src="assets/favicon-32.png" alt="" />
+    <span class="display" style="font-size:17px;">PORTUNUS</span>
+  </div>
+  <nav class="site">
+    <a href="#how-it-works">How it works</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/mdostal/portunus">GitHub</a>
+    <a href="#support">Support</a>
+  </nav>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <div>
+      <div class="eyebrow">A secret broker, not a secret leak</div>
+      <h1 class="display">Your agents ask for a secret by name.<br />They never see the value.</h1>
+      <p class="lede">
+        Portunus is a standalone, boundary-only secret broker. Reference
+        <code>{{secret:stripe-key}}</code> by metadata — Portunus resolves and injects the
+        real value only at the actual execution boundary. It is structurally incapable of
+        returning a value into an LLM or agent context.
+      </p>
+      <div class="cta-row">
+        <a class="btn solid" href="#install">Get started</a>
+        <a class="btn quiet" href="https://github.com/mdostal/portunus">View on GitHub</a>
+        <a class="btn quiet" href="https://github.com/mdostal/portunus/releases">Desktop app (macOS)</a>
+      </div>
+    </div>
+    <div class="hero-art">
+      <img src="assets/hero-key.png" alt="Portunus key mark" />
+    </div>
+  </div>
+</div>
+
+<section id="how-it-works">
+  <div class="wrap">
+    <h2 class="display">Three names, one rule</h2>
+    <p class="section-lede">
+      Every component is named for what it actually does — Roman gatekeeping, not marketing.
+      The rule underneath all three: a plaintext value only ever exists at the one boundary
+      call that needs it, and is never returned, logged, or printed anywhere upstream of that.
+    </p>
+    <div class="grid3">
+      <div class="card">
+        <div class="kicker">Ostiarius</div>
+        <h3>The gatekeeper</h3>
+        <p>One implementation, three entry points — the CLI, the standalone UI's API routes,
+           and an MCP server so any agent/harness can query and inject without a second
+           privileged path to keep in sync.</p>
+      </div>
+      <div class="card">
+        <div class="kicker">Arca</div>
+        <h3>The vault</h3>
+        <p>Pluggable backends, chosen per reference or per project — local-encrypted and GCP
+           Secret Manager are real today; AWS, Vault, Infisical, Doppler, 1Password, and Azure
+           are honest stubs with a one-click request link, never a silent mis-route.</p>
+      </div>
+      <div class="card">
+        <div class="kicker">Petitio</div>
+        <h3>The gate check</h3>
+        <p>Every request passes an approval gate before Arca ever gives up a value — lifecycle
+           state, time-boxed approvals, and a tamper-evident audit chain recording every
+           decision, allowed or denied.</p>
+      </div>
+    </div>
+
+    <div style="margin-top:40px;">
+      <div class="flow">
+        <span class="step">agent asks for <code>{{secret:X}}</code></span>
+        <span class="sep">→</span>
+        <span class="step">Ostiarius</span>
+        <span class="sep">→</span>
+        <span class="step">Petitio checks</span>
+        <span class="sep">→</span>
+        <span class="step blocked">✗ denied, no value ever released</span>
+      </div>
+      <div class="flow" style="margin-top:10px;">
+        <span class="step">agent asks for <code>{{secret:X}}</code></span>
+        <span class="sep">→</span>
+        <span class="step">Ostiarius</span>
+        <span class="sep">→</span>
+        <span class="step">Petitio allows</span>
+        <span class="sep">→</span>
+        <span class="step">Arca fetches</span>
+        <span class="sep">→</span>
+        <span class="step">injected at the boundary — env var, file, or exec argv</span>
+        <span class="sep">→</span>
+        <span class="step">agent gets a success signal, never the value</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2 class="display">Install</h2>
+    <p class="section-lede">Run it as a CLI/MCP tool, a local web UI, or a native macOS menu-bar app.</p>
+
+    <div class="install-card"><span class="comment"># CLI + MCP server</span>
+pip install portunus
+portunus reg add my-secret sm-my-secret --project my-proj
+portunus resolve "Authorization: Bearer {{secret:my-secret}}"</div>
+
+    <div class="install-card"><span class="comment"># standalone Vault UI</span>
+git clone https://github.com/mdostal/portunus
+cd portunus/ui && npm install && npm run dev</div>
+
+    <div class="install-card"><span class="comment"># macOS desktop app — menu-bar, self-updating</span>
+cd ui && npm run build && cargo tauri build
+cp -r src-tauri/target/release/bundle/macos/Portunus.app /Applications/
+open /Applications/Portunus.app</div>
+
+    <p class="section-lede" style="margin-top:8px;">
+      Full docs, MCP tool reference, and architecture diagrams live in the
+      <a href="https://github.com/mdostal/portunus#readme">README</a> and
+      <a href="https://github.com/mdostal/portunus/blob/main/docs/architecture.md">docs/architecture.md</a>.
+    </p>
+  </div>
+</section>
+
+<section id="support">
+  <div class="wrap">
+    <h2 class="display">Support this project</h2>
+    <p class="section-lede">Free and open source, always. A few ways to help — or just say hi.</p>
+    <ul class="support-list">
+      <li><strong>Use it, star it, file an issue.</strong> Honestly the best support an open-source project can get. <a href="https://github.com/mdostal/portunus">github.com/mdostal/portunus</a></li>
+      <li><strong>Hire me.</strong> Fractional-CTO and consulting work — fixing and scaling tech stacks. <a href="https://mdostal.com/contact">mdostal.com/contact</a></li>
+      <li><strong>Buy me a coffee</strong> if it saved you time. <a href="https://www.buymeacoffee.com/mdostal">buymeacoffee.com/mdostal</a></li>
+      <li><strong>More tools like this</strong> → <a href="https://tools.mdostal.com">tools.mdostal.com</a></li>
+      <li><strong>Life outside the terminal</strong> → <a href="https://life.mdostal.com">life.mdostal.com</a></li>
+      <li><strong>What we're building at Firefly Events</strong> — event discovery, 8,000+ events/day from 7+ sources → <a href="https://ff.events">ff.events</a></li>
+    </ul>
+  </div>
+</section>
+
+<footer class="site wrap">
+  <span>MIT © 2026 Mathew Dostal</span>
+  <span>
+    <a href="https://github.com/mdostal/portunus">GitHub</a> ·
+    <a href="https://github.com/mdostal/portunus/releases">Releases</a> ·
+    <a href="https://mdostal.com">mdostal.com</a>
+  </span>
+</footer>
+
+</body>
+</html>
