@@ -1,0 +1,76 @@
+id: 04-ui-two-zone-backend-picker
+epic: portunus-swappable-trio
+title: UI two-zone backend picker + GitHub adapter-request template (Slice ARCA-3)
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [01-arca-honest-stubs]
+
+description: |
+  Project Explorer's backend dropdown (portunus-vault-routing's Local/GCP/AWS select) becomes
+  a two-zone picker per the marketplace research's strongest finding: Zone 1 (colored,
+  clickable) = Local (Built-in), GCP (Verified) -- the two real backends. Zone 2 (flattened,
+  monochrome, below a visual divider) = the five new stub kinds, each opening an explanatory
+  modal on click ("This adapter exists in code but does not yet talk to real <Product>.
+  Selecting it will not protect your secret.") with a link to the GitHub adapter-request
+  issue, instead of entering any config/connect flow. Real and stub options never share a
+  click target. New .github/ISSUE_TEMPLATE/adapter-request.yaml per the marketplace research's
+  field shape.
+
+acceptance_criteria:
+  - "Given Project Explorer's backend picker, when viewing a project, then Local/GCP render in a distinct, clickable zone and the five stub kinds render in a visually separate, flattened zone below a divider"
+  - "Given a click on a stub kind, when it fires, then it opens an explanatory modal (never a config/connect flow, never calls /api/bindings to actually set that backend) stating plainly that it doesn't yet protect the secret, with a link to the GitHub adapter-request issue template pre-filled with that backend's name"
+  - "Given the GitHub issue template file, when read, then it matches the researched field shape: backend_name, auth_model (keyless/federated vs static, Portunus-specific), use_case, read_access_needed, and a contribution checkbox block"
+  - "Given `npm run build`, when run after this story's changes, then it completes with no TypeScript errors"
+  - "Given a live browser smoke test, when a stub tile is clicked, then the real /api/bindings POST is never called for that selection -- confirmed by network-request inspection, not just UI appearance"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Extend ProjectExplorer.tsx's backend picker with the two-zone layout and stub modal; add the GitHub issue template.
+    agent: developer
+  - id: test
+    description: npm run build; live browser smoke test confirming stub clicks never reach /api/bindings.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm real and stub options never share a click target anywhere in the implementation, not just visually.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/ProjectExplorer.tsx
+      purpose: Existing backend/sync_mode dropdown (portunus-vault-routing) this story extends into the two-zone layout
+    - path: .pHive/epics/portunus-swappable-trio/docs/research-brief.md
+      purpose: "OSS adapter-marketplace UX section -- the two-zone/never-shared-click-target finding this story implements directly"
+
+files_to_modify:
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: Two-zone backend picker, stub explanatory modal
+  - file: .github/ISSUE_TEMPLATE/adapter-request.yaml
+    change: New file
+
+design_decisions:
+  - decision: Stub tiles never call /api/bindings
+    rationale: "Marketplace research's hard safety constraint for a secrets manager specifically -- a stub that looks selectable/configured could make a user believe a secret is protected when it silently isn't"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- UI backend-selection metadata only, no value ever touches this surface."
+  - concern: audit-chain-integrity
+    action: "N/A -- no new audited action; stub clicks never reach the CLI/backend at all."
+
+risks:
+  - severity: low
+    description: A stub tile could accidentally end up clickable into the real config flow during implementation
+    mitigation: Explicit acceptance criterion (5) requires network-request-level verification, not just visual review
+
+references:
+  - path: .pHive/epics/portunus-swappable-trio/docs/design-discussion.md
+    relevant_excerpt: "§6 -- Docs + diagrams -- UI two-zone treatment"

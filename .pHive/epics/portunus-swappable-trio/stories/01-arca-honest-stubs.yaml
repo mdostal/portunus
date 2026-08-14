@@ -1,0 +1,89 @@
+id: 01-arca-honest-stubs
+epic: portunus-swappable-trio
+title: Five interface-conformant ARCA stubs (Slice ARCA-1)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  Five new stub backends -- VaultServerBackend, InfisicalBackend, DopplerBackend,
+  OnePasswordConnectBackend, AzureKeyVaultBackend -- each matching
+  AWSSecretsManagerBackend's exact restraint: access() unconditionally raises BackendError
+  with a "not yet implemented -- request it: <url>" message, no real calls, no store()/
+  latest_version() (SecretBackend is a one-method Protocol; these extras aren't part of it
+  and nothing calls them on a stub). Each docstring notes real, sourced licensing/self-host
+  character from this epic's research brief (Vault: BUSL-1.1 server-side/OpenBao MPL-2.0
+  alternative; Infisical: MIT core; Doppler: proprietary SaaS, no viable self-host; 1Password
+  Connect: proprietary ToS gated behind a paid tenant; Azure KV: proprietary cloud-only) --
+  informational, not asserted as legal conclusions.
+
+  VaultBinding.backend recognizes the five new string values (vault, infisical, doppler,
+  onepassword, azure). _make_backend_router's _for_kind() gains a branch per stub. These are
+  reachable only via VaultBinding.backend/ref.backend (the router) -- _build()'s legacy
+  PORTUNUS_BACKEND global-fallback env var keeps its existing four values unchanged, no
+  vocabulary reconciliation needed.
+
+acceptance_criteria:
+  - "Given VaultServerBackend/InfisicalBackend/DopplerBackend/OnePasswordConnectBackend/AzureKeyVaultBackend, when .access() is called on any of them, then each raises BackendError with a message naming the product and pointing to a GitHub-request URL -- never a real network call, never a value"
+  - "Given a VaultBinding with backend='vault' (or infisical/doppler/onepassword/azure), when a reference in that project is resolved, then the router returns the matching stub instance and the resolve fails closed with that stub's clear BackendError message -- never a KeyError/AttributeError"
+  - "Given the same stub kind requested twice in one Resolver lifetime, when routed, then the same cached instance is returned (matching the existing per-kind caching for local/gcp/aws)"
+  - "Given portunus bindings set <project> --backend vault (etc.), when run, then it succeeds and round-trips through bindings show exactly like the existing backend values"
+  - "Given each new stub class's docstring, when read, then it states real self-host/licensing character sourced from this epic's research brief, not marketing language, and never asserts a legal conclusion as settled fact"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for each stub's access() error, router dispatch for all five new backend kinds, and bindings set/show round-trip.
+    agent: tester
+  - id: implement
+    description: Implement the five stub classes and extend _for_kind()'s dispatch.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no stub implements store()/latest_version(), and every docstring's licensing note is sourced from the research brief, not asserted as legal fact.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: AWSSecretsManagerBackend -- the exact restraint pattern every new stub mirrors; _make_backend_router's _for_kind() dispatch to extend
+    - path: .pHive/epics/portunus-swappable-trio/docs/research-brief.md
+      purpose: Sourced licensing/self-host facts for each new stub's docstring
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: Add 5 stub backend classes; extend VaultBinding.backend recognized values (docstring only, string field already accepts any value); extend cli.py's router
+  - file: src/portunus/cli.py
+    change: "_make_backend_router's _for_kind() gains 5 new branches"
+  - file: tests/test_backend_router.py
+    change: Add stub dispatch tests
+  - file: tests/test_arca_stubs.py
+    change: New file -- per-stub access() error tests
+
+design_decisions:
+  - decision: No store()/latest_version() on any new stub
+    rationale: "grill correction -- SecretBackend is a one-method Protocol; store/latest_version are duck-typed extras nothing calls on a stub. Adding them would be unused surface, not parity with a real pattern."
+  - decision: New stub kinds reachable only via the router, not the legacy PORTUNUS_BACKEND env var
+    rationale: "Avoids reconciling the router's 'gcp' vs. _build()'s 'gcloud' vocabulary mismatch (a separate, pre-existing inconsistency, out of scope here) -- nobody needs a stub kind as a process-wide global default"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Every stub's only behavior is raising a fixed-string BackendError -- structurally cannot touch or leak a value."
+  - concern: audit-chain-integrity
+    action: "N/A -- a failed resolve against a stub never reaches broker.audit.append('resolve', ..., 'ok'); unchanged failure-path behavior."
+
+risks:
+  - severity: low
+    description: A stub's docstring could accidentally imply real functionality exists
+    mitigation: Explicit acceptance criterion (5) requires review against the research brief's actual sourced facts, not marketing copy
+
+references:
+  - path: .pHive/epics/portunus-swappable-trio/docs/design-discussion.md
+    relevant_excerpt: "§3.1 -- New stub backends"

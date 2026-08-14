@@ -1,0 +1,38 @@
+name: portunus-swappable-trio
+title: Honest ARCA stubs + offline-resilient sync + Petitio pass-through stub + docs
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Redefines ARCA/Petitio/OSTIARIUS per the operator's original DOS-508 vision, scoped down
+  from a 10-agent research workflow's own findings + adversarial grill: ARCA stays real for
+  local+GCP only, gains five honest interface-conformant stubs (Vault, Infisical, Doppler,
+  1Password, Azure) plus offline-resilient sync-down (SyncingBackend falls back to the last
+  cached value on a real connectivity failure instead of hard-failing). Petitio ships as a
+  pure pass-through stub (Identity + an inert requester parameter) -- no policy engine, no
+  enforcement, confirmed explicitly by the operator ("it just passes through, no rush").
+  OSTIARIUS gets a docs-only clarification. Full docs + 4 architecture diagrams + a GitHub
+  adapter-request issue template + a two-zone UI backend picker.
+
+stories:
+  - id: 01-arca-honest-stubs
+    title: Five interface-conformant ARCA stubs (Slice ARCA-1)
+    complexity: medium
+    depends_on: []
+  - id: 02-offline-resilient-sync
+    title: SyncingBackend falls back to cached value on connectivity failure (Slice ARCA-2)
+    complexity: medium
+    depends_on: []
+  - id: 03-petitio-identity-stub
+    title: Identity + inert requester parameter (Slice Petitio-0)
+    complexity: low
+    depends_on: []
+  - id: 04-ui-two-zone-backend-picker
+    title: UI two-zone backend picker + GitHub adapter-request template (Slice ARCA-3)
+    complexity: medium
+    depends_on: [01-arca-honest-stubs]
+  - id: 05-closeout
+    title: Docs, 4 architecture diagrams, version bump, live proof
+    complexity: medium
+    depends_on: [02-offline-resilient-sync, 03-petitio-identity-stub, 04-ui-two-zone-backend-picker]
