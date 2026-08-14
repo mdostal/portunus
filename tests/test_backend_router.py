@@ -5,8 +5,10 @@ prior reality (one global PORTUNUS_BACKEND per process)."""
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from portunus import Registry
-from portunus.backend import VaultBinding, save_vault_bindings
+from portunus.backend import VaultBinding, load_vault_bindings, save_vault_bindings
 from portunus.cli import _build
 
 
@@ -154,3 +156,48 @@ def test_backend_gate_no_longer_requires_manual_portunus_backend_env(home, monke
     seen = {}
     resolver.resolve_call("{{secret:x}}", lambda v: seen.setdefault("v", v))
     assert seen["v"] == "FROM-GCLOUD"
+
+
+# --- story 01 (portunus-swappable-trio): 5 new stub kinds route cleanly --
+
+@pytest.mark.parametrize("kind,name_fragment", [
+    ("vault", "vault"),
+    ("infisical", "infisical"),
+    ("doppler", "doppler"),
+    ("onepassword", "1password"),
+    ("azure", "azure"),
+])
+def test_router_routes_stub_kinds_and_fails_closed_cleanly(home, kind, name_fragment):
+    from portunus.backend import BackendError
+    save_vault_bindings({"demo": VaultBinding("demo", backend=kind)})
+    registry = Registry()
+    registry.add("x", "sm-x", project="demo")
+
+    _, _, _, resolver = _build()
+    with pytest.raises(BackendError) as exc_info:
+        resolver.resolve_call("{{secret:x}}", lambda v: None)
+    assert name_fragment in str(exc_info.value).lower()
+
+
+def test_router_caches_the_same_stub_instance_per_kind(home):
+    save_vault_bindings({
+        "a": VaultBinding("a", backend="vault"),
+        "b": VaultBinding("b", backend="vault"),
+    })
+    registry = Registry()
+    registry.add("x", "sm-x", project="a")
+    registry.add("y", "sm-y", project="b")
+
+    _, _, _, resolver = _build()
+    backend_x = resolver.backend_for(registry.require("x"))
+    backend_y = resolver.backend_for(registry.require("y"))
+    assert backend_x is backend_y
+
+
+def test_bindings_set_show_round_trips_new_stub_kinds(home):
+    from portunus.cli import main
+    import json
+    rc = main(["bindings", "set", "demo", "--backend", "infisical"])
+    assert rc == 0
+    bindings = load_vault_bindings()
+    assert bindings["demo"].backend == "infisical"

@@ -1,0 +1,85 @@
+id: 05-closeout
+epic: portunus-swappable-trio
+title: Docs, 4 architecture diagrams, version bump, live proof
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [02-offline-resilient-sync, 03-petitio-identity-stub, 04-ui-two-zone-backend-picker]
+
+description: |
+  Full pytest suite green; npm run build clean. README's component table updated (ARCA row:
+  local/GCP real + 5 named stubs with GitHub-request pointer; Petitio row: Identity/requester
+  exist as an inert seam, real enforcement not yet built). .pHive/CONTEXT.md gains terminology
+  entries for Identity, the 5 stub backends, and SyncingBackend's stale-offline behavior. New
+  docs/architecture.md (first docs/ dir in this repo) with 4 Mermaid diagrams: component
+  diagram (OSTIARIUS -> Petitio -> ARCA -> audit chain), ARCA backend-selection precedence
+  (3-level router as a decision tree), Petitio today-vs-tomorrow (inert now, target shape
+  later, clearly marked not-built), and the request/resolve sequence. Version bump (minor).
+  Live proof: confirm a real project can be bound to each of the 5 new stub kinds and fails
+  closed with the correct message; confirm SyncingBackend's offline fallback against a real
+  simulated network failure for the already-cached personalsites-487021 project.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given `cd ui && npm run build`, when run, then it completes clean"
+  - "Given README.md's component table, when read, then ARCA/Petitio rows accurately describe the post-epic reality, not aspiration"
+  - "Given docs/architecture.md, when read, then all 4 diagrams render as valid Mermaid and each is referenced from README/CONTEXT.md"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped minor version in lockstep"
+  - "Given the live proof, when run against the real vault, then binding personalsites-487021's already-cached reference to sync_mode=cached and simulating a network failure (e.g. temporarily invalid gcloud account) demonstrates a stale-offline serve, and the project is restored to its real working configuration afterward"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest + npm build; write docs/architecture.md + diagrams; update README/CONTEXT.md; apply version bump; write CHANGELOG entry; run the live proofs.
+    agent: developer
+  - id: review
+    description: Confirm the live proof's own output never contains a secret value, and that personalsites-487021's real configuration is fully restored afterward, not left in a broken/simulated state.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: Component table this story updates to post-epic reality
+    - path: .pHive/CONTEXT.md
+      purpose: Terminology entries this story adds
+
+files_to_modify:
+  - file: README.md
+    change: Update ARCA/Petitio rows, link docs/architecture.md
+  - file: docs/architecture.md
+    change: New file, 4 Mermaid diagrams
+  - file: .pHive/CONTEXT.md
+    change: New terminology entries
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Live proof restores personalsites-487021 to its real working config afterward
+    rationale: "This is the real production vault, not a scratch environment -- matches this session's established discipline of never leaving real state in a simulated-failure condition"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The closeout's live proof is the final real-world check that the offline-fallback path never leaks a value -- explicitly re-verified against actual output, not just unit-test assertions."
+  - concern: audit-chain-integrity
+    action: "Live proof confirms `portunus verify` stays INTACT after the simulated-failure test."
+
+risks:
+  - severity: low
+    description: Simulating a network failure against the real vault could leave it in a degraded state if not cleaned up properly
+    mitigation: Explicit acceptance criterion (6) and review step require confirming full restoration
+
+references:
+  - path: .pHive/epics/portunus-swappable-trio/docs/design-discussion.md
+    relevant_excerpt: "§6 -- Docs + diagrams"

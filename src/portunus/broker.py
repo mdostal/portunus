@@ -15,8 +15,9 @@ Every decision is written to the audit chain.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from .audit import AuditChain
 from .paths import home
@@ -29,6 +30,30 @@ class NotInjectable(RuntimeError):
 
 class ApprovalRequired(RuntimeError):
     """Raised when a gated reference has no valid (unexpired) approval."""
+
+
+@dataclass(frozen=True)
+class Identity:
+    """A principal that might request a secret -- the seam Petitio's future
+    access-level enforcement will consume. Not enforced anywhere yet (see
+    Broker.check_injectable's requester parameter); this exists so every
+    call site already threads an identity through, ahead of the policy
+    engine that will eventually read it.
+
+    from_env() resolves the same way AuditChain's own actor resolution
+    already does (DOSTAL_AGENT for agents, USER for humans) -- no new
+    resolution mechanism, reuses the existing seed.
+    """
+
+    name: str
+    kind: Literal["human", "agent", "system"]
+
+    @staticmethod
+    def from_env() -> "Identity":
+        agent = os.environ.get("DOSTAL_AGENT")
+        if agent:
+            return Identity(name=agent, kind="agent")
+        return Identity(name=os.environ.get("USER", "unknown"), kind="human")
 
 
 class Broker:
@@ -44,11 +69,20 @@ class Broker:
             pass
 
     # --- lifecycle guard -------------------------------------------------
-    def check_injectable(self, name: str) -> Reference:
+    def check_injectable(self, name: str, requester: Optional[Identity] = None) -> Reference:
         """Return the Reference iff it may be injected right now, else raise.
 
         Enforces both the lifecycle state and the approval gate. This is the
         single chokepoint the resolver calls before any value is fetched.
+
+        `requester` is a deliberate no-op today -- Petitio's access-level
+        (role-based) enforcement is not built yet. Every caller is currently
+        allowed regardless of which Identity (or None) is passed; this
+        parameter exists purely as the seam a future policy engine will
+        consume, so every call site already threads an identity through
+        ahead of that engine existing. Do not mistake "not yet enforced"
+        for "broken" -- this is intentional, confirmed scope (see
+        portunus-swappable-trio).
         """
         ref = self.registry.require(name)
         state = ref.state or "enabled"

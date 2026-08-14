@@ -4,6 +4,34 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-14
+
+### Added
+
+- **Five honest ARCA stubs** — HashiCorp Vault/OpenBao, Infisical, Doppler, 1Password Secrets
+  Automation, Azure Key Vault — each interface-conformant and fails closed with a clear error
+  and a link to `.github/ISSUE_TEMPLATE/adapter-request.yaml`, matching
+  `AWSSecretsManagerBackend`'s existing restraint. Local + GCP remain the only real backends,
+  per a 10-agent research workflow where all six candidates independently recommended
+  stub-only (no validated environment to build a real adapter against yet).
+- **Offline-resilient sync-down.** `SyncingBackend` now falls back to the last-known-good local
+  copy (`last_sync_result="stale-offline"`) when a real connectivity failure interrupts its
+  recency check, instead of hard-failing — without ever marking that copy as verified-fresh.
+  This is what actually makes a `sync_mode="cached"` project keep working while disconnected.
+- **Petitio's first seam.** `Identity` (name + kind: human/agent/system) and an optional,
+  deliberately inert `requester` parameter on `Broker.check_injectable` — every caller is
+  currently allowed regardless of `requester`. Real role-based enforcement (a policy store, an
+  escalation-request flow modeled on Teleport's request→review→time-boxed-grant pattern,
+  researched and documented) is designed but intentionally not built this release.
+- **UI: two-zone backend picker.** Real backends (Local, GCP) and honest stubs never share a
+  click target — selecting a stub opens an explanatory modal and a pre-filled GitHub
+  adapter-request link instead of a config flow, per OSS adapter-marketplace research (Grafana/
+  Airbyte/dbt/Terraform Registry precedent).
+- **`docs/architecture.md`** — this repo's first adopter-facing architecture reference, with
+  four diagrams: the component model, ARCA's backend-selection precedence, Petitio today vs.
+  the designed future, and the request/resolve sequence.
+- New `.github/ISSUE_TEMPLATE/adapter-request.yaml` for requesting a new ARCA backend.
+
 ## [0.13.1] - 2026-08-14
 
 ### Added

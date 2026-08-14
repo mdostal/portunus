@@ -23,6 +23,30 @@ interface VaultBindingInfo {
   wif_audience: string;
 }
 
+// Two-zone treatment (portunus-swappable-trio, per OSS adapter-marketplace
+// research): real, clickable backends vs. honest stubs that never share a
+// click target with the real ones. A stub tile opens an explanatory modal
+// instead of calling /api/bindings -- for a secrets manager specifically, a
+// stub that LOOKS selectable/configured is a safety bug, not a cosmetic gap.
+const REAL_BACKENDS = [
+  { value: "local", label: "Local" },
+  { value: "gcp", label: "GCP" },
+];
+
+const STUB_BACKENDS = [
+  { value: "aws", label: "AWS Secrets Manager" },
+  { value: "vault", label: "HashiCorp Vault" },
+  { value: "infisical", label: "Infisical" },
+  { value: "doppler", label: "Doppler" },
+  { value: "onepassword", label: "1Password" },
+  { value: "azure", label: "Azure Key Vault" },
+];
+
+function adapterRequestUrl(backendLabel: string): string {
+  const title = encodeURIComponent(`[Adapter Request]: ${backendLabel}`);
+  return `https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml&title=${title}`;
+}
+
 interface DiscoverRegisterResult {
   registered: string[];
   conflicts: string[];
@@ -138,6 +162,7 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
   const [conflictNote, setConflictNote] = useState<string | null>(null);
   const [binding, setBinding] = useState<VaultBindingInfo | null>(null);
   const [bindingBusy, setBindingBusy] = useState(false);
+  const [stubModal, setStubModal] = useState<{ value: string; label: string } | null>(null);
 
   async function load(p: string) {
     if (!p) return;
@@ -267,20 +292,36 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
       )}
 
       {binding && (
-        <div className="form-row">
-          <label className="form-field">
-            <span>Vault backend</span>
-            <select
-              className="field"
-              value={binding.backend}
-              disabled={bindingBusy}
-              onChange={(e) => updateBinding("backend", e.target.value)}
-            >
-              <option value="local">Local</option>
-              <option value="gcp">GCP</option>
-              <option value="aws">AWS (not yet implemented)</option>
-            </select>
-          </label>
+        <>
+          <div className="backend-picker">
+            <span className="eyebrow">Vault backend</span>
+            <div className="backend-zone backend-zone-real">
+              {REAL_BACKENDS.map((b) => (
+                <button
+                  key={b.value}
+                  type="button"
+                  className={`btn ${binding.backend === b.value ? "solid" : "quiet"}`}
+                  disabled={bindingBusy}
+                  onClick={() => updateBinding("backend", b.value)}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+            <div className="backend-zone backend-zone-stub">
+              {STUB_BACKENDS.map((b) => (
+                <button
+                  key={b.value}
+                  type="button"
+                  className="btn quiet backend-stub-tile"
+                  onClick={() => setStubModal(b)}
+                  title={`${b.label} -- not yet implemented`}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="form-field">
             <span>Sync mode</span>
             <select
@@ -293,6 +334,31 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
               <option value="cached">Cached</option>
             </select>
           </label>
+        </>
+      )}
+
+      {stubModal && (
+        <div className="modal-backdrop" onClick={() => setStubModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>{stubModal.label}</h3>
+              <button type="button" className="btn quiet" onClick={() => setStubModal(null)}>
+                Close
+              </button>
+            </div>
+            <p className="modal-note">
+              This adapter exists in code but does not yet talk to real {stubModal.label}.
+              Selecting it will not protect your secret.
+            </p>
+            <a
+              className="btn solid"
+              href={adapterRequestUrl(stubModal.label)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Request this adapter on GitHub →
+            </a>
+          </div>
         </div>
       )}
 

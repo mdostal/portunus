@@ -1,0 +1,53 @@
+name: New ARCA adapter request
+description: Request a new vault backend for Portunus's ARCA layer
+title: "[Adapter Request]: <name-of-backend>"
+labels: ["area/arca", "type/adapter-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for requesting a new ARCA backend. We review these regularly but can't
+        promise any given one gets built — the fastest path is often contributing it
+        yourself. Please check existing requests before filing a new one so we can gauge
+        real demand instead of splitting votes across duplicates.
+  - type: input
+    id: backend_name
+    attributes:
+      label: Backend name
+      description: Which service/product? (e.g. Azure Key Vault, 1Password, Doppler)
+      placeholder: e.g. HashiCorp Vault
+    validations:
+      required: true
+  - type: textarea
+    id: auth_model
+    attributes:
+      label: Authentication model
+      description: >
+        How would Portunus authenticate to it? Federated/keyless (WIF-style,
+        preferred) is our default posture, but static long-lived credentials or
+        OAuth are fine to note if that's what the product supports. If you don't
+        know, say so — we'll figure it out.
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What's the concrete team/workload need? Not an abstract "would be nice."
+    validations:
+      required: true
+  - type: checkboxes
+    id: read_access_needed
+    attributes:
+      label: Access needed
+      options:
+        - label: I need Portunus to discover/enumerate secrets that already exist in this provider
+        - label: I need Portunus to create new secrets in this provider (not supported by any adapter yet, including our real ones)
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to help build or test this adapter
+        - label: I'm affiliated with the vendor/product this integrates with
+        - label: This is for commercial/enterprise use
