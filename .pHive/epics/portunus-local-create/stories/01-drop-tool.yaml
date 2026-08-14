@@ -1,0 +1,110 @@
+id: 01-drop-tool
+epic: portunus-local-create
+title: portunus_drop MCP tool -- highest-scrutiny story
+status: pending
+complexity: high
+methodology: tdd
+depends_on: []
+
+description: |
+  The create-side counterpart to story 04/05 of portunus-mcp-server. portunus_drop(name,
+  sm_name, value, scope="", kind="", provider="", project="", env="", tags=None, description="",
+  purpose="", injected_as=None, group="", related=None) -> dict. Mirrors cmd_drop exactly:
+  backend-gate on hasattr(backend, "store"), registry.add(..., state="dropped"),
+  backend.store(sm_name, value), del value, broker.audit.append("drop", sm_name, "stored").
+  Returns {"name", "sm_name", "state"} only -- never the value, on any path.
+
+  This is the epic's designated highest-scrutiny story, mirroring portunus_resolve_exec's
+  three-layer review from portunus-mcp-server: AST-level check, line-by-line review, explicit
+  docstring caller-responsibility note. Unlike resolve_exec (value flows OUT, must never
+  return), this tool's value flows IN as an argument -- the checkable claim is narrower and
+  different: no RETURN statement or exception-handler dict may reference the name `value`
+  (design-discussion.md grill H2). `value` legitimately appears in the function body via
+  `backend.store(ref.sm_name, value)` and `del value` -- the AST check targets Return nodes
+  specifically, not "value never appears in source."
+
+acceptance_criteria:
+  - "Given a fresh registry, when portunus_drop is called with name/sm_name/value only, then a new Reference lands at state=dropped with sm_name/name set correctly and the backend actually holds the value (verify via backend.access after a state=enabled promotion in the test, never by reading the tool's return)"
+  - "Given the full metadata field set (scope/kind/provider/project/env/tags/description/purpose/injected_as/group/related), when portunus_drop is called with all of them, then registry.add receives every field un-mangled -- tags/injected_as as native dicts, related as a native list, no string-splitting/parsing of any of them (grill H1)"
+  - "Given PORTUNUS_BACKEND=gcloud or PORTUNUS_BACKEND=aws, when portunus_drop is called, then it returns {\"error\": \"drop requires the local-encrypted backend (unset PORTUNUS_BACKEND or set it to unset/local)\"} -- the identical message cmd_drop already uses -- and registry.add is never called (no half-registered reference)"
+  - "Given portunus_drop succeeds, when its return value is inspected, then it is exactly {\"name\", \"sm_name\", \"state\"} -- no `value` key, no key containing the input value as a substring, on this or any other path"
+  - "Given portunus_drop's full source (every branch), when inspected via AST, then no `Return` node's expression references the name `value` -- only ref.name/ref.sm_name/ref.state or fixed string literals"
+  - "Given the docstring, when read, then it explicitly instructs the calling agent not to echo the value back to the human/its own output after a successful store (grill H3) -- Portunus's own return never contains it, but nothing else stops the caller from re-printing what it already had"
+  - "Given a duplicate name (registry.add would raise), when portunus_drop is called, then a clean {\"error\": ...} is returned, never a raw traceback, and backend.store is never called for the failed registration"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm cmd_drop's exact call sequence (cli.py:556-599) and Registry.add()'s full signature/exceptions to mirror precisely.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the happy path (minimal + full metadata), the backend gate, the return-shape guarantee, the AST-level never-returns-value check, the docstring caller-echo instruction, and the duplicate-name error path.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Implement portunus_drop mirroring cmd_drop's logic exactly, reusing registry.add/backend.store/broker.audit.append -- no reimplementation.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Line-by-line review of every return statement and except-clause -- the epic's designated highest-scrutiny story, mirroring portunus_resolve_exec's review depth from portunus-mcp-server.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: "cmd_drop (lines 556-599) -- the exact logic this tool mirrors: backend gate, registry.add, backend.store, del value, audit.append"
+    - path: src/portunus/registry.py
+      purpose: "Registry.add()'s full signature/field set (name, sm_name, scope, kind, state, approval, provider, project, env, tags, description, purpose, injected_as, group, related) and its KeyError-on-duplicate behavior"
+    - path: src/portunus/localvault.py
+      purpose: "LocalEncryptedBackend.store() (line 80) -- the only backend with a store() method; hasattr(backend, \"store\") is the existing gate cmd_drop already uses"
+    - path: src/portunus/mcp_server.py
+      purpose: "Existing tools' patterns to match: _build() usage, error-dict shape, docstring style (see portunus_resolve_to_tempfile/portunus_resolve_exec for the caller-responsibility docstring precedent)"
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_drop tool
+  - file: tests/test_mcp_server.py
+    change: Add tests including the AST-level source-inspection guarantee
+
+code_examples:
+  - title: cmd_drop's exact reference-creation + store + scrub sequence
+    file: src/portunus/cli.py
+    snippet: |
+      ref = registry.add(
+          args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
+          provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
+          description=args.description, purpose=args.purpose, injected_as=injected_as,
+          group=args.group, related=related,
+      )
+      backend.store(ref.sm_name, value)
+      del value  # scrub our local reference promptly
+      broker.audit.append("drop", ref.sm_name, "stored")
+
+design_decisions:
+  - decision: "tags/injected_as are native dict, related is a native list -- no CLI-style comma-separated string parsing"
+    rationale: "grill H1 -- MCP tool arguments are structured JSON, not shell flags; reusing _parse_tags/_parse_related would copy a CLI-transport detail that doesn't apply here"
+  - decision: "AST check targets Return nodes specifically for the name `value`, not 'value absent from source'"
+    rationale: "grill H2 -- value legitimately appears in backend.store(ref.sm_name, value) and del value; the checkable claim is narrower and precise: no RETURN expression references it"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The one place in this epic's tool surface where a value flows IN rather than out -- three-layer scrutiny (AST test + line-by-line review + explicit caller-echo docstring instruction) per design-discussion.md §4/§6, mirroring portunus_resolve_exec's review depth from the prior epic."
+  - concern: audit-chain-integrity
+    action: "Goes through the existing broker.audit.append(\"drop\", ref.sm_name, \"stored\") call -- SM name only, identical to cmd_drop's own audit entry, unchanged mechanism."
+
+risks:
+  - severity: critical
+    description: A coding mistake in portunus_drop's return/exception paths could echo the newly-stored value back into the tool's own result
+    mitigation: Three-layer scrutiny (AST test targeting Return nodes + line-by-line review + explicit docstring instruction) per cross_cutting above; implementation kept as close to cmd_drop's already-reviewed logic as possible -- no new logic invented, only a new entry point onto existing, tested primitives (registry.add, backend.store, broker.audit.append)
+
+references:
+  - path: .pHive/epics/portunus-local-create/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- portunus_drop (create)"
+  - path: .pHive/epics/portunus-local-create/docs/grill-record.md
+    relevant_excerpt: "H1 (native types, not string parsing), H2 (precise AST claim), H3 (docstring caller-echo instruction)"
