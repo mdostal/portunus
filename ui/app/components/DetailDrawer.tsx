@@ -42,6 +42,7 @@ export default function DetailDrawer({
   });
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveStatus, setMoveStatus] = useState<string | null>(null);
+  const [rotationStatus, setRotationStatus] = useState<{ status: string; account: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +59,32 @@ export default function DetailDrawer({
       cancelled = true;
     };
   }, [reference.sm_name]);
+
+  // Auto-rotate button state is DERIVED from the rotation-provenance
+  // registry, not hardcoded -- stays disabled today (every adapter is a
+  // stub) but would light up automatically once a real one ships, no UI
+  // change needed then. A missing/unconfigured provider is absent from
+  // the response entirely, which reads the same as status !== "real".
+  useEffect(() => {
+    let cancelled = false;
+    if (!reference.provider) {
+      setRotationStatus(null);
+      return;
+    }
+    fetch(`/api/rotation-status?provider=${encodeURIComponent(reference.provider)}`)
+      .then((r) => r.json())
+      .then((data: Record<string, { status: string; account: string }>) => {
+        if (!cancelled) setRotationStatus(data[reference.provider] || null);
+      })
+      .catch(() => {
+        if (!cancelled) setRotationStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reference.provider]);
+
+  const autoRotateReal = rotationStatus?.status === "real";
 
   async function submitMove(e: React.FormEvent) {
     e.preventDefault();
@@ -152,11 +179,22 @@ export default function DetailDrawer({
         <button className="btn quiet" onClick={() => setMoveOpen((v) => !v)}>
           Move…
         </button>
-        {/* Inert by construction (portunus-vault-routing) -- no route, no
-            handler. Placeholder for real key-rotation integrations (auto-
-            roll via a provider's own API, e.g. Vercel/GCP), a separate,
-            not-yet-built direction from the manual "Rotate…" flow above. */}
-        <button className="btn quiet" disabled title="Automated key rotation -- coming soon">
+        {/* Disabled state is DERIVED from the RotationAdapter registry
+            (portunus-metadata-and-rotation-provenance), not hardcoded --
+            every provider is a stub today so this stays disabled/inert in
+            practice, but it's now real backend state, not a fixed
+            attribute. Still no handler even when real: wiring an actual
+            click-to-rotate action is future work once a real adapter
+            exists to call. */}
+        <button
+          className="btn quiet"
+          disabled={!autoRotateReal}
+          title={
+            autoRotateReal
+              ? `Automated key rotation via ${reference.provider} -- account ${rotationStatus?.account || "-"}`
+              : "Automated key rotation -- no real adapter for this provider yet"
+          }
+        >
           Auto-rotate…
         </button>
       </div>

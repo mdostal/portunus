@@ -21,11 +21,20 @@ export async function POST(req: NextRequest) {
   }
 
   const args = ["drop", name, smName, "--stdin"];
+  if (body.kind) args.push("--kind", String(body.kind));
+  if (body.scope) args.push("--scope", String(body.scope));
+  if (body.backend) args.push("--backend", String(body.backend));
   if (body.provider) args.push("--provider", String(body.provider));
   if (body.project) args.push("--project", String(body.project));
   if (body.env) args.push("--env", String(body.env));
   const tags = tagsToArg(body.tags);
   if (tags) args.push("--tags", tags);
+  if (body.description) args.push("--description", String(body.description));
+  if (body.purpose) args.push("--purpose", String(body.purpose));
+  const injectedAs = tagsToArg(body.injected_as);
+  if (injectedAs) args.push("--injected-as", injectedAs);
+  if (body.group) args.push("--group", String(body.group));
+  if (body.related) args.push("--related", String(body.related));
 
   const result = await runPortunus(args, value + "\n");
 

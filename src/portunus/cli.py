@@ -27,6 +27,7 @@ from .backend import (
     VaultBinding, VaultServerBackend, load_vault_bindings, save_vault_bindings,
 )
 from .paths import home
+from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -652,7 +653,7 @@ def cmd_drop(args) -> int:
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
         provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related,
+        group=args.group, related=related, backend=args.backend,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -981,6 +982,49 @@ def cmd_bindings_set(args) -> int:
     return 0
 
 
+def cmd_rotation_bindings_set(args) -> int:
+    """Upsert one provider's rotation binding -- only explicitly-passed
+    fields change (mirrors cmd_bindings_set's own only-passed-fields-change
+    pattern). `account` is a free-text context hint (e.g. a Vercel team
+    slug) -- never a credential."""
+    bindings = load_rotation_bindings()
+    existing = bindings.get(args.provider)
+    status = args.status if args.status else (existing.status if existing else "stub")
+    account = args.account if args.account else (existing.account if existing else "")
+    bindings[args.provider] = RotationBinding(provider=args.provider, status=status, account=account)
+    save_rotation_bindings(bindings)
+    print(f"rotation binding set: {args.provider} (status={status}, account={account or '-'})")
+    return 0
+
+
+def cmd_rotation_bindings_show(args) -> int:
+    """Show one or all rotation bindings -- status/account only, never a
+    credential (there is no credential to show; rotation adapters resolve
+    their own admin token via the normal boundary-only resolver)."""
+    bindings = load_rotation_bindings()
+    if args.provider:
+        b = bindings.get(args.provider)
+        if b is None:
+            if args.json:
+                print(json.dumps({}))
+            else:
+                print(f"no rotation binding configured for {args.provider}")
+            return 0
+        bindings = {args.provider: b}
+    if args.json:
+        print(json.dumps({
+            provider: {"status": b.status, "account": b.account}
+            for provider, b in bindings.items()
+        }))
+        return 0
+    if not bindings:
+        print("(no rotation bindings configured)")
+        return 0
+    for provider, b in sorted(bindings.items()):
+        print(f"  {provider}  status={b.status}  account={b.account or '-'}")
+    return 0
+
+
 def cmd_bindings_show(args) -> int:
     """Show one or all vault bindings -- real account/wif_audience values,
     not presence-only. A local CLI reading the operator's own 0600
@@ -1280,6 +1324,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     dr.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     dr.add_argument("--related", default="", help="comma-separated reference names")
+    dr.add_argument(
+        "--backend",
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),
+        default="",
+        help="override which backend this one reference uses (default: '' -- follow the "
+             "project's VaultBinding/PORTUNUS_BACKEND as normal)",
+    )
     src = dr.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument("--value-file", help="read the value from this local file")
@@ -1380,6 +1431,24 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_show.add_argument("project", nargs="?", default="")
     bnd_show.add_argument("--json", action="store_true")
     bnd_show.set_defaults(func=cmd_bindings_show)
+
+    rbnd = sub.add_parser(
+        "rotation-bindings",
+        help="configure per-provider rotation provenance (status/account) -- "
+             "every provider is a stub today, this is config only, no real rotation ever fires",
+    )
+    rbnd_sub = rbnd.add_subparsers(dest="action", required=True)
+    rbnd_set = rbnd_sub.add_parser("set", help="upsert a provider's rotation binding -- only passed fields change")
+    rbnd_set.add_argument("provider", help="e.g. vercel, github, stripe")
+    rbnd_set.add_argument("--status", choices=("", "real", "stub"), default="",
+                           help="whether a real RotationAdapter exists for this provider (default: stub)")
+    rbnd_set.add_argument("--account", default="",
+                           help="free-text rotation context, e.g. a Vercel team slug or GitHub org")
+    rbnd_set.set_defaults(func=cmd_rotation_bindings_set)
+    rbnd_show = rbnd_sub.add_parser("show", help="show one or all rotation bindings")
+    rbnd_show.add_argument("provider", nargs="?", default="")
+    rbnd_show.add_argument("--json", action="store_true")
+    rbnd_show.set_defaults(func=cmd_rotation_bindings_show)
 
     sy = sub.add_parser(
         "sync", help="force a recency check (and re-fetch if stale) for every cached-mode reference in a project",

@@ -19,10 +19,18 @@ export default function AddSecretForm({
   const [draft, setDraft] = useState<AddSecretDraft>({
     name: initial?.name || "",
     sm_name: initial?.sm_name || "",
+    kind: initial?.kind || "",
+    scope: initial?.scope || "",
+    backend: initial?.backend || "",
     provider: initial?.provider || "",
     project: initial?.project || "",
     env: initial?.env || "",
     tags: initial?.tags || "",
+    description: initial?.description || "",
+    purpose: initial?.purpose || "",
+    injected_as: initial?.injected_as || "",
+    group: initial?.group || "",
+    related: initial?.related || "",
   });
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -84,6 +92,34 @@ export default function AddSecretForm({
         </label>
         <div className="form-row">
           <label className="form-field">
+            <span>kind</span>
+            <input className="field" {...field("kind")} placeholder="anthropic" />
+          </label>
+          <label className="form-field">
+            <span>scope</span>
+            <input className="field" {...field("scope")} placeholder="shared" />
+          </label>
+          <label className="form-field">
+            <span>backend</span>
+            <select
+              className="field"
+              value={draft.backend}
+              onChange={(e) => setDraft((d) => ({ ...d, backend: e.target.value }))}
+            >
+              <option value="">(project default)</option>
+              <option value="local">local</option>
+              <option value="gcp">gcp</option>
+              <option value="aws">aws</option>
+              <option value="vault">vault (stub)</option>
+              <option value="infisical">infisical (stub)</option>
+              <option value="doppler">doppler (stub)</option>
+              <option value="onepassword">onepassword (stub)</option>
+              <option value="azure">azure (stub)</option>
+            </select>
+          </label>
+        </div>
+        <div className="form-row">
+          <label className="form-field">
             <span>provider</span>
             <input className="field" {...field("provider")} placeholder="vercel" />
           </label>
@@ -100,6 +136,30 @@ export default function AddSecretForm({
           <span>tags (k=v,k2=v2)</span>
           <input className="field" {...field("tags")} placeholder="team=platform" />
         </label>
+        <div className="form-row">
+          <label className="form-field">
+            <span>description</span>
+            <input className="field" {...field("description")} placeholder="what this secret is" />
+          </label>
+          <label className="form-field">
+            <span>purpose</span>
+            <input className="field" {...field("purpose")} placeholder="what it's for" />
+          </label>
+        </div>
+        <label className="form-field">
+          <span>injected_as (env=target,env2=target2)</span>
+          <input className="field" {...field("injected_as")} placeholder="prod=env:STRIPE_KEY" />
+        </label>
+        <div className="form-row">
+          <label className="form-field">
+            <span>group (hierarchical path)</span>
+            <input className="field" {...field("group")} placeholder="project-y/supabase/auth" />
+          </label>
+          <label className="form-field">
+            <span>related (comma-separated)</span>
+            <input className="field" {...field("related")} placeholder="other-ref-name" />
+          </label>
+        </div>
         <label className="form-field">
           <span>value</span>
           <input
