@@ -149,6 +149,20 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 .btn.quiet { border-color: var(--steel-faint); color: var(--steel); }
 .btn:disabled { opacity: 0.5; cursor: default; }
 
+/* two-zone backend picker (portunus-swappable-trio) -- real vs. stub
+   adapters never share a click target or a visual treatment. */
+.backend-picker { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.5rem 0; }
+.backend-zone { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.backend-zone-stub {
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--steel-faint);
+}
+.backend-stub-tile {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.backend-stub-tile:hover { opacity: 0.8; }
+
 .layout { flex: 1; display: flex; gap: 1rem; padding: 1rem 1.2rem; align-items: flex-start; }
 .main { flex: 1; min-width: 0; }
 
