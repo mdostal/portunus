@@ -328,6 +328,23 @@ def portunus_drop(
     return {"name": ref.name, "sm_name": ref.sm_name, "state": ref.state}
 
 
+@mcp.tool()
+def portunus_state(name: str, state: str) -> dict:
+    """Change a reference's lifecycle state -- the harness-side counterpart
+    to `portunus state <name> <state>`. Valid states: enabled, locked,
+    dropped, revoked, requested. Typically used to promote a freshly
+    portunus_drop-ped secret (state=dropped) to state=enabled so it becomes
+    injectable. Pure metadata -- no backend, no value, ever touched."""
+    registry, *_ = _build()
+    try:
+        ref = registry.set_state(name, state)
+    except KeyError:
+        return {"error": f"unknown reference: {name}"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"name": ref.name, "state": ref.state}
+
+
 def run_server() -> None:
     """Entry point for `portunus mcp` -- starts the stdio MCP server."""
     mcp.run()

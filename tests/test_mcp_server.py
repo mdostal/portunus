@@ -558,3 +558,35 @@ def test_drop_docstring_instructs_caller_not_to_echo_value():
     from portunus import mcp_server
     doc = (mcp_server.portunus_drop.__doc__ or "").lower()
     assert "echo" in doc
+
+
+# --- story 02 (portunus-local-create): portunus_state lifecycle tool ----
+
+def test_state_transitions_reference(home):
+    from portunus import mcp_server, Registry
+    reg = Registry()
+    reg.add("x", "sm-x", state="dropped")
+    result = mcp_server.portunus_state(name="x", state="enabled")
+    assert result == {"name": "x", "state": "enabled"}
+    assert Registry().require("x").state == "enabled"
+
+
+def test_state_unknown_reference(home):
+    from portunus import mcp_server
+    result = mcp_server.portunus_state(name="nonexistent", state="enabled")
+    assert result == {"error": "unknown reference: nonexistent"}
+
+
+def test_state_invalid_state(home):
+    from portunus import mcp_server, Registry
+    reg = Registry()
+    reg.add("x", "sm-x")
+    result = mcp_server.portunus_state(name="x", state="not-a-real-state")
+    assert "error" in result
+    assert Registry().require("x").state == "enabled"
+
+
+def test_state_no_backend_access():
+    from portunus import mcp_server
+    code = _no_backend_access(mcp_server.portunus_state)
+    assert ".access(" not in code
