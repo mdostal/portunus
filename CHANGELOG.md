@@ -4,6 +4,18 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-08-14
+
+### Fixed
+
+- **Desktop app: sidecar-spawned `portunus` CLI calls could hang indefinitely.** Found by
+  actually installing and running the app against the real vault instead of only scratch
+  vaults. The spawned CLI subprocess's working directory defaulted to wherever the sidecar
+  process happened to be running from — inside the installed app, that's the bundled Next.js
+  build's own `node_modules` tree, and Python's import system treats the working directory as
+  an implicit module search path, so a filesystem scan over that large bundled tree could hang.
+  Fixed by pinning the subprocess's working directory explicitly instead of inheriting it.
+
 ## [0.16.0] - 2026-08-14
 
 ### Added
