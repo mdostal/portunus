@@ -272,6 +272,79 @@ def portunus_resolve_exec(argv: List[str], name: str = "", tags: Optional[dict] 
     return {"stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}
 
 
+@mcp.tool()
+def portunus_drop(
+    name: str,
+    sm_name: str,
+    value: str,
+    scope: str = "",
+    kind: str = "",
+    provider: str = "",
+    project: str = "",
+    env: str = "",
+    tags: Optional[dict] = None,
+    description: str = "",
+    purpose: str = "",
+    injected_as: Optional[dict] = None,
+    group: str = "",
+    related: Optional[list] = None,
+) -> dict:
+    """Create a new LOCAL-VAULT secret -- the harness-side counterpart to
+    `portunus drop`. Restricted to the local-encrypted backend only, same as
+    the CLI (fails closed with the identical message if PORTUNUS_BACKEND is
+    gcloud/aws -- Portunus has no write path into GCP Secret Manager or AWS
+    yet, that's a separate, not-yet-built capability). Lands at
+    state="dropped" (fail-closed); call portunus_state(name, "enabled")
+    separately to make it injectable. `tags`/`injected_as` are plain dicts,
+    `related` is a plain list of reference names -- no CLI-style comma-
+    separated string parsing.
+
+    `value` is the one place in this tool's surface where a secret flows IN
+    from your own context rather than out of Portunus -- that's inherent to
+    being handed a brand-new secret to store, not a boundary violation.
+    Portunus's own guarantee: this tool's return never contains the value,
+    it is never logged, and it never appears in the audit chain. You are
+    responsible for not echoing the value back to the human or your own
+    output after a successful store -- Portunus can't undo you already
+    having it."""
+    registry, _audit, broker, resolver = _build()
+    backend = resolver.backend
+    if not hasattr(backend, "store"):
+        return {
+            "error": "drop requires the local-encrypted backend "
+            "(unset PORTUNUS_BACKEND or set it to unset/local)"
+        }
+    if not value:
+        return {"error": "empty secret value; nothing dropped"}
+    ref = registry.add(
+        name, sm_name, scope=scope, kind=kind, state="dropped",
+        provider=provider, project=project, env=env, tags=tags,
+        description=description, purpose=purpose, injected_as=injected_as,
+        group=group, related=related,
+    )
+    backend.store(ref.sm_name, value)
+    del value
+    broker.audit.append("drop", ref.sm_name, "stored")
+    return {"name": ref.name, "sm_name": ref.sm_name, "state": ref.state}
+
+
+@mcp.tool()
+def portunus_state(name: str, state: str) -> dict:
+    """Change a reference's lifecycle state -- the harness-side counterpart
+    to `portunus state <name> <state>`. Valid states: enabled, locked,
+    dropped, revoked, requested. Typically used to promote a freshly
+    portunus_drop-ped secret (state=dropped) to state=enabled so it becomes
+    injectable. Pure metadata -- no backend, no value, ever touched."""
+    registry, *_ = _build()
+    try:
+        ref = registry.set_state(name, state)
+    except KeyError:
+        return {"error": f"unknown reference: {name}"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"name": ref.name, "state": ref.state}
+
+
 def run_server() -> None:
     """Entry point for `portunus mcp` -- starts the stdio MCP server."""
     mcp.run()

@@ -1,0 +1,28 @@
+name: portunus-local-create
+title: Local-only secret creation through MCP (portunus_drop + portunus_state)
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Closes the create-side gap in the MCP surface shipped as portunus-mcp-server (v0.11.0), which
+  was read/inject-only. Adds portunus_drop (create a local-vault secret -- LocalEncryptedBackend
+  only, mirrors `portunus drop` exactly) and portunus_state (lifecycle transition, mirrors
+  `portunus state`), so a handed-off agent instance can create and organize new local secrets
+  end-to-end without shelling out to the CLI. GCP Secret Manager creation, an AWS write path, and
+  bidirectional local/cloud sync are explicitly out of scope -- deferred to later epics per
+  explicit user direction ("we should start local and build").
+
+stories:
+  - id: 01-drop-tool
+    title: portunus_drop MCP tool -- highest-scrutiny story
+    complexity: high
+    depends_on: []
+  - id: 02-state-tool
+    title: portunus_state MCP tool
+    complexity: low
+    depends_on: []
+  - id: 03-closeout
+    title: Docs, version bump, live local smoke test
+    complexity: medium
+    depends_on: [01-drop-tool, 02-state-tool]

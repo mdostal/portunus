@@ -463,3 +463,130 @@ def test_resolve_exec_capturing_runner_never_leaks_on_exception():
     assert ".cmd" not in src
     assert ".output" not in src
     assert ".args" not in src
+
+
+# --- story 01 (portunus-local-create): portunus_drop create tool --------
+
+def test_drop_minimal_stores_value(home, monkeypatch):
+    from portunus import mcp_server
+    result = mcp_server.portunus_drop(name="x", sm_name="sm-x", value="the-value")
+    assert result == {"name": "x", "sm_name": "sm-x", "state": "dropped"}
+
+    from portunus import Registry
+    reg = Registry()
+    reg.set_state("x", "enabled")
+    from portunus.localvault import LocalEncryptedBackend
+    backend = LocalEncryptedBackend()
+    assert backend.access("sm-x") == "the-value"
+
+
+def test_drop_full_metadata_passed_through_unmangled(home):
+    from portunus import mcp_server, Registry
+    result = mcp_server.portunus_drop(
+        name="gig-tracker-stripe-key", sm_name="STRIPE_KEY", value="sk_test_123",
+        scope="personal", kind="api-key", provider="local", project="gig-tracker",
+        env="dev", tags={"team": "solo"}, description="Stripe test key",
+        purpose="payments", injected_as={"dev": "env:STRIPE_KEY"},
+        group="gig-tracker/stripe", related=["gig-tracker-stripe-webhook"],
+    )
+    assert result == {"name": "gig-tracker-stripe-key", "sm_name": "STRIPE_KEY", "state": "dropped"}
+    ref = Registry().require("gig-tracker-stripe-key")
+    assert ref.tags == {"team": "solo"}
+    assert ref.injected_as == {"dev": "env:STRIPE_KEY"}
+    assert ref.related == ["gig-tracker-stripe-webhook"]
+    assert ref.group == "gig-tracker/stripe"
+    assert ref.description == "Stripe test key"
+    assert ref.purpose == "payments"
+    assert ref.project == "gig-tracker"
+    assert ref.env == "dev"
+
+
+def test_drop_refuses_non_local_backend(home, monkeypatch):
+    from portunus import mcp_server, Registry
+    monkeypatch.setenv("PORTUNUS_BACKEND", "gcloud")
+    result = mcp_server.portunus_drop(name="x", sm_name="sm-x", value="the-value")
+    assert result == {
+        "error": "drop requires the local-encrypted backend "
+        "(unset PORTUNUS_BACKEND or set it to unset/local)"
+    }
+    assert "x" not in Registry()
+
+
+def test_drop_empty_value_refused(home):
+    from portunus import mcp_server, Registry
+    result = mcp_server.portunus_drop(name="x", sm_name="sm-x", value="")
+    assert result == {"error": "empty secret value; nothing dropped"}
+    assert "x" not in Registry()
+
+
+def test_drop_overwrites_on_duplicate_name_matching_cli_behavior(home):
+    """Registry.add() is documented as 'Register (or overwrite) a reference'
+    -- it does not raise on a duplicate name. portunus_drop mirrors cmd_drop
+    exactly and does not invent a new duplicate guard."""
+    from portunus import mcp_server, Registry
+    mcp_server.portunus_drop(name="x", sm_name="sm-x", value="first")
+    result = mcp_server.portunus_drop(name="x", sm_name="sm-x-v2", value="second")
+    assert result == {"name": "x", "sm_name": "sm-x-v2", "state": "dropped"}
+    assert Registry().require("x").sm_name == "sm-x-v2"
+
+
+def test_drop_never_returns_a_value_source_check():
+    """AST-level: no Return node in portunus_drop's body may reference the
+    name `value` -- value legitimately appears elsewhere in the body
+    (backend.store(ref.sm_name, value), del value), so this checks Return
+    nodes specifically rather than asserting `value` is absent from source
+    entirely (grill H2)."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_drop))
+    tree = ast.parse(src)
+    func = tree.body[0]
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return) and node.value is not None:
+            names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+            assert "value" not in names, f"Return references the `value` name: {ast.unparse(node.value)}"
+
+
+def test_drop_docstring_instructs_caller_not_to_echo_value():
+    """grill H3: the docstring must explicitly tell the calling agent not to
+    re-echo the value back to the human after a successful store -- Portunus's
+    own return never contains it, but that's not the same as the caller
+    behaving afterward."""
+    from portunus import mcp_server
+    doc = (mcp_server.portunus_drop.__doc__ or "").lower()
+    assert "echo" in doc
+
+
+# --- story 02 (portunus-local-create): portunus_state lifecycle tool ----
+
+def test_state_transitions_reference(home):
+    from portunus import mcp_server, Registry
+    reg = Registry()
+    reg.add("x", "sm-x", state="dropped")
+    result = mcp_server.portunus_state(name="x", state="enabled")
+    assert result == {"name": "x", "state": "enabled"}
+    assert Registry().require("x").state == "enabled"
+
+
+def test_state_unknown_reference(home):
+    from portunus import mcp_server
+    result = mcp_server.portunus_state(name="nonexistent", state="enabled")
+    assert result == {"error": "unknown reference: nonexistent"}
+
+
+def test_state_invalid_state(home):
+    from portunus import mcp_server, Registry
+    reg = Registry()
+    reg.add("x", "sm-x")
+    result = mcp_server.portunus_state(name="x", state="not-a-real-state")
+    assert "error" in result
+    assert Registry().require("x").state == "enabled"
+
+
+def test_state_no_backend_access():
+    from portunus import mcp_server
+    code = _no_backend_access(mcp_server.portunus_state)
+    assert ".access(" not in code

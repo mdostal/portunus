@@ -343,6 +343,8 @@ claude mcp add --scope user portunus -- portunus mcp
 | `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |
 | `portunus_resolve_to_tempfile(name="", tags=None)` | A `0600` temp file **path** holding the resolved value — never the value itself |
 | `portunus_resolve_exec(argv, name="", tags=None)` | `{stdout, stderr, returncode}` from running `argv` with a `{{secret}}` marker substituted — never the resolved command line |
+| `portunus_drop(name, sm_name, value, ...)` | Create a new **local-vault-only** secret — `{name, sm_name, state}`, never the value back |
+| `portunus_state(name, state)` | Change a reference's lifecycle state — `{name, state}` |
 
 The injection tools use the same **dual addressing** as the CLI's own `inject`/`ask`: give an
 exact `name` (from a prior `portunus_list`/`portunus_tree` call) or `tags` — never raw
@@ -351,6 +353,20 @@ write a literal `{{secret}}` marker wherever the value belongs, Portunus builds 
 placeholder and runs the command through a capturing `subprocess.run` (30s timeout) instead of
 the CLI's default `execvp`. A non-zero exit is returned normally, not treated as a tool-level
 error — that's the wrapped command's own semantics, not Portunus's.
+
+`portunus_drop` is the create-side counterpart, letting a handed-off agent instance set up a new
+project's secrets end-to-end without shelling out to the CLI — but **local-vault only**: it
+fails closed with the same message the CLI's own `drop` uses if the active backend is
+`gcloud`/`aws` (Portunus has no write path into GCP Secret Manager or AWS yet — creating a real
+cloud-side secret is a separate, not-yet-built capability). It lands new references at
+`state=dropped` (fail-closed, same as the CLI); `portunus_state(name, "enabled")` is the separate
+explicit step that makes one injectable. `value` is the one argument, across every tool in this
+server, that flows *in* from the calling agent's own context rather than out of Portunus — that's
+inherent to being handed a brand-new secret to store, not a boundary violation. Portunus's
+guarantee there is narrower but still absolute: the value never appears in `portunus_drop`'s own
+return, is never logged, and never lands in the audit chain — but the calling agent is
+responsible for not re-echoing it to the human afterward, the same way it's responsible for not
+reading a `resolve_to_tempfile` path back into its own output.
 
 **Worked example — "give them the personal Gemini key," without ever handing over the key:**
 
