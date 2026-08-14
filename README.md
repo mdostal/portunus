@@ -10,8 +10,8 @@ their own (Latin, theme-consistent) names:
 | Component | Role | Where it lives today |
 |---|---|---|
 | **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project". **Three entry points, one implementation**: the `portunus` CLI, the standalone UI's API routes, and an MCP stdio server for other agents/harnesses | `resolver.py` + the `portunus` CLI (`cli.py`) + `mcp_server.py` (`portunus mcp`) |
-| **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice: local-encrypted (default), GCP Secret Manager (keyless, via Workload Identity Federation, optionally with a recency-aware pull-only sync-down cache), AWS Secrets Manager (interface-conformant stub — no real AWS calls yet) | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `AWSSecretsManagerBackend`, `VaultBinding`); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
-| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard) | `broker.py` |
+| **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice. **Real today:** local-encrypted (default), GCP Secret Manager (keyless via WIF, optionally with a recency-aware pull-only sync-down cache that survives a real network outage by serving the last-known-good cached value). **Honest stubs, not yet real:** AWS Secrets Manager, HashiCorp Vault, Infisical, Doppler, 1Password, Azure Key Vault — each fails closed with a clear error and a link to [request it](.github/ISSUE_TEMPLATE/adapter-request.yaml), never silently mis-routes. See `docs/architecture.md` for the full picture. | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `VaultBinding`, and the six stub classes); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **`Identity` + an optional `requester` parameter on `check_injectable` exist as a deliberately inert seam** — every caller is currently allowed regardless of `requester`; real role-based enforcement (a policy store, an escalation-request flow) is designed but not yet built. See `docs/architecture.md`. | `broker.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
 So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
@@ -516,23 +516,29 @@ src/portunus/
   registry.py    reference registry (name -> SM path); tags/provider/project/env; description/
                  purpose/injected_as metadata; list_by_project() browse query; no value field
   backend.py     ARCA — SecretBackend protocol; MockBackend (tests); GcloudBackend (keyless WIF,
-                 multi-project via VaultBinding); SyncingBackend (recency-aware sync-down cache);
-                 AWSSecretsManagerBackend (stub)
+                 multi-project via VaultBinding); SyncingBackend (recency-aware sync-down cache,
+                 falls back to the last cached value on a real connectivity failure);
+                 AWSSecretsManagerBackend/VaultServerBackend/InfisicalBackend/DopplerBackend/
+                 OnePasswordConnectBackend/AzureKeyVaultBackend (honest stubs, see docs/architecture.md)
   localvault.py  ARCA — LocalEncryptedBackend, the Stage 1 default (encrypted at rest)
   auth.py        keyless WIF/OIDC credential minting (GCP + AWS token exchange); never logs/
                  returns/prints minted credentials
   discover.py    ARCA discovery — read-only enumeration of a live provider project's secrets
                  (names/labels only); structurally cannot reach a value (no backend import)
-  broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit
+  broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit; Identity +
+                 an inert requester param on check_injectable (real enforcement not yet built)
   audit.py       tamper-evident hash-chain access log
   resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
   adapters.py    boundary injection adapters (env var, file, HTTP header, HTTP body)
   intent.py      semantic front door — natural language -> tag set + intent_kind
                  (fetch/add/rotate/list) (portunus ask)
   cli.py         OSTIARIUS — the `portunus` tool (incl. the harness-side `drop`)
+docs/architecture.md  adopter-facing reference: component diagram, ARCA backend-selection
+                 precedence, Petitio today-vs-tomorrow, the request/resolve sequence
 ui/              standalone localhost-only UI (Console / Vault Map / Ask Bar)
 .claude/skills/       thin Claude skills wrapping the CLI/MCP surface: portunus-ask (fetch),
                  portunus-drop (create, single/bulk), portunus-vault-setup (bindings/sync)
+.github/ISSUE_TEMPLATE/adapter-request.yaml  request a new ARCA backend
 manifest.json    Dostal plugin manifest (type: core, engine: tool)
 ```
 
