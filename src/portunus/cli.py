@@ -653,6 +653,60 @@ def cmd_drop(args) -> int:
     return 0
 
 
+def cmd_drop_bulk(args) -> int:
+    """Bulk counterpart to `drop` -- one JSON file of entries, each with the
+    same fields `drop` accepts (name/sm_name/value required). The backend
+    gate is checked once upfront; a malformed entry is reported under
+    "failed" and does not abort the rest of the batch. Never prints a value
+    on any path, including a failed entry's error message."""
+    registry, _, broker, resolver = _build()
+    backend = resolver.backend
+    if not hasattr(backend, "store"):
+        return _err(
+            "drop requires the local-encrypted backend "
+            "(unset PORTUNUS_BACKEND or set it to unset/local)"
+        )
+    try:
+        entries = json.loads(Path(args.entries_file).read_text())
+    except OSError as exc:
+        return _err(f"cannot read entries file: {exc}")
+    except json.JSONDecodeError as exc:
+        return _err(f"malformed JSON in entries file: {exc}")
+
+    created: list = []
+    failed: list = []
+    for entry in entries:
+        entry_name = entry.get("name", "")
+        try:
+            value = entry.get("value", "")
+            if not value:
+                raise ValueError("empty secret value; nothing dropped")
+            ref = registry.add(
+                entry_name, entry.get("sm_name", ""),
+                scope=entry.get("scope", ""), kind=entry.get("kind", ""), state="dropped",
+                provider=entry.get("provider", ""), project=entry.get("project", ""),
+                env=entry.get("env", ""), tags=entry.get("tags"),
+                description=entry.get("description", ""), purpose=entry.get("purpose", ""),
+                injected_as=entry.get("injected_as"), group=entry.get("group", ""),
+                related=entry.get("related"), backend=entry.get("backend", ""),
+            )
+            backend.store(ref.sm_name, value)
+            del value
+            broker.audit.append("drop", ref.sm_name, "stored")
+            created.append(ref.name)
+        except (ValueError, KeyError) as exc:
+            failed.append({"name": entry_name, "error": str(exc)})
+
+    if args.json:
+        print(json.dumps({"created": created, "failed": failed}))
+        return 0
+    for name in created:
+        print(f"  dropped  {name}")
+    for entry in failed:
+        print(f"  failed   {entry['name']}: {entry['error']}")
+    return 0
+
+
 def cmd_resolve(args) -> int:
     _, _, _, resolver = _build()
     try:
@@ -1219,6 +1273,14 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument("--value-file", help="read the value from this local file")
     dr.set_defaults(func=cmd_drop)
+
+    drb = sub.add_parser(
+        "drop-bulk",
+        help="put many secrets INTO Arca at once from a JSON file (local-encrypted); lands state=dropped",
+    )
+    drb.add_argument("entries_file", help="JSON file: a list of {name, sm_name, value, ...} entries")
+    drb.add_argument("--json", action="store_true", help="machine-readable output")
+    drb.set_defaults(func=cmd_drop_bulk)
 
     rv = sub.add_parser("resolve", help="resolve {{secret:NAME}} at the boundary")
     rv.add_argument("text", nargs="?", help="template text (or use --stdin)")
