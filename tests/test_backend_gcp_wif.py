@@ -75,9 +75,9 @@ def test_load_vault_bindings_reads_bindings_file(home):
     assert bindings["firefly-events-inc"].wif_audience == "aud-b"
 
 
-def test_gcp_bindings_file_is_0600(home):
+def test_vault_bindings_file_is_0600(home):
     save_vault_bindings({"p": VaultBinding("p", "aud")})
-    path = home / "gcp-bindings.json"
+    path = home / "vault-bindings.json"
     mode = stat.S_IMODE(os.stat(path).st_mode)
     assert mode == 0o600
 

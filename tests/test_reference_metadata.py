@@ -223,3 +223,34 @@ def test_parse_related_drops_blank_entries():
 def test_parse_related_trims_whitespace():
     from portunus.cli import _parse_related
     assert _parse_related(" name1 , name2 ") == ["name1", "name2"]
+
+
+# --- story 01 (portunus-vault-routing): Reference.backend override field ---
+
+def test_reference_backend_defaults_empty():
+    ref = Reference(name="x", sm_name="dostal-x")
+    assert ref.backend == ""
+
+
+def test_registry_add_accepts_backend(home):
+    reg = Registry()
+    ref = reg.add("x", "sm-x", backend="local")
+    assert ref.backend == "local"
+
+
+def test_registry_retag_updates_backend(home):
+    reg = Registry()
+    reg.add("x", "sm-x")
+    ref = reg.retag("x", backend="gcp")
+    assert ref.backend == "gcp"
+
+
+def test_registry_retag_backend_never_triggers_collision_check(home):
+    """backend is not in _STRUCTURED_TAG_FIELDS -- retagging it must never
+    raise AmbiguousMatch against another reference that happens to share the
+    same backend value."""
+    reg = Registry()
+    reg.add("a", "sm-a", backend="local")
+    reg.add("b", "sm-b")
+    ref = reg.retag("b", backend="local")
+    assert ref.backend == "local"

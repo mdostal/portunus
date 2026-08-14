@@ -60,40 +60,74 @@ class MockBackend:
 
 @dataclass(frozen=True)
 class VaultBinding:
-    """Which GCP project a Reference's secret lives in, and how to auth to it.
+    """Which backend serves a project's secrets, and how to reach it.
+
+    `backend` is one of "local" | "gcp" | "aws" -- which SecretBackend
+    adapter this project routes to (see Resolver's per-reference router).
+    `sync_mode` is "direct" (live-fetch every access, today's behavior) or
+    "cached" (recency-aware pull-only sync-down into the local vault --
+    never the reverse). Both default to today's exact effective behavior
+    (gcp/direct) so every reference migrated from the legacy gcp-bindings.json
+    format keeps working unchanged.
 
     `wif_audience` is the Workload Identity Federation provider resource name
     (e.g. "//iam.googleapis.com/projects/<num>/locations/global/
     workloadIdentityPools/<pool>/providers/<provider>") -- infrastructure
     topology, not a credential, but kept out of world-readable files anyway
-    (see load_vault_bindings/save_vault_bindings 0600 handling).
+    (see load_vault_bindings/save_vault_bindings 0600 handling). GCP-specific;
+    ignored by other backend types.
 
     `account` is a local gcloud CLI identity email (e.g. "user@example.com")
     to pass as `--account=` when no WIF token is minted for this project --
     lets multiple already-locally-authenticated GCP accounts coexist without
     depending on gcloud's single mutable "active account" pointer. Empty
     means "use whatever gcloud considers active" (today's ambient behavior).
+    GCP-specific; ignored by other backend types.
     """
 
     project: str
     wif_audience: str = ""
     account: str = ""
+    backend: str = "gcp"
+    sync_mode: str = "direct"
 
 
-def _gcp_bindings_path(path: Optional[Path] = None) -> Path:
-    return path or (home() / "gcp-bindings.json")
+def _vault_bindings_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "vault-bindings.json")
+
+
+def _legacy_gcp_bindings_path() -> Path:
+    return home() / "gcp-bindings.json"
 
 
 def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
-    """Load PORTUNUS_HOME/gcp-bindings.json (project -> VaultBinding).
+    """Load PORTUNUS_HOME/vault-bindings.json (project -> VaultBinding).
 
-    Falls back to a single binding derived from PORTUNUS_GCP_PROJECT /
-    PORTUNUS_GCP_WIF_AUDIENCE when no bindings file exists -- preserves
-    today's zero-config single-project behavior exactly.
+    Migration-safe by construction, not by script: if the new file doesn't
+    exist, falls back to reading the legacy PORTUNUS_HOME/gcp-bindings.json
+    under its old schema, defaulting every entry to backend="gcp",
+    sync_mode="direct" -- byte-for-byte today's real effective behavior. The
+    legacy file is only ever read here, never written/moved/deleted by this
+    function. Falls back further to a single binding derived from
+    PORTUNUS_GCP_PROJECT/PORTUNUS_GCP_WIF_AUDIENCE when neither file exists --
+    preserves today's zero-config single-project behavior exactly.
     """
-    bindings_path = _gcp_bindings_path(path)
+    bindings_path = _vault_bindings_path(path)
     if bindings_path.exists():
         raw = json.loads(bindings_path.read_text() or "{}")
+        return {
+            proj: VaultBinding(
+                project=proj,
+                wif_audience=cfg.get("wif_audience", ""),
+                account=cfg.get("account", ""),
+                backend=cfg.get("backend", "gcp"),
+                sync_mode=cfg.get("sync_mode", "direct"),
+            )
+            for proj, cfg in raw.items()
+        }
+    legacy_path = _legacy_gcp_bindings_path()
+    if legacy_path.exists():
+        raw = json.loads(legacy_path.read_text() or "{}")
         return {
             proj: VaultBinding(
                 project=proj,
@@ -112,11 +146,15 @@ def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
 def save_vault_bindings(
     bindings: Dict[str, VaultBinding], path: Optional[Path] = None
 ) -> None:
-    """Persist project bindings, 0600 on disk (grill H1)."""
-    bindings_path = _gcp_bindings_path(path)
+    """Persist project bindings, 0600 on disk (grill H1). Always writes the
+    new vault-bindings.json -- never touches a legacy gcp-bindings.json."""
+    bindings_path = _vault_bindings_path(path)
     bindings_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
-        proj: {"wif_audience": b.wif_audience, "account": b.account}
+        proj: {
+            "wif_audience": b.wif_audience, "account": b.account,
+            "backend": b.backend, "sync_mode": b.sync_mode,
+        }
         for proj, b in bindings.items()
     }
     tmp = bindings_path.with_suffix(".json.tmp")
