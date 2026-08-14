@@ -44,6 +44,40 @@ def _err(msg: str) -> int:
     return 1
 
 
+def _make_backend_router(vault_bindings, audit, fallback_backend):
+    """The actual per-project/per-reference router (portunus-vault-routing).
+    3-level precedence: (1) ref.backend, if set, wins outright; (2) else the
+    reference's project VaultBinding.backend; (3) else `fallback_backend`
+    (today's global PORTUNUS_BACKEND-selected backend, unchanged). One
+    backend instance is constructed and cached per backend kind for this
+    router's lifetime, not reconstructed per call."""
+    instances: dict = {}
+
+    def _for_kind(kind: str):
+        if kind in instances:
+            return instances[kind]
+        if kind == "local":
+            inst = LocalEncryptedBackend()
+        elif kind == "gcp":
+            inst = GcloudBackend(bindings=vault_bindings, audit=audit)
+        elif kind == "aws":
+            inst = AWSSecretsManagerBackend()
+        else:
+            inst = fallback_backend
+        instances[kind] = inst
+        return inst
+
+    def router(ref):
+        if ref.backend:
+            return _for_kind(ref.backend)
+        binding = vault_bindings.get(ref.project)
+        if binding is not None:
+            return _for_kind(binding.backend)
+        return fallback_backend
+
+    return router
+
+
 def _build(project: str = ""):
     registry = Registry()
     audit = AuditChain()
@@ -51,15 +85,20 @@ def _build(project: str = ""):
     backend_kind = os.environ.get("PORTUNUS_BACKEND", "local")
     if backend_kind == "mock":
         # For local dry-runs only; values come from PORTUNUS_MOCK_<SM_NAME>.
+        # Always wins outright -- never routed through vault-bindings.json,
+        # a safety rail for tests/dry-runs (grill H2, portunus-vault-routing).
         values = {}
         for k, v in os.environ.items():
             if k.startswith("PORTUNUS_MOCK_"):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
-    elif backend_kind == "gcloud":
+        return registry, audit, broker, Resolver(registry, backend, broker)
+
+    vault_bindings = load_vault_bindings()
+    if backend_kind == "gcloud":
         backend = GcloudBackend(
             project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""),
-            bindings=load_vault_bindings(),
+            bindings=vault_bindings,
             audit=audit,
         )
     elif backend_kind == "aws":
@@ -70,7 +109,9 @@ def _build(project: str = ""):
         # Stage 1 default: the local-encrypted ARCA tier. No plaintext ever
         # leaves this machine, let alone an LLM context.
         backend = LocalEncryptedBackend()
-    return registry, audit, broker, Resolver(registry, backend, broker)
+
+    backend_for = _make_backend_router(vault_bindings, audit, backend)
+    return registry, audit, broker, Resolver(registry, backend, broker, backend_for=backend_for)
 
 
 # --- subcommand handlers -------------------------------------------------

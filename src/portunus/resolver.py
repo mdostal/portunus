@@ -39,10 +39,24 @@ class UnknownReference(KeyError):
 
 
 class Resolver:
-    def __init__(self, registry, backend: SecretBackend, broker: Broker):
+    def __init__(
+        self,
+        registry,
+        backend: SecretBackend,
+        broker: Broker,
+        backend_for: Optional[Callable[[object], SecretBackend]] = None,
+    ):
         self.registry = registry
         self.backend = backend
         self.broker = broker
+        # Per-reference backend router (portunus-vault-routing). None (the
+        # default, every pre-epic call site) means every reference resolves
+        # through the single `backend` above, byte-identical to before this
+        # epic. When set, `_fetch` asks it which backend serves each
+        # reference -- see cli.py's `_build()` for the real 3-level
+        # precedence router (ref.backend override > project VaultBinding >
+        # this global `backend`).
+        self.backend_for = backend_for
 
     # --- introspection (safe: names only, never values) ------------------
     @staticmethod
@@ -55,7 +69,8 @@ class Resolver:
         if name not in self.registry:
             raise UnknownReference(name)
         ref = self.broker.check_injectable(name)   # raises on dropped/revoked/gated
-        value = self.backend.access(ref.sm_name, project=ref.project)  # the only place a value appears
+        backend = self.backend_for(ref) if self.backend_for is not None else self.backend
+        value = backend.access(ref.sm_name, project=ref.project)  # the only place a value appears
         self.broker.audit.append("resolve", ref.sm_name, "ok")
         return value
 
