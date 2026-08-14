@@ -9,6 +9,9 @@ Built by [Mathew Dostal](https://mdostal.com) — fractional CTO, Dostal Technol
 
 **A secret broker for the Dostal harness.** Named for the Roman god of keys and gates.
 
+**[portunus site →](https://mdostal.github.io/portunus/)** — landing page, install snippets, and
+the component-model pitch in one place.
+
 ## Component model
 
 **Portunus is the whole secret-broker system**, not any single piece of it. Its components carry
