@@ -56,7 +56,37 @@ it yet*. This maps cleanly onto the same real/stub posture ARCA already uses:
   `VercelRotationAdapter`, `GitHubRotationAdapter`, `StripeRotationAdapter`, etc., each a small
   class whose `rotate(ref)` unconditionally raises (matching every ARCA stub's docstring/error-
   message pattern) until a real one gets built. This is the direct analog of ARCA's honest-stub
-  posture, applied to a second, genuinely different kind of provider integration.
+  posture, applied to a second, genuinely different kind of provider integration. **Confirmed by
+  the user: Vercel is the named priority target for the first real adapter** — but not built
+  real in this epic ("not going to care too much for first version"); `VercelRotationAdapter`
+  ships as a stub too, just the one explicitly earmarked rather than an arbitrary example.
+
+### 3.1.1 Rotation needs its own admin credential — which Portunus vaults *itself*, recursively
+
+Confirmed directly by the user: performing a real rotation means Portunus calling a provider's
+own admin/management API (e.g. a Vercel account token with token-management scope) — which is
+itself a credential that needs to live somewhere. The user's explicit direction: **that
+credential is itself a Portunus-managed reference, resolved through Portunus's own existing
+boundary mechanism** — never hardcoded into a `RotationAdapter`, never handled outside the
+normal `resolve_call`/`resolve_exec` boundary sinks. Concretely, once a real adapter exists:
+
+```python
+class VercelRotationAdapter:
+    def rotate(self, ref: Reference, resolver: Resolver) -> None:
+        # The admin token itself is just another Reference -- resolved the
+        # same boundary-only way every other value in this codebase is,
+        # never stored in this adapter's own state, never returned.
+        resolver.resolve_call(
+            "{{secret:portunus-admin-vercel-token}}",
+            boundary=lambda admin_token: _call_vercel_rotate_api(admin_token, ref),
+        )
+```
+
+This is the same invariant the whole codebase already enforces, applied recursively: Portunus
+rotating *other* secrets by using *its own* Portunus-managed admin secret, never a special-cased
+credential path outside the normal resolver. No new mechanism needed — `Resolver.resolve_call`
+already supports exactly this. Worth naming explicitly in `docs/architecture.md` once a real
+adapter exists, since it's a genuinely elegant property of the design, not an accident.
 
 ### 3.2 What actually wires to the "Auto-rotate…" button
 
@@ -69,19 +99,40 @@ from whether a real adapter exists for that reference's provider, the same way A
 picker already derives real-vs-stub from the backend registry rather than a separately
 maintained list.
 
-### 3.3 Explicitly deferred, not decided here
+### 3.3 Resolved by the user, and what's still open
 
-- Which provider gets the first *real* rotation adapter (Vercel is the research brief's
-  best-fit candidate — simple token mint/revoke REST API — but this is a product decision, not
-  an engineering one, and isn't made here).
-- Whether `RotationBinding` needs anything beyond a free-text account/context hint (real auth
-  for a rotation call — e.g. a Vercel account token — is itself a *secret Portunus would need to
-  manage*, which raises the question of whether rotation credentials get vaulted in Portunus
-  itself, a genuinely recursive design question worth its own discussion once a real adapter is
-  actually being built).
+**Resolved:** Vercel is the confirmed priority provider (§3.1's `VercelRotationAdapter`, still
+shipping as a stub this epic). The recursive self-vaulted-admin-credential pattern (§3.1.1) is
+confirmed as the design — no separate credential-handling path for rotation, ever.
+
+**Still open, deliberately not decided here:**
 - Audit/Petitio implications of an automated rotation actually firing (should rotating a
   credential require the same approval gate injecting it does? reasonable default: yes, but not
-  decided here).
+  decided here — moot until a real adapter exists to fire anything).
+- Whether `RotationBinding` needs anything beyond a free-text account/context hint once a real
+  adapter is actually being built (e.g. does a Vercel rotation need a team ID *and* a project
+  ID, not just one context string?) — deferred until that build actually starts.
+
+### 3.4 Confirmed already shipped: bulk plaintext import
+
+The user's stated need — "drop plaintext passwords... vaulted local... enable the coin finder
+to try a bunch of passwords locally... another free password manager" — is **already shipped**,
+not new scope: `portunus_drop_bulk` (MCP) / `portunus drop-bulk` (CLI), from
+portunus-vault-routing (v0.13.0), does exactly this — many local secrets in one call, each
+independently encrypted at rest, each resolvable later via the same boundary-only mechanism
+(`portunus_resolve_exec` for "try this one against something without me ever seeing which
+worked"). No new work needed for the mechanical bulk-import piece.
+
+**A genuinely new, not-yet-built direction the user's framing surfaces**: "another free
+password manager THEY can unlock" implies a *human* directly retrieving their own vaulted
+value — not an LLM/agent resolving it at a boundary. Nothing in Portunus does this today; every
+existing resolve path (CLI, UI, MCP) is boundary-only by design, even for a human operator
+(`portunus resolve` writes a tempfile, never prints the value). A deliberate, explicit,
+human-only "reveal" action would be a real, different capability — worth naming here so it
+isn't lost, explicitly **not scoped into this epic** (this epic is metadata + rotation
+provenance; a human-reveal UX is its own product decision with its own UX/security
+considerations — e.g. should it require re-authentication, should it be logged differently from
+an LLM-facing resolve).
 
 ## 4. Risks
 
@@ -99,5 +150,5 @@ dependency — but touches a genuinely new area (rotation, not storage/access) t
 confirmation checkpoint before story decomposition, same discipline used for portunus-vault-
 routing and portunus-swappable-trio's own Large/Medium-scope pauses.
 
-Not decomposed into stories yet — presenting for confirmation first, per the user's own "we'll
-get there" framing (no urgency) and the genuine open questions in §3.3.
+**Confirmed by the user**: Vercel as priority target, the recursive self-vaulted-admin-credential
+rotation pattern, bulk plaintext import already shipped. Proceeding to story decomposition.

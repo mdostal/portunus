@@ -1,0 +1,91 @@
+id: 02-rotation-provenance
+epic: portunus-metadata-and-rotation-provenance
+title: RotationBinding + RotationAdapter stub registry (Vercel priority) + UI wiring
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  RotationBinding (backend.py or a new rotation.py): {provider, status: "real"|"stub", account}
+  -- keyed by provider (not per-reference, mirroring VaultBinding's per-project-not-per-
+  reference reasoning), persisted as PORTUNUS_HOME/rotation-bindings.json (0600, JSON+flock+
+  atomic-replace, the same idiom Registry/VaultBinding already use). RotationAdapter stub
+  registry: VercelRotationAdapter (the confirmed priority target), GitHubRotationAdapter,
+  StripeRotationAdapter -- each a small class whose rotate(ref) unconditionally raises,
+  mirroring every ARCA stub's docstring/error-message pattern exactly. All three ship as
+  stubs this story -- no real Vercel API integration. CLI: `portunus rotation-bindings set/
+  show`. MCP: `portunus_rotation_status(provider="")`. DetailDrawer's existing "Auto-rotate..."
+  button (still disabled/inert) becomes wired to derived state from the registry (real vs.
+  stub) instead of being unconditionally hardcoded disabled -- since every adapter is a stub
+  today, it stays visually/functionally identical to before this story, but the underlying
+  logic is now real and would light up automatically once a real adapter ships later.
+
+acceptance_criteria:
+  - "Given RotationBinding, when constructed with no explicit status, then it defaults to status='stub' -- matching every provider's real current state"
+  - "Given VercelRotationAdapter/GitHubRotationAdapter/StripeRotationAdapter, when .rotate(ref) is called on any of them, then each raises a clear error naming the provider and pointing to the adapter-request GitHub template -- never a real API call"
+  - "Given `portunus rotation-bindings set vercel --status stub --account <team-slug>`, when run, then it round-trips through rotation-bindings show exactly like vault bindings does"
+  - "Given portunus_rotation_status(), when called, then it reports each configured provider's status (real/stub) and account -- metadata only, never a credential"
+  - "Given DetailDrawer's Auto-rotate button for a reference whose provider has no real RotationAdapter (every provider, today), when rendered, then it's disabled with the same explanatory tooltip as before this story -- behaviorally unchanged, but now derived from the registry rather than a hardcoded `disabled` attribute"
+  - "Given npm run build, when run, then it completes with no TypeScript errors"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for RotationBinding's default status, the three stub adapters' errors, bindings set/show round-trip, and portunus_rotation_status.
+    agent: tester
+  - id: implement
+    description: Implement RotationBinding + the 3 stub adapters + CLI/MCP surface; wire DetailDrawer's Auto-rotate button to derived state via a new /api/rotation-status route.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the Auto-rotate button's behavior is genuinely unchanged today (still disabled for every real reference) despite being wired to real derived logic now.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: VaultBinding + the 6 ARCA stub backends -- the exact structural precedent RotationBinding/RotationAdapter mirrors
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: The existing inert Auto-rotate button (portunus-swappable-trio) this story wires to real derived state
+
+files_to_modify:
+  - file: src/portunus/rotation.py
+    change: New file -- RotationBinding, load/save, 3 stub adapters
+  - file: src/portunus/cli.py
+    change: Add `rotation-bindings set/show` subcommand
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_rotation_status tool
+  - file: ui/app/api/rotation-status/route.ts
+    change: New route
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Wire Auto-rotate button to derived state
+  - file: tests/test_rotation.py
+    change: New file
+
+design_decisions:
+  - decision: RotationBinding is keyed by provider, not per-reference
+    rationale: "Mirrors VaultBinding's own per-project (not per-reference) reasoning -- most references sharing a provider share a rotation account/context"
+  - decision: All three named adapters (Vercel, GitHub, Stripe) ship as stubs this story, Vercel just explicitly earmarked
+    rationale: "Confirmed by the user -- 'not going to care too much for first version'; a real Vercel adapter is deliberately deferred to a future epic"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Every stub adapter's only behavior is raising a fixed-string error -- structurally cannot touch a value. portunus_rotation_status returns provider/status/account only, never a credential -- matches portunus_bindings_show's existing restraint exactly."
+  - concern: audit-chain-integrity
+    action: "N/A this story -- no real rotation ever fires, nothing to audit yet. A future real-adapter epic will need to decide whether a rotation event gets its own audit action (deferred per design-discussion.md §3.3)."
+
+risks:
+  - severity: low
+    description: The Auto-rotate button's wiring could accidentally enable itself for a reference before any real adapter actually exists
+    mitigation: Explicit acceptance criterion (5) requires confirming behaviorally-unchanged (still disabled) for every reference, since every adapter is a stub
+
+references:
+  - path: .pHive/epics/portunus-metadata-and-rotation-provenance/docs/design-discussion.md
+    relevant_excerpt: "§3 -- Slice B: rotation provenance (provenance only, no real rotation)"
