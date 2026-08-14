@@ -179,6 +179,20 @@ resolve path. Portunus would rotate *other* secrets by using *its own* vaulted a
 second credential-handling mechanism, ever. This is a design decision recorded ahead of the
 build, not a description of running code.
 
+## 6. The desktop app is packaging, not a new component
+
+Worth stating plainly: the Tauri desktop app (`ui/src-tauri/`) is **not** a fifth architecture
+component alongside OSTIARIUS/ARCA/Petitio/audit. It's a native wrapper around the existing UI
+API-routes entry point (§1's `UIRoutes` node) — a menu-bar presence and a self-update mechanism
+around the same Next.js app `npm run dev` already serves, spawned as a sidecar process instead
+of run manually. It introduces zero new request paths into OSTIARIUS, zero new backend logic,
+and doesn't change how the CLI/MCP surfaces work — cross-project secret access already worked
+before this existed, against the one shared `PORTUNUS_HOME`, regardless of which repo an agent
+session happens to be rooted in. The one genuinely new piece of logic is the self-update
+check, which shells out to the user's own already-authenticated `gh` CLI rather than embedding
+a credential in the shipped app — the same "never hold a credential you don't have to"
+posture this whole system already enforces everywhere else.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

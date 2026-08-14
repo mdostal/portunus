@@ -1,0 +1,34 @@
+name: portunus-desktop-app
+title: Tauri desktop app -- installable, menu-bar, self-updating (macOS arm64, v1)
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: classic
+version_bump: minor
+
+description: |
+  Tauri v2 wraps the existing Next.js `standalone` UI build as a sidecar process inside a
+  native macOS app: menu-bar/tray presence, single-instance, close-to-tray. Self-updates by
+  shelling out to the user's own already-authenticated `gh` CLI against this (private) repo's
+  releases -- never an embedded token, matching this project's own credential-handling posture.
+  Ad-hoc signed (one user, one machine -- not a public-distribution notarization problem).
+  Cross-project secret access via the CLI/MCP is unaffected and unchanged -- confirmed already
+  working today against the shared PORTUNUS_HOME regardless of which of the user's 50 project
+  repos an agent session is rooted in; this epic makes the Vault UI itself persistent and
+  self-updating, not a new required chokepoint.
+
+stories:
+  - id: 01-tauri-shell-sidecar
+    title: Tauri scaffold -- Next.js standalone sidecar, PATH capture, dynamic port
+    complexity: medium
+    depends_on: []
+  - id: 02-tray-single-instance
+    title: Menu-bar tray, single-instance enforcement, close-to-tray, clean sidecar shutdown
+    complexity: low
+    depends_on: [01-tauri-shell-sidecar]
+  - id: 03-self-update
+    title: gh-CLI-backed update check + confirmed relauncher swap
+    complexity: high
+    depends_on: [01-tauri-shell-sidecar]
+  - id: 04-packaging-and-closeout
+    title: release-desktop.yml CI workflow, install docs, version bump, live proof
+    complexity: medium
+    depends_on: [02-tray-single-instance, 03-self-update]

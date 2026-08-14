@@ -1,0 +1,81 @@
+id: 01-tauri-shell-sidecar
+epic: portunus-desktop-app
+title: Tauri scaffold -- Next.js standalone sidecar, PATH capture, dynamic port
+status: pending
+complexity: medium
+methodology: classic
+depends_on: []
+
+description: |
+  New `ui/src-tauri/` Rust project (Tauri v2). Build-time step copies the Next.js
+  `output: "standalone"` build (`ui/.next/standalone/**` + `.next/static` + `public/`) into
+  `src-tauri/resources/web/`, bundled into the app via Tauri's resource mechanism -- not
+  referencing the live git checkout path, so the installed .app keeps working if the repo
+  directory is later moved or deleted.
+
+  On launch: capture the real login-shell PATH (GUI-launched processes get a near-empty one --
+  confirmed risk, not hypothetical, per the research brief); bind port 0 for a free OS-assigned
+  port (never hardcode 3000 -- it was already in use during this session's own testing); spawn
+  `node <resource_dir>/web/server.js` with PORT=<port> and the captured PATH; poll
+  http://127.0.0.1:<port>/api/health until 200 (bounded timeout, native loading state while
+  waiting); open the main window at that URL.
+
+acceptance_criteria:
+  - "Given `cd ui/src-tauri && cargo tauri dev` (or equivalent), when run, then a native window opens showing the Vault Console UI, loaded from the sidecar's dynamically-assigned port"
+  - "Given the running app, when a secret is dropped/resolved through the UI, then the underlying `portunus` CLI call succeeds -- proving the captured PATH correctly reaches the pip-installed CLI from the GUI-launched sidecar process"
+  - "Given port 3000 (or any fixed port) is already occupied by another process, when the app launches, then it still starts cleanly on a different free port -- no hardcoded port assumption anywhere in the Rust or sidecar-spawn code"
+  - "Given the sidecar takes a moment to become ready, when the app launches, then the window shows a native loading state rather than a browser connection-refused error"
+  - "Given `cargo tauri build`, when run, then it produces a working ad-hoc-signed .app bundle with the Next.js build embedded as a resource (not referencing the git checkout path)"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Scaffold Tauri project, write PATH-capture + port-selection + sidecar-spawn + health-poll Rust code, wire resource bundling of the Next.js standalone build.
+    agent: developer
+  - id: review
+    description: Confirm no hardcoded port, no hardcoded git-checkout path, PATH capture actually happens before any child process spawn.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/next.config.mjs
+      purpose: Already builds output=standalone specifically for this "an external process supervises the UI" scenario -- zero UI-side changes needed
+    - path: ui/lib/portunus.ts
+      purpose: spawn("portunus", args, { env: process.env }) -- the PATH-capture fix must make this resolve correctly from the GUI-launched sidecar's inherited env, no edits to this file itself
+
+files_to_modify:
+  - file: ui/src-tauri/Cargo.toml
+    change: New Tauri v2 project
+  - file: ui/src-tauri/tauri.conf.json
+    change: New -- ad-hoc signing (signingIdentity "-"), resource bundling config for the Next.js standalone build
+  - file: ui/src-tauri/src/main.rs
+    change: New -- PATH capture, port selection, sidecar spawn, health poll, window creation
+  - file: ui/src-tauri/build-resources.sh (or similar)
+    change: New -- copies ui/.next/standalone + static + public into src-tauri/resources/web/ before `tauri build`
+
+design_decisions:
+  - decision: Spawn the system's own node binary (PATH-resolved), not a bundled Node runtime sidecar binary
+    rationale: "One user's own machine, which already has Node 22 -- confirmed, not assumed (research-brief.md). Bundling a portable Node runtime is a real but separable upgrade needed only for distributing to OTHER machines, not this epic's scope."
+  - decision: Pick a fresh free port every launch rather than a fixed one
+    rationale: "Avoids both a real collision (port 3000 was already occupied during this session's own live testing) and orphaned-sidecar-blocks-relaunch risk (design-discussion.md §7)"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A structurally -- this story only changes how the UI process is launched/supervised; the UI's own value-handling code (the one plaintext-entry point in AddSecretForm/api/drop) is completely unchanged."
+  - concern: audit-chain-integrity
+    action: "N/A -- no new audited action; the sidecar's portunus CLI calls are the same calls the UI already makes today."
+
+risks:
+  - severity: medium
+    description: PATH capture could be slow or fail silently (login shell hangs, unusual $SHELL config)
+    mitigation: Bounded timeout on the PATH-capture subprocess; fall back to a sane default PATH (/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin) plus the pip user-install bin dir if capture fails, rather than hanging the app launch indefinitely
+
+references:
+  - path: .pHive/epics/portunus-desktop-app/docs/design-discussion.md
+    relevant_excerpt: "§2-3 -- sidecar architecture, PATH capture, port selection"

@@ -1,0 +1,87 @@
+id: 04-packaging-and-closeout
+epic: portunus-desktop-app
+title: release-desktop.yml CI workflow, install docs, version bump, live proof
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [02-tray-single-instance, 03-self-update]
+
+description: |
+  New `.github/workflows/release-desktop.yml`, triggered on the same `vX.Y.Z` tag push this
+  project's existing release flow already produces (one version number across pyproject.toml/
+  manifest.json/__init__.py/tauri.conf.json, one release, covering the Python package AND the
+  desktop app -- no second parallel versioning scheme). Runs `cargo tauri build` on
+  `macos-latest` (Apple Silicon by default, matching this machine), uploads the zipped .app as
+  a release asset. README gets a "Desktop App" section: install steps, the one-time Gatekeeper
+  bypass (System Settings -> Privacy & Security -> Open Anyway -- documented plainly, not left
+  as a surprise), and the manual `pkill -f "server.js.*portunus"` escape hatch for the
+  orphaned-sidecar known limitation. docs/architecture.md gets a short note distinguishing the
+  desktop app (an additive way to run the existing UI) from a new architecture component --
+  it isn't OSTIARIUS/ARCA/Petitio, it's a packaging layer around OSTIARIUS's existing UI-routes
+  entry point.
+
+acceptance_criteria:
+  - "Given a `vX.Y.Z` tag push, when release-desktop.yml runs, then it produces a working ad-hoc-signed .app.zip attached to that release"
+  - "Given the README's Desktop App section, when followed step by step on this machine, then it results in a working installed app -- including the one-time Gatekeeper bypass documented accurately"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py/ui/src-tauri/tauri.conf.json, when checked, then all four carry the same bumped minor version in lockstep"
+  - "Given the live proof, when run, then it installs the built .app to /Applications, launches it, creates a secret through it against a SCRATCH vault (not the real one), confirms the round trip, quits it cleanly, and confirms via pgrep that no sidecar process survives"
+  - "Given the live proof, when complete, then the real vault (~/.portunus) is confirmed untouched -- same discipline every prior epic's live proof used"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Write the CI workflow, README/docs updates, apply the version bump, run the live proof.
+    agent: developer
+  - id: review
+    description: Confirm the real vault is genuinely untouched by the live proof -- re-check registry count and audit chain before/after, same as every prior epic's closeout.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .github/workflows/promote.yml
+      purpose: Existing release-adjacent workflow -- style/trigger precedent for the new release-desktop.yml
+    - path: docs/architecture.md
+      purpose: This story's doc target for the "what the desktop app is / isn't" clarification
+
+files_to_modify:
+  - file: .github/workflows/release-desktop.yml
+    change: New -- tag-triggered macOS Tauri build + release-asset upload
+  - file: README.md
+    change: New "Desktop App" section
+  - file: docs/architecture.md
+    change: Short note distinguishing the desktop app from a new architecture component
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: Version bump (kept in lockstep, per design-discussion.md §6)
+
+design_decisions:
+  - decision: One version number across the Python package and the desktop app
+    rationale: "Avoids a second parallel versioning scheme; the gh-CLI update check in story 03 compares against 'latest release' as a single concept, not two"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A beyond what stories 01-03 already cover -- documentation/packaging/verification-only story"
+  - concern: audit-chain-integrity
+    action: "Live proof confirms `portunus verify` stays INTACT on the real vault."
+
+risks:
+  - severity: low
+    description: CI's ad-hoc-signed build could behave differently than a locally-built one
+    mitigation: "Live proof (acceptance criterion 4) installs and runs the actually-CI-built artifact, not just a local dev build"
+
+references:
+  - path: .pHive/epics/portunus-desktop-app/docs/design-discussion.md
+    relevant_excerpt: "§6 -- release packaging; full document ties together stories 01-03"

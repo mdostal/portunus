@@ -482,6 +482,42 @@ PORT=7802 node .next/standalone/server.js
 Runs on port **7802** (declared in `manifest.json`'s `ui.url`), matching the port Portunus is
 registered under in the Pantheon host's shared manifests.
 
+### Desktop app (macOS)
+
+A native Tauri v2 shell wraps this same UI as a menu-bar app — no more `cd ui && npm run dev`
+every time. It's additive, not a replacement: `npm run dev` stays fully valid. See
+`docs/architecture.md` for what it is (and isn't).
+
+**Install** (builds locally — see `.pHive/epics/portunus-desktop-app/` for design details, or
+download the `.zip` from the latest [GitHub release](../../releases) once one has shipped):
+
+```bash
+cd ui
+npm install && npm run build
+cargo install tauri-cli --version "^2" --locked   # once
+cargo tauri build
+cp -r src-tauri/target/release/bundle/macos/Portunus.app /Applications/
+open /Applications/Portunus.app
+```
+
+**One-time Gatekeeper bypass.** This is ad-hoc signed, not notarized — a deliberate v1 scope
+decision (one user, one machine, not a public-distribution problem; see the design doc for the
+full reasoning), not an oversight. macOS will refuse to open it the first time. Go to
+**System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway** next
+to the Portunus warning, then launch it again. This only happens once — self-updates afterward
+don't re-trigger it.
+
+**Using it.** A tray icon appears in the menu bar: *Open Vault*, *Check for Updates…*, *Launch
+at Login*, *Quit*. Closing the window hides it (the app keeps running in the tray) — use
+*Quit* to actually stop it. Updates are checked automatically every 6 hours (and on demand via
+the tray item) against this repo's own GitHub releases, using your own already-authenticated
+`gh` CLI — never a token embedded in the app. You'll always get a confirmation dialog before
+anything installs; nothing swaps itself in silently.
+
+**If something goes sideways** (a crashed/force-quit app can leave its background server
+running): `pkill -f "server.js.*portunus"` clears it out; the next launch picks a fresh port
+regardless.
+
 ## Library API
 
 ```python
