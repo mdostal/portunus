@@ -1,0 +1,104 @@
+id: 02-backend-router
+epic: portunus-vault-routing
+title: Per-reference backend router (Slice B)
+status: pending
+complexity: high
+methodology: tdd
+depends_on: [01-vault-binding-model]
+
+description: |
+  Resolver.__init__ gains an optional backend_for: Optional[Callable[[Reference],
+  SecretBackend]] = None parameter. When None (every existing call site, every existing
+  test), _fetch() behaves byte-identically to today (self.backend.access(...)). When
+  provided, _fetch() calls self._backend_for(ref).access(ref.sm_name, project=ref.project)
+  instead. Strictly additive -- no existing Resolver(registry, backend, broker) call site
+  changes.
+
+  _build() (cli.py) constructs the real router with 3-level precedence: (1) ref.backend if
+  set, (2) vault_bindings.get(ref.project) dispatched by .backend, (3) today's global
+  PORTUNUS_BACKEND-selected backend, unchanged. One backend instance cached per type per
+  Resolver lifetime, not reconstructed per call. Critically: when PORTUNUS_BACKEND=mock,
+  the router is NOT constructed at all -- every reference resolves through the single
+  MockBackend exactly as today, regardless of any vault-bindings.json content (grill H2 --
+  a safety rail for this session's ~300 existing tests, not an edge case).
+
+acceptance_criteria:
+  - "Given Resolver(registry, backend, broker) with no backend_for (every existing test), when _fetch() runs, then behavior is byte-identical to before this story -- the full pre-existing test suite passes unmodified"
+  - "Given a reference with backend='local' set directly on it, and a project binding that says backend='gcp' for the same project, when resolved, then the reference's own backend wins (precedence level 1 beats level 2)"
+  - "Given a reference with no backend set, in a project with a VaultBinding(backend='gcp'), when resolved, then it routes to a GcloudBackend configured from that binding (precedence level 2)"
+  - "Given a reference with no backend set, in a project with no VaultBinding at all, when resolved, then it falls back to the single backend PORTUNUS_BACKEND selects today (precedence level 3, unchanged)"
+  - "Given PORTUNUS_BACKEND=mock and a vault-bindings.json with a real backend='gcp' entry for some project, when _build() constructs a Resolver, then the router is never constructed and every reference resolves through the single MockBackend regardless of the bindings file content"
+  - "Given two references bound to different projects with different VaultBindings, when both are resolved in the same process, then each routes to its own correct backend instance -- proving per-reference routing works within one process, not just one backend per process as today"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm Resolver's exact constructor/_fetch() shape and _build()'s current single-backend construction to design the additive backend_for parameter correctly.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the 3-level precedence, the byte-identical no-router-given default, and the mock short-circuit.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Add Resolver's optional backend_for parameter; implement _build()'s router construction with caching per backend type.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm every existing test still passes unmodified and the mock short-circuit is genuinely unconditional (not just usually true).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/resolver.py
+      purpose: Resolver.__init__/_fetch() -- the exact method gaining the optional backend_for parameter
+    - path: src/portunus/cli.py
+      purpose: "_build() (lines 47-72) -- constructs the real router here, dispatching on the new VaultBinding.backend field from story 01"
+
+files_to_modify:
+  - file: src/portunus/resolver.py
+    change: Add optional backend_for parameter to Resolver; use it in _fetch() when present
+  - file: src/portunus/cli.py
+    change: "_build() constructs the 3-level-precedence router, skipped entirely under PORTUNUS_BACKEND=mock"
+  - file: tests/test_resolver.py
+    change: Add router precedence tests
+  - file: tests/test_cli.py
+    change: Add tests confirming mock mode never constructs the router
+
+code_examples:
+  - title: Resolver._fetch()'s current single-backend call
+    file: src/portunus/resolver.py
+    snippet: |
+      def _fetch(self, name: str) -> str:
+          if name not in self.registry:
+              raise UnknownReference(name)
+          ref = self.broker.check_injectable(name)
+          value = self.backend.access(ref.sm_name, project=ref.project)
+          self.broker.audit.append("resolve", ref.sm_name, "ok")
+          return value
+
+design_decisions:
+  - decision: backend_for is optional, defaulting to None -- every existing Resolver construction is unaffected
+    rationale: "Zero risk to the ~300 existing tests and every other call site (mcp_server.py's tools all go through _build()) -- additive only"
+  - decision: PORTUNUS_BACKEND=mock unconditionally skips router construction
+    rationale: "grill H2 -- mock mode is a safety rail; config file content must never be able to override it"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The router only ever selects WHICH backend serves a value -- it never touches, logs, or returns a value itself. No new value-handling path."
+  - concern: audit-chain-integrity
+    action: "Unchanged -- broker.audit.append still fires exactly as today regardless of which backend served the value."
+
+risks:
+  - severity: high
+    description: A routing bug sends a reference to the wrong backend, potentially exposing a value meant for a different project's credential scope
+    mitigation: Every routed case requires an explicit, human-configured VaultBinding or ref.backend -- no implicit/inferred routing; fallback path is identical to today's pre-epic behavior, never a guess
+
+references:
+  - path: .pHive/epics/portunus-vault-routing/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- Backend router"

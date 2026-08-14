@@ -16,6 +16,13 @@ interface DiscoverDiff {
   wif_configured: boolean;
 }
 
+interface VaultBindingInfo {
+  backend: string;
+  sync_mode: string;
+  account: string;
+  wif_audience: string;
+}
+
 interface DiscoverRegisterResult {
   registered: string[];
   conflicts: string[];
@@ -129,29 +136,70 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
   const [diff, setDiff] = useState<DiscoverDiff | null>(null);
   const [registerBusy, setRegisterBusy] = useState(false);
   const [conflictNote, setConflictNote] = useState<string | null>(null);
+  const [binding, setBinding] = useState<VaultBindingInfo | null>(null);
+  const [bindingBusy, setBindingBusy] = useState(false);
 
   async function load(p: string) {
     if (!p) return;
     setLoading(true);
     setError(null);
     setConflictNote(null);
-    try {
-      const [listRes, discoverRes] = await Promise.all([
-        fetch(`/api/list?project=${encodeURIComponent(p)}`),
-        fetch(`/api/discover?project=${encodeURIComponent(p)}`),
-      ]);
-      const listData = await listRes.json();
-      if (!listRes.ok) throw new Error(listData.error || "list failed");
-      setRegistered(listData);
+    setDiff(null);
+    setBinding(null);
 
-      const discoverData = await discoverRes.json();
-      if (!discoverRes.ok) throw new Error(discoverData.error || "discover failed");
-      setDiff(discoverData);
+    // Independent, not a single try/catch around all three: a project
+    // legitimately bound to backend="local" has no live GCP project to
+    // discover against at all, so a discover failure there is expected,
+    // not fatal -- it must never block registered/bindings from rendering
+    // (found live: without this, one 502 from discover hid the new
+    // backend/sync_mode controls entirely).
+    const [listRes, discoverRes, bindingsRes] = await Promise.allSettled([
+      fetch(`/api/list?project=${encodeURIComponent(p)}`).then((r) => r.json().then((d) => ({ ok: r.ok, d }))),
+      fetch(`/api/discover?project=${encodeURIComponent(p)}`).then((r) => r.json().then((d) => ({ ok: r.ok, d }))),
+      fetch(`/api/bindings?project=${encodeURIComponent(p)}`).then((r) => r.json().then((d) => ({ ok: r.ok, d }))),
+    ]);
+
+    if (listRes.status === "fulfilled" && listRes.value.ok) {
+      setRegistered(listRes.value.d);
+    } else {
+      const msg = listRes.status === "fulfilled" ? listRes.value.d.error : (listRes.reason as Error).message;
+      setError(msg || "list failed");
+    }
+
+    if (discoverRes.status === "fulfilled" && discoverRes.value.ok) {
+      setDiff(discoverRes.value.d);
+    }
+    // discover failing is not surfaced as a page-level error -- expected
+    // for local-only/not-yet-GCP-enabled projects.
+
+    if (bindingsRes.status === "fulfilled" && bindingsRes.value.ok) {
+      setBinding(bindingsRes.value.d[p] ?? null);
+    }
+
+    setLoading(false);
+  }
+
+  // Thin shell-out via /api/bindings -- same gating boundary as every other
+  // mutation in this UI. Local/GCP route to real backends; AWS is visibly
+  // marked not-yet-implemented, matching the CLI's own stub restraint.
+  async function updateBinding(field: "backend" | "sync_mode", value: string) {
+    setBindingBusy(true);
+    try {
+      const res = await fetch("/api/bindings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, [field]: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "bindings set failed");
+        return;
+      }
+      setBinding(data[project] ?? null);
     } catch (err) {
       setError((err as Error).message);
-      setDiff(null);
     } finally {
-      setLoading(false);
+      setBindingBusy(false);
     }
   }
 
@@ -216,6 +264,36 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
         <p className="inline-status">
           GCP WIF: {diff.wif_configured ? "configured" : "not configured"}
         </p>
+      )}
+
+      {binding && (
+        <div className="form-row">
+          <label className="form-field">
+            <span>Vault backend</span>
+            <select
+              className="field"
+              value={binding.backend}
+              disabled={bindingBusy}
+              onChange={(e) => updateBinding("backend", e.target.value)}
+            >
+              <option value="local">Local</option>
+              <option value="gcp">GCP</option>
+              <option value="aws">AWS (not yet implemented)</option>
+            </select>
+          </label>
+          <label className="form-field">
+            <span>Sync mode</span>
+            <select
+              className="field"
+              value={binding.sync_mode}
+              disabled={bindingBusy}
+              onChange={(e) => updateBinding("sync_mode", e.target.value)}
+            >
+              <option value="direct">Direct</option>
+              <option value="cached">Cached</option>
+            </select>
+          </label>
+        </div>
       )}
 
       {registered.length > 0 && (

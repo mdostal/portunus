@@ -22,9 +22,10 @@ from . import __version__
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import (
-    AWSSecretsManagerBackend, BackendError, GcloudBackend, GcpProjectBinding, MockBackend,
-    load_gcp_bindings, save_gcp_bindings,
+    AWSSecretsManagerBackend, BackendError, GcloudBackend, SyncingBackend, VaultBinding,
+    MockBackend, load_vault_bindings, save_vault_bindings,
 )
+from .paths import home
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -44,6 +45,52 @@ def _err(msg: str) -> int:
     return 1
 
 
+def _make_backend_router(vault_bindings, audit, fallback_backend):
+    """The actual per-project/per-reference router (portunus-vault-routing).
+    3-level precedence: (1) ref.backend, if set, wins outright; (2) else the
+    reference's project VaultBinding.backend (wrapped in a recency-aware
+    SyncingBackend when that project's sync_mode="cached"); (3) else
+    `fallback_backend` (today's global PORTUNUS_BACKEND-selected backend,
+    unchanged). Backend instances are constructed once and cached for this
+    router's lifetime, not reconstructed per call -- including the shared
+    SyncingBackend, so its sync-state file sees every cached-mode access
+    regardless of which project triggered it."""
+    instances: dict = {}
+
+    def _for_kind(kind: str):
+        if kind in instances:
+            return instances[kind]
+        if kind == "local":
+            inst = LocalEncryptedBackend()
+        elif kind == "gcp":
+            inst = GcloudBackend(bindings=vault_bindings, audit=audit)
+        elif kind == "aws":
+            inst = AWSSecretsManagerBackend()
+        else:
+            inst = fallback_backend
+        instances[kind] = inst
+        return inst
+
+    def _synced_gcp():
+        if "synced-gcp" not in instances:
+            instances["synced-gcp"] = SyncingBackend(
+                _for_kind("gcp"), _for_kind("local"), home() / "sync-state.json",
+            )
+        return instances["synced-gcp"]
+
+    def router(ref):
+        if ref.backend:
+            return _for_kind(ref.backend)
+        binding = vault_bindings.get(ref.project)
+        if binding is not None:
+            if binding.backend == "gcp" and binding.sync_mode == "cached":
+                return _synced_gcp()
+            return _for_kind(binding.backend)
+        return fallback_backend
+
+    return router
+
+
 def _build(project: str = ""):
     registry = Registry()
     audit = AuditChain()
@@ -51,15 +98,20 @@ def _build(project: str = ""):
     backend_kind = os.environ.get("PORTUNUS_BACKEND", "local")
     if backend_kind == "mock":
         # For local dry-runs only; values come from PORTUNUS_MOCK_<SM_NAME>.
+        # Always wins outright -- never routed through vault-bindings.json,
+        # a safety rail for tests/dry-runs (grill H2, portunus-vault-routing).
         values = {}
         for k, v in os.environ.items():
             if k.startswith("PORTUNUS_MOCK_"):
                 values[k[len("PORTUNUS_MOCK_"):].lower().replace("_", "-")] = v
         backend = MockBackend(values)
-    elif backend_kind == "gcloud":
+        return registry, audit, broker, Resolver(registry, backend, broker)
+
+    vault_bindings = load_vault_bindings()
+    if backend_kind == "gcloud":
         backend = GcloudBackend(
             project=project or os.environ.get("PORTUNUS_GCP_PROJECT", ""),
-            bindings=load_gcp_bindings(),
+            bindings=vault_bindings,
             audit=audit,
         )
     elif backend_kind == "aws":
@@ -70,7 +122,9 @@ def _build(project: str = ""):
         # Stage 1 default: the local-encrypted ARCA tier. No plaintext ever
         # leaves this machine, let alone an LLM context.
         backend = LocalEncryptedBackend()
-    return registry, audit, broker, Resolver(registry, backend, broker)
+
+    backend_for = _make_backend_router(vault_bindings, audit, backend)
+    return registry, audit, broker, Resolver(registry, backend, broker, backend_for=backend_for)
 
 
 # --- subcommand handlers -------------------------------------------------
@@ -599,6 +653,60 @@ def cmd_drop(args) -> int:
     return 0
 
 
+def cmd_drop_bulk(args) -> int:
+    """Bulk counterpart to `drop` -- one JSON file of entries, each with the
+    same fields `drop` accepts (name/sm_name/value required). The backend
+    gate is checked once upfront; a malformed entry is reported under
+    "failed" and does not abort the rest of the batch. Never prints a value
+    on any path, including a failed entry's error message."""
+    registry, _, broker, resolver = _build()
+    backend = resolver.backend
+    if not hasattr(backend, "store"):
+        return _err(
+            "drop requires the local-encrypted backend "
+            "(unset PORTUNUS_BACKEND or set it to unset/local)"
+        )
+    try:
+        entries = json.loads(Path(args.entries_file).read_text())
+    except OSError as exc:
+        return _err(f"cannot read entries file: {exc}")
+    except json.JSONDecodeError as exc:
+        return _err(f"malformed JSON in entries file: {exc}")
+
+    created: list = []
+    failed: list = []
+    for entry in entries:
+        entry_name = entry.get("name", "")
+        try:
+            value = entry.get("value", "")
+            if not value:
+                raise ValueError("empty secret value; nothing dropped")
+            ref = registry.add(
+                entry_name, entry.get("sm_name", ""),
+                scope=entry.get("scope", ""), kind=entry.get("kind", ""), state="dropped",
+                provider=entry.get("provider", ""), project=entry.get("project", ""),
+                env=entry.get("env", ""), tags=entry.get("tags"),
+                description=entry.get("description", ""), purpose=entry.get("purpose", ""),
+                injected_as=entry.get("injected_as"), group=entry.get("group", ""),
+                related=entry.get("related"), backend=entry.get("backend", ""),
+            )
+            backend.store(ref.sm_name, value)
+            del value
+            broker.audit.append("drop", ref.sm_name, "stored")
+            created.append(ref.name)
+        except (ValueError, KeyError) as exc:
+            failed.append({"name": entry_name, "error": str(exc)})
+
+    if args.json:
+        print(json.dumps({"created": created, "failed": failed}))
+        return 0
+    for name in created:
+        print(f"  dropped  {name}")
+    for entry in failed:
+        print(f"  failed   {entry['name']}: {entry['error']}")
+    return 0
+
+
 def cmd_resolve(args) -> int:
     _, _, _, resolver = _build()
     try:
@@ -697,7 +805,7 @@ def cmd_auth_gcp(args) -> int:
     """Mint a GCP WIF access token and report identity/scope/expiry -- never the token."""
     audit = AuditChain()
     project = args.project or os.environ.get("PORTUNUS_GCP_PROJECT", "")
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     audience = args.audience
     if not audience and project in bindings:
         audience = bindings[project].wif_audience
@@ -742,7 +850,7 @@ def cmd_auth_status(args) -> int:
     reports which bindings are authenticated vs. missing, per-binding. Not
     automatic reauth -- a status report plus `auth login` above it. Account
     emails and gcloud's own credential list are not secret values."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     if not bindings:
         if args.json:
             print(json.dumps({}))
@@ -775,11 +883,11 @@ def cmd_auth_status(args) -> int:
 
 
 def _wif_configured(project: str) -> bool:
-    """True iff `project` has a gcp-bindings.json entry with a non-empty
+    """True iff `project` has a vault-bindings.json entry with a non-empty
     wif_audience. Boolean only -- the audience string itself is never
     returned by this helper's callers (matches `portunus auth gcp`'s own
     restraint: identity/scope/expiry only, never the audience/token)."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     binding = bindings.get(project)
     return bool(binding and binding.wif_audience)
 
@@ -791,7 +899,7 @@ def cmd_discover(args) -> int:
     touches SecretBackend.access()."""
     registry = Registry()
     account = ""
-    binding = load_gcp_bindings().get(args.project)
+    binding = load_vault_bindings().get(args.project)
     if binding:
         account = binding.account
     try:
@@ -838,29 +946,35 @@ def cmd_discover(args) -> int:
 
 
 def cmd_bindings_set(args) -> int:
-    """Upsert one project's GCP binding -- only explicitly-passed fields
+    """Upsert one project's vault binding -- only explicitly-passed fields
     change, preserving whichever field wasn't passed (mirrors Registry.
     retag()'s only-passed-fields-change pattern). Identity-selector/topology
     strings only (account email, WIF audience) -- never a credential."""
-    bindings = load_gcp_bindings()
+    bindings = load_vault_bindings()
     existing = bindings.get(args.project)
     account = args.account if args.account else (existing.account if existing else "")
     wif_audience = (
         args.wif_audience if args.wif_audience else (existing.wif_audience if existing else "")
     )
-    bindings[args.project] = GcpProjectBinding(
+    backend = args.backend if args.backend else (existing.backend if existing else "gcp")
+    sync_mode = args.sync_mode if args.sync_mode else (existing.sync_mode if existing else "direct")
+    bindings[args.project] = VaultBinding(
         project=args.project, wif_audience=wif_audience, account=account,
+        backend=backend, sync_mode=sync_mode,
     )
-    save_gcp_bindings(bindings)
-    print(f"binding set: {args.project} (account={account or '-'}, wif_audience={wif_audience or '-'})")
+    save_vault_bindings(bindings)
+    print(
+        f"binding set: {args.project} (backend={backend}, sync_mode={sync_mode}, "
+        f"account={account or '-'}, wif_audience={wif_audience or '-'})"
+    )
     return 0
 
 
 def cmd_bindings_show(args) -> int:
-    """Show one or all GCP bindings -- real account/wif_audience values, not
-    presence-only. A local CLI reading the operator's own 0600
-    gcp-bindings.json is the same trust boundary as `cat`ing it directly."""
-    bindings = load_gcp_bindings()
+    """Show one or all vault bindings -- real account/wif_audience values,
+    not presence-only. A local CLI reading the operator's own 0600
+    vault-bindings.json is the same trust boundary as `cat`ing it directly."""
+    bindings = load_vault_bindings()
     if args.project:
         binding = bindings.get(args.project)
         if binding is None:
@@ -872,7 +986,10 @@ def cmd_bindings_show(args) -> int:
         bindings = {args.project: binding}
     if args.json:
         print(json.dumps({
-            proj: {"account": b.account, "wif_audience": b.wif_audience}
+            proj: {
+                "account": b.account, "wif_audience": b.wif_audience,
+                "backend": b.backend, "sync_mode": b.sync_mode,
+            }
             for proj, b in bindings.items()
         }))
         return 0
@@ -880,7 +997,47 @@ def cmd_bindings_show(args) -> int:
         print("(no bindings configured)")
         return 0
     for proj, b in bindings.items():
-        print(f"  {proj}  account={b.account or '-'}  wif_audience={b.wif_audience or '-'}")
+        print(
+            f"  {proj}  backend={b.backend}  sync_mode={b.sync_mode}  "
+            f"account={b.account or '-'}  wif_audience={b.wif_audience or '-'}"
+        )
+    return 0
+
+
+def cmd_sync(args) -> int:
+    """Force a recency check (and re-fetch if stale) for every cached-mode
+    reference in a project -- ahead of relying on incidental access timing
+    (the deploy use case: materialize a fresh .env once, not a live SM
+    round-trip per secret per instance). Metadata-only report: names and
+    error strings, never a value."""
+    registry, _, broker, resolver = _build()
+    synced, fresh, failed = [], [], []
+    for ref in registry.list_by_project(args.project):
+        try:
+            gated_ref = broker.check_injectable(ref.name)
+        except (NotInjectable, ApprovalRequired):
+            continue  # not currently injectable -- nothing to sync, not a failure
+        backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
+        if not isinstance(backend, SyncingBackend):
+            continue  # not a cached-mode reference -- nothing to report
+        try:
+            backend.access(gated_ref.sm_name, project=gated_ref.project)
+        except BackendError as exc:
+            failed.append({"name": ref.name, "error": str(exc)})
+            continue
+        (synced if backend.last_sync_result == "synced" else fresh).append(ref.name)
+
+    if args.json:
+        print(json.dumps({"synced": synced, "already_fresh": fresh, "failed": failed}))
+        return 0
+    for name in synced:
+        print(f"  synced        {name}")
+    for name in fresh:
+        print(f"  already-fresh {name}")
+    for entry in failed:
+        print(f"  failed        {entry['name']}: {entry['error']}")
+    if not (synced or fresh or failed):
+        print("(no cached-mode references for this project)")
     return 0
 
 
@@ -1117,6 +1274,14 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--value-file", help="read the value from this local file")
     dr.set_defaults(func=cmd_drop)
 
+    drb = sub.add_parser(
+        "drop-bulk",
+        help="put many secrets INTO Arca at once from a JSON file (local-encrypted); lands state=dropped",
+    )
+    drb.add_argument("entries_file", help="JSON file: a list of {name, sm_name, value, ...} entries")
+    drb.add_argument("--json", action="store_true", help="machine-readable output")
+    drb.set_defaults(func=cmd_drop_bulk)
+
     rv = sub.add_parser("resolve", help="resolve {{secret:NAME}} at the boundary")
     rv.add_argument("text", nargs="?", help="template text (or use --stdin)")
     rv.add_argument("--stdin", action="store_true", help="read template from stdin")
@@ -1183,10 +1348,14 @@ def build_parser() -> argparse.ArgumentParser:
     disc.add_argument("--json", action="store_true", help="machine-readable output (UI consumer)")
     disc.set_defaults(func=cmd_discover)
 
-    bnd = sub.add_parser("bindings", help="configure per-project GCP auth bindings (account/WIF audience)")
+    bnd = sub.add_parser("bindings", help="configure per-project vault bindings (backend/sync/account/WIF audience)")
     bnd_sub = bnd.add_subparsers(dest="action", required=True)
     bnd_set = bnd_sub.add_parser("set", help="upsert a project's binding -- only passed fields change")
     bnd_set.add_argument("project")
+    bnd_set.add_argument("--backend", choices=("local", "gcp", "aws"), default="",
+                          help="which vault backend serves this project's secrets (default: gcp)")
+    bnd_set.add_argument("--sync-mode", choices=("direct", "cached"), default="",
+                          help="direct = live-fetch every access (default); cached = recency-aware pull-only sync-down")
     bnd_set.add_argument("--account", default="",
                           help="local gcloud CLI identity to use for this project, e.g. user@example.com")
     bnd_set.add_argument("--wif-audience", default="", help="WIF provider resource name")
@@ -1195,6 +1364,13 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_show.add_argument("project", nargs="?", default="")
     bnd_show.add_argument("--json", action="store_true")
     bnd_show.set_defaults(func=cmd_bindings_show)
+
+    sy = sub.add_parser(
+        "sync", help="force a recency check (and re-fetch if stale) for every cached-mode reference in a project",
+    )
+    sy.add_argument("project")
+    sy.add_argument("--json", action="store_true")
+    sy.set_defaults(func=cmd_sync)
 
     tr = sub.add_parser(
         "tree",

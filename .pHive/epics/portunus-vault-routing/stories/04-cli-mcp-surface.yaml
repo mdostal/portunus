@@ -1,0 +1,81 @@
+id: 04-cli-mcp-surface
+epic: portunus-vault-routing
+title: CLI/MCP surface for bindings + sync (Slice D)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [03-sync-down-cache]
+
+description: |
+  `portunus bindings set <project> --backend {local,gcp,aws} --sync-mode {direct,cached}`
+  -- new flags alongside the existing --account/--wif-audience. `portunus bindings show` /
+  `portunus_bindings_show` (MCP) extended to report backend/sync_mode per project (still
+  never the WIF audience value). `portunus sync <project>` / `portunus_sync(project)` (MCP)
+  -- an explicit trigger forcing a recency check (and re-fetch if stale) for every
+  cached-mode reference in that project, motivated by the deploy use case (materialize a
+  fresh .env once, not a live SM round-trip per secret per instance). Returns a
+  metadata-only report: {"synced": [...], "already_fresh": [...], "failed": [...]} --
+  names only, never values.
+
+acceptance_criteria:
+  - "Given `portunus bindings set demo --backend local --sync-mode cached`, when run, then the resulting VaultBinding has backend='local', sync_mode='cached', and existing account/wif_audience fields are preserved if not passed"
+  - "Given `portunus bindings show`/`portunus_bindings_show`, when called, then backend and sync_mode appear per project alongside the existing account/wif_audience presence -- audience value itself still never printed"
+  - "Given a project with 3 cached-mode references, 1 already fresh and 2 stale, when `portunus sync <project>`/`portunus_sync` runs, then it reports {\"synced\": [the 2 stale names], \"already_fresh\": [the 1 fresh name], \"failed\": []} -- names only"
+  - "Given a project with no cached-mode references at all, when synced, then it reports empty lists cleanly, not an error"
+  - "Given a reference where the remote fetch fails (e.g. gcloud error), when synced, then it's reported under \"failed\" with a short error string, and the sync of other references in the same batch still completes"
+  - "Given portunus_sync's full source, when inspected via AST, then no return path references anything but names/error strings -- never a value"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for the new bindings flags, the extended bindings show output, and portunus_sync's three-bucket report including partial-failure handling.
+    agent: tester
+  - id: implement
+    description: Extend cmd_bindings_set/cmd_bindings_show and add cmd_sync (CLI) + portunus_sync (MCP), reusing story 03's SyncingBackend logic directly rather than reimplementing it.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm portunus_sync never returns a value on any path, including partial-failure branches.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_bindings_set/cmd_bindings_show (existing) to extend; bindings subparser to add --backend/--sync-mode flags to
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_bindings_show (existing) to extend; portunus_sync to add following the established tool docstring/error-dict style
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Extend bindings set/show; add `portunus sync <project>` subcommand
+  - file: src/portunus/mcp_server.py
+    change: Extend portunus_bindings_show; add portunus_sync tool
+  - file: tests/test_cli_bindings.py
+    change: Add flag/output tests
+  - file: tests/test_mcp_server.py
+    change: Add portunus_sync tests
+
+design_decisions:
+  - decision: portunus_sync reuses SyncingBackend's own access() logic rather than a parallel implementation
+    rationale: "Single implementation everywhere principle -- avoids a second, divergent staleness-check code path"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "portunus_sync's report is names/error-strings only, verified by AST source check (acceptance criterion 6), mirroring the pattern established for every write/action tool in this codebase."
+  - concern: audit-chain-integrity
+    action: "Each sync-triggered re-fetch goes through the same resolve audit entry as any other access -- unchanged mechanism."
+
+risks:
+  - severity: low
+    description: portunus_sync's partial-failure handling could abort the whole batch on one bad reference
+    mitigation: Explicit acceptance criterion (5) requires per-reference isolation -- one failure doesn't block the rest of the batch
+
+references:
+  - path: .pHive/epics/portunus-vault-routing/docs/design-discussion.md
+    relevant_excerpt: "Slice D -- CLI/MCP surface"

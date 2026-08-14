@@ -152,6 +152,13 @@ export default function DetailDrawer({
         <button className="btn quiet" onClick={() => setMoveOpen((v) => !v)}>
           Move…
         </button>
+        {/* Inert by construction (portunus-vault-routing) -- no route, no
+            handler. Placeholder for real key-rotation integrations (auto-
+            roll via a provider's own API, e.g. Vercel/GCP), a separate,
+            not-yet-built direction from the manual "Rotate…" flow above. */}
+        <button className="btn quiet" disabled title="Automated key rotation -- coming soon">
+          Auto-rotate…
+        </button>
       </div>
 
       {moveOpen && (
