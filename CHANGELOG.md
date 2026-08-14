@@ -4,6 +4,29 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-14
+
+### Added
+
+- **`portunus_drop`** — the create-side counterpart to the read/inject MCP tools, letting a
+  handed-off agent instance create a new secret in the local vault end-to-end without shelling
+  out to the CLI. Local-vault only (fails closed with the identical message the CLI's own
+  `drop` uses if the backend is `gcloud`/`aws` — Portunus still has no write path into GCP
+  Secret Manager or AWS). Lands new references at `state=dropped`, mirroring `cmd_drop` exactly.
+  `value` is the one argument across the whole MCP surface that flows *in* from the caller's
+  context rather than out of Portunus — inherent to being handed a secret to store, not a
+  boundary violation (see README's MCP section for the full reasoning). Three layers of
+  scrutiny given the risk: an AST check confirming no `Return` expression references the
+  `value` name, line-by-line review, and an explicit docstring instruction telling the caller
+  not to echo the value back to the human after a successful store.
+- **`portunus_state`** — a thin MCP wrapper over `Registry.set_state()`, mirroring `cmd_state`.
+  Closes the loop `portunus_drop` deliberately leaves open (fail-closed `state=dropped` by
+  default) — promotes a freshly-created secret to `state=enabled` without a CLI round-trip.
+  Pure metadata; no backend or value ever touched.
+- Installed the `portunus-ask` skill at Claude Code's user scope (`~/.claude/skills/`) in
+  addition to this repo's copy, so other Claude Code instances see it automatically —
+  previously it was only visible inside this one repo.
+
 ## [0.11.0] - 2026-08-13
 
 ### Added

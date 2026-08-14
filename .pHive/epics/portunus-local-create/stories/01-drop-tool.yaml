@@ -30,7 +30,8 @@ acceptance_criteria:
   - "Given portunus_drop succeeds, when its return value is inspected, then it is exactly {\"name\", \"sm_name\", \"state\"} -- no `value` key, no key containing the input value as a substring, on this or any other path"
   - "Given portunus_drop's full source (every branch), when inspected via AST, then no `Return` node's expression references the name `value` -- only ref.name/ref.sm_name/ref.state or fixed string literals"
   - "Given the docstring, when read, then it explicitly instructs the calling agent not to echo the value back to the human/its own output after a successful store (grill H3) -- Portunus's own return never contains it, but nothing else stops the caller from re-printing what it already had"
-  - "Given a duplicate name (registry.add would raise), when portunus_drop is called, then a clean {\"error\": ...} is returned, never a raw traceback, and backend.store is never called for the failed registration"
+  - "Given an empty value string, when portunus_drop is called, then it returns {\"error\": \"empty secret value; nothing dropped\"} -- the identical message cmd_drop already uses for its own empty-value check -- and neither registry.add nor backend.store is called"
+  - "Given Registry.add()'s actual documented behavior (\"Register (or overwrite) a reference\" -- it does NOT raise on a duplicate name, confirmed by reading registry.py:145-176), when portunus_drop is called twice with the same name, then the second call succeeds and overwrites the first reference's metadata, matching cmd_drop's own established (pre-existing, unchanged) overwrite behavior -- not a new duplicate-guard invented by this story"
 
 methodology: tdd
 steps:
