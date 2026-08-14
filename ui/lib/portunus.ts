@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 
 export interface RunResult {
   code: number;
@@ -54,6 +55,17 @@ export function runPortunus(args: string[], stdin?: string): Promise<RunResult> 
     const child = spawn("portunus", args, {
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
+      // Never inherit this process's own CWD -- when running inside the
+      // Tauri desktop app, that's the bundled resources/web directory
+      // (the packaged node_modules tree). Python's import system treats
+      // CWD as an implicit sys.path entry; a cold filesystem-metadata
+      // scan over that massive bundled tree reproducibly hung `portunus`
+      // subprocess calls (confirmed live: profiled a hung process stuck
+      // in os_listdir with cwd=.../Resources/web, root-caused, and
+      // confirmed the hang disappears once cwd is pinned somewhere small
+      // and stable instead of wherever the parent process happens to be
+      // running from).
+      cwd: tmpdir(),
     });
 
     let stdout = "";
