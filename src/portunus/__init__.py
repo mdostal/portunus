@@ -29,7 +29,7 @@ from .registry import Registry, Reference, NoMatch, AmbiguousMatch, RegistryLock
 from .audit import AuditChain
 from .backend import (
     SecretBackend, MockBackend, GcloudBackend, AWSSecretsManagerBackend,
-    BackendError, GcpProjectBinding, load_gcp_bindings, save_gcp_bindings,
+    BackendError, VaultBinding, load_vault_bindings, save_vault_bindings,
 )
 from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
 from .broker import Broker, NotInjectable, ApprovalRequired
@@ -46,7 +46,7 @@ from .auth import (
     assert_no_long_lived_cloud_keys,
 )
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 __all__ = [
     "Registry",
@@ -61,9 +61,9 @@ __all__ = [
     "SESSION_SCHEMA",
     "GcloudBackend",
     "AWSSecretsManagerBackend",
-    "GcpProjectBinding",
-    "load_gcp_bindings",
-    "save_gcp_bindings",
+    "VaultBinding",
+    "load_vault_bindings",
+    "save_vault_bindings",
     "BackendError",
     "Broker",
     "NotInjectable",

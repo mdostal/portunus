@@ -1,0 +1,81 @@
+id: 05-ui-vault-menu
+epic: portunus-vault-routing
+title: UI per-project vault menu + rotate-key stub (Slice E)
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [04-cli-mcp-surface]
+
+description: |
+  Project Explorer's existing read-only wif_configured badge becomes a real per-project
+  settings control: a backend dropdown (Local / GCP / AWS -- AWS visibly marked "not yet
+  implemented," same restraint as the CLI stub) and a sync_mode toggle (Direct / Cached),
+  backed by a new /api/bindings route (thin shell-out to `portunus bindings set/show`,
+  same pattern every other route already uses -- no gating logic duplicated in
+  TypeScript). A disabled, greyed-out "Rotate key" button on the reference DetailDrawer --
+  visual placeholder only, no route, no handler, a tooltip along the lines of "coming
+  soon" -- signals the future key-rotation direction without building it.
+
+acceptance_criteria:
+  - "Given Project Explorer, when viewing a project, then a backend dropdown and sync_mode toggle render, reflecting the real current binding via /api/bindings"
+  - "Given a change to either control, when submitted, then /api/bindings shells out to `portunus bindings set` (same runPortunus() dispatcher every other route uses) and the UI reflects the new state after refresh"
+  - "Given the AWS option in the backend dropdown, when selected, then it's visibly marked not-yet-implemented (matching the CLI's own AWSSecretsManagerBackend stub restraint) -- not presented as equally ready"
+  - "Given the reference DetailDrawer, when viewing any reference, then a \"Rotate key\" button renders disabled/greyed-out with a tooltip, and has no click handler or route wired to it"
+  - "Given `npm run build`, when run after this story's changes, then it completes with no TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add /api/bindings route; extend ProjectExplorer.tsx with the backend/sync_mode controls; add the disabled Rotate-key button to DetailDrawer.
+    agent: developer
+  - id: test
+    description: npm run build; live smoke test against a temp PORTUNUS_HOME exercising the new controls in a browser.
+    agent: tester
+    depends_on: [implement]
+  - id: review
+    description: Confirm no gating/backend-selection logic is reimplemented in TypeScript -- the route only shells out to the CLI, same as every other route.
+    agent: reviewer
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/ProjectExplorer.tsx
+      purpose: Existing wif_configured read-only badge (line ~217) this story upgrades to a real editable control
+    - path: ui/lib/portunus.ts
+      purpose: runPortunus() dispatcher every existing API route shells through -- /api/bindings must use the same pattern
+    - path: ui/app/api/discover/route.ts
+      purpose: Existing route pattern to mirror for the new /api/bindings route
+
+files_to_modify:
+  - file: ui/app/api/bindings/route.ts
+    change: New route, thin shell-out to `portunus bindings set/show`
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: Backend dropdown + sync_mode toggle, wired to /api/bindings
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Disabled "Rotate key" stub button
+  - file: ui/app/types.ts
+    change: Binding type additions (backend/sync_mode)
+
+design_decisions:
+  - decision: Rotate-key button is inert by construction -- no route, no handler
+    rationale: "Cannot accidentally get wired up to real functionality later without a deliberate new story -- matches this epic's explicit non-goal of real key rotation"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- backend/sync_mode are config metadata, not values; the WIF audience value itself still never renders in the UI, matching the CLI's existing restraint (unchanged from before this story)."
+  - concern: audit-chain-integrity
+    action: "N/A -- UI config changes shell out to the same CLI commands already covered by stories 01/04's own audit-N/A reasoning."
+
+risks:
+  - severity: low
+    description: A user could expect the Rotate-key button to do something since it's visible
+    mitigation: Explicit tooltip text + disabled state makes the non-functional status clear, matching how the AWS backend option is marked
+
+references:
+  - path: .pHive/epics/portunus-vault-routing/docs/design-discussion.md
+    relevant_excerpt: "Slice E -- UI: per-project vault menu + rotate-key stub"

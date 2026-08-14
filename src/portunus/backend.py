@@ -59,43 +59,77 @@ class MockBackend:
 
 
 @dataclass(frozen=True)
-class GcpProjectBinding:
-    """Which GCP project a Reference's secret lives in, and how to auth to it.
+class VaultBinding:
+    """Which backend serves a project's secrets, and how to reach it.
+
+    `backend` is one of "local" | "gcp" | "aws" -- which SecretBackend
+    adapter this project routes to (see Resolver's per-reference router).
+    `sync_mode` is "direct" (live-fetch every access, today's behavior) or
+    "cached" (recency-aware pull-only sync-down into the local vault --
+    never the reverse). Both default to today's exact effective behavior
+    (gcp/direct) so every reference migrated from the legacy gcp-bindings.json
+    format keeps working unchanged.
 
     `wif_audience` is the Workload Identity Federation provider resource name
     (e.g. "//iam.googleapis.com/projects/<num>/locations/global/
     workloadIdentityPools/<pool>/providers/<provider>") -- infrastructure
     topology, not a credential, but kept out of world-readable files anyway
-    (see load_gcp_bindings/save_gcp_bindings 0600 handling).
+    (see load_vault_bindings/save_vault_bindings 0600 handling). GCP-specific;
+    ignored by other backend types.
 
     `account` is a local gcloud CLI identity email (e.g. "user@example.com")
     to pass as `--account=` when no WIF token is minted for this project --
     lets multiple already-locally-authenticated GCP accounts coexist without
     depending on gcloud's single mutable "active account" pointer. Empty
     means "use whatever gcloud considers active" (today's ambient behavior).
+    GCP-specific; ignored by other backend types.
     """
 
     project: str
     wif_audience: str = ""
     account: str = ""
+    backend: str = "gcp"
+    sync_mode: str = "direct"
 
 
-def _gcp_bindings_path(path: Optional[Path] = None) -> Path:
-    return path or (home() / "gcp-bindings.json")
+def _vault_bindings_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "vault-bindings.json")
 
 
-def load_gcp_bindings(path: Optional[Path] = None) -> Dict[str, GcpProjectBinding]:
-    """Load PORTUNUS_HOME/gcp-bindings.json (project -> GcpProjectBinding).
+def _legacy_gcp_bindings_path() -> Path:
+    return home() / "gcp-bindings.json"
 
-    Falls back to a single binding derived from PORTUNUS_GCP_PROJECT /
-    PORTUNUS_GCP_WIF_AUDIENCE when no bindings file exists -- preserves
-    today's zero-config single-project behavior exactly.
+
+def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
+    """Load PORTUNUS_HOME/vault-bindings.json (project -> VaultBinding).
+
+    Migration-safe by construction, not by script: if the new file doesn't
+    exist, falls back to reading the legacy PORTUNUS_HOME/gcp-bindings.json
+    under its old schema, defaulting every entry to backend="gcp",
+    sync_mode="direct" -- byte-for-byte today's real effective behavior. The
+    legacy file is only ever read here, never written/moved/deleted by this
+    function. Falls back further to a single binding derived from
+    PORTUNUS_GCP_PROJECT/PORTUNUS_GCP_WIF_AUDIENCE when neither file exists --
+    preserves today's zero-config single-project behavior exactly.
     """
-    bindings_path = _gcp_bindings_path(path)
+    bindings_path = _vault_bindings_path(path)
     if bindings_path.exists():
         raw = json.loads(bindings_path.read_text() or "{}")
         return {
-            proj: GcpProjectBinding(
+            proj: VaultBinding(
+                project=proj,
+                wif_audience=cfg.get("wif_audience", ""),
+                account=cfg.get("account", ""),
+                backend=cfg.get("backend", "gcp"),
+                sync_mode=cfg.get("sync_mode", "direct"),
+            )
+            for proj, cfg in raw.items()
+        }
+    legacy_path = _legacy_gcp_bindings_path()
+    if legacy_path.exists():
+        raw = json.loads(legacy_path.read_text() or "{}")
+        return {
+            proj: VaultBinding(
                 project=proj,
                 wif_audience=cfg.get("wif_audience", ""),
                 account=cfg.get("account", ""),
@@ -106,17 +140,21 @@ def load_gcp_bindings(path: Optional[Path] = None) -> Dict[str, GcpProjectBindin
     if not fallback_project:
         return {}
     audience = os.environ.get("PORTUNUS_GCP_WIF_AUDIENCE", "")
-    return {fallback_project: GcpProjectBinding(project=fallback_project, wif_audience=audience)}
+    return {fallback_project: VaultBinding(project=fallback_project, wif_audience=audience)}
 
 
-def save_gcp_bindings(
-    bindings: Dict[str, GcpProjectBinding], path: Optional[Path] = None
+def save_vault_bindings(
+    bindings: Dict[str, VaultBinding], path: Optional[Path] = None
 ) -> None:
-    """Persist project bindings, 0600 on disk (grill H1)."""
-    bindings_path = _gcp_bindings_path(path)
+    """Persist project bindings, 0600 on disk (grill H1). Always writes the
+    new vault-bindings.json -- never touches a legacy gcp-bindings.json."""
+    bindings_path = _vault_bindings_path(path)
     bindings_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
-        proj: {"wif_audience": b.wif_audience, "account": b.account}
+        proj: {
+            "wif_audience": b.wif_audience, "account": b.account,
+            "backend": b.backend, "sync_mode": b.sync_mode,
+        }
         for proj, b in bindings.items()
     }
     tmp = bindings_path.with_suffix(".json.tmp")
@@ -132,7 +170,7 @@ class GcloudBackend:
     Zero-config: constructed with just `project` (or PORTUNUS_GCP_PROJECT),
     behaves exactly as before this epic -- ambient `gcloud` credentials,
     single project. Multi-project + keyless: pass `bindings` (from
-    load_gcp_bindings()); access(sm_name, project=...) then picks the
+    load_vault_bindings()); access(sm_name, project=...) then picks the
     matching binding's WIF audience and mints a short-lived access token per
     call, written to a 0600 tempfile passed via --access-token-file and
     unlinked in a finally block -- the token is never logged, printed, or
@@ -145,7 +183,7 @@ class GcloudBackend:
         timeout: float = 30.0,
         credential_provider: Optional[GCPWorkloadIdentityAuth] = None,
         runner=None,
-        bindings: Optional[Dict[str, GcpProjectBinding]] = None,
+        bindings: Optional[Dict[str, VaultBinding]] = None,
         audit: Optional[AuditChain] = None,
     ):
         self.project = project
@@ -198,6 +236,36 @@ class GcloudBackend:
             )
         return proc.stdout
 
+    def latest_version(self, sm_name: str, project: str = "") -> str:
+        """Return the latest VERSION's createTime -- a cheap, metadata-only
+        recency marker for SyncingBackend, distinct from discover.py's
+        create_time (the secret RESOURCE's creation time, which never
+        changes on rotation). Never touches the value."""
+        if shutil.which("gcloud") is None:
+            raise BackendError("gcloud CLI not found on PATH")
+        effective_project = project or self.project
+        provider = self._credential_provider_for(effective_project)
+        binding = self.bindings.get(effective_project)
+        with self._access_token_file(provider) as token_file:
+            cmd = ["gcloud"]
+            if token_file:
+                cmd.append(f"--access-token-file={token_file}")
+            elif binding and binding.account:
+                cmd.append(f"--account={binding.account}")
+            cmd.extend(["secrets", "versions", "describe", "latest", f"--secret={sm_name}"])
+            if effective_project:
+                cmd.append(f"--project={effective_project}")
+            cmd.append("--format=json")
+            try:
+                proc = self.runner(cmd, capture_output=True, text=True, timeout=self.timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise BackendError(f"gcloud timeout for {sm_name}") from exc
+        if proc.returncode != 0:
+            raise BackendError(
+                f"gcloud versions describe failed for {sm_name}: {proc.stderr.strip()[:200]}"
+            )
+        return json.loads(proc.stdout or "{}").get("createTime", "")
+
     @contextmanager
     def _access_token_file(self, provider: Optional[GCPWorkloadIdentityAuth]):
         if provider is None:
@@ -234,3 +302,70 @@ class AWSSecretsManagerBackend:
             "AWS Secrets Manager backend is not yet implemented -- "
             "see portunus-vault-metadata design discussion"
         )
+
+
+class SyncingBackend:
+    """Recency-aware, pull-only sync-down cache -- GCP -> local only, never
+    the reverse (portunus-vault-routing). Wraps `remote` (the real backend,
+    e.g. GcloudBackend) + `local` (the cache tier, LocalEncryptedBackend in
+    practice -- duck-typed here, not imported directly, to avoid a circular
+    import with localvault.py) + a small on-disk SyncState file
+    (`f"{project}:{sm_name}"` -> last-synced version marker, never a value).
+
+    access(): if `remote` doesn't implement `latest_version`, always fetches
+    live and still caches (correct, just not optimally cached -- keeps this
+    wrapper generic for future adapters without a cheap recency check yet).
+    Else, compares `remote.latest_version(...)` to the stored marker; a
+    match serves straight from the local cache with zero remote value-fetch;
+    a mismatch (or first sync) fetches the real value, caches it, and
+    updates the marker.
+    """
+
+    def __init__(self, remote: SecretBackend, local: SecretBackend, state_path: Path):
+        self.remote = remote
+        self.local = local
+        self.state_path = Path(state_path)
+        # "synced" | "fresh" -- which path the most recent access() took.
+        # Metadata about the cache's own behavior, never a value; lets
+        # `portunus sync`/`portunus_sync` report synced vs. already_fresh
+        # without re-deriving it from the state file.
+        self.last_sync_result: str = ""
+
+    def _load_state(self) -> Dict[str, str]:
+        if self.state_path.exists():
+            return json.loads(self.state_path.read_text() or "{}")
+        return {}
+
+    def _save_state(self, state: Dict[str, str]) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.state_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.state_path)
+        os.chmod(self.state_path, 0o600)
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        cache_key = f"{project}:{sm_name}"
+        latest_version = getattr(self.remote, "latest_version", None)
+        if latest_version is None:
+            value = self.remote.access(sm_name, project=project)
+            self.local.store(cache_key, value)
+            self.last_sync_result = "synced"
+            return value
+
+        state = self._load_state()
+        marker = latest_version(sm_name, project=project)
+        if state.get(cache_key) == marker:
+            try:
+                value = self.local.access(cache_key)
+                self.last_sync_result = "fresh"
+                return value
+            except BackendError:
+                pass  # marker recorded but local copy missing -- refetch below
+
+        value = self.remote.access(sm_name, project=project)
+        self.local.store(cache_key, value)
+        state[cache_key] = marker
+        self.last_sync_result = "synced"
+        self._save_state(state)
+        return value

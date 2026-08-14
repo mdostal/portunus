@@ -130,22 +130,31 @@ def test_portunus_ask_preview_no_backend_access():
 
 
 def test_portunus_bindings_show_returns_configured_bindings(home):
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    from portunus.backend import VaultBinding, save_vault_bindings
     from portunus import mcp_server
-    save_gcp_bindings({"demo": GcpProjectBinding("demo", account="user@example.com")})
+    save_vault_bindings({"demo": VaultBinding("demo", account="user@example.com")})
     result = mcp_server.portunus_bindings_show()
     assert result["demo"]["account"] == "user@example.com"
 
 
 def test_portunus_bindings_show_single_project(home):
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
+    from portunus.backend import VaultBinding, save_vault_bindings
     from portunus import mcp_server
-    save_gcp_bindings({
-        "a": GcpProjectBinding("a", account="a@example.com"),
-        "b": GcpProjectBinding("b", account="b@example.com"),
+    save_vault_bindings({
+        "a": VaultBinding("a", account="a@example.com"),
+        "b": VaultBinding("b", account="b@example.com"),
     })
     result = mcp_server.portunus_bindings_show("a")
     assert list(result.keys()) == ["a"]
+
+
+def test_portunus_bindings_show_reports_backend_and_sync_mode(home):
+    from portunus.backend import VaultBinding, save_vault_bindings
+    from portunus import mcp_server
+    save_vault_bindings({"demo": VaultBinding("demo", backend="local", sync_mode="cached")})
+    result = mcp_server.portunus_bindings_show("demo")
+    assert result["demo"]["backend"] == "local"
+    assert result["demo"]["sync_mode"] == "cached"
 
 
 # --- story 03: discovery tool ------------------------------------------
@@ -590,3 +599,132 @@ def test_state_no_backend_access():
     from portunus import mcp_server
     code = _no_backend_access(mcp_server.portunus_state)
     assert ".access(" not in code
+
+
+# --- story 04 (portunus-vault-routing): portunus_sync tool ---------------
+
+def test_portunus_sync_reports_synced(home, monkeypatch):
+    import json as _json
+    from types import SimpleNamespace as _NS
+    from portunus import Registry, mcp_server
+    from portunus.backend import VaultBinding, save_vault_bindings
+
+    def fake_run(cmd, capture_output, text, timeout):
+        if "describe" in cmd:
+            return _NS(returncode=0, stdout=_json.dumps({"name": "v1", "createTime": "T1"}), stderr="")
+        return _NS(returncode=0, stdout="VALUE", stderr="")
+
+    monkeypatch.setattr("portunus.backend.subprocess.run", fake_run)
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    save_vault_bindings({"demo": VaultBinding("demo", backend="gcp", sync_mode="cached")})
+    Registry().add("x", "sm-x", project="demo")
+
+    result = mcp_server.portunus_sync("demo")
+    assert result == {"synced": ["x"], "already_fresh": [], "failed": []}
+
+
+def test_portunus_sync_no_cached_references(home):
+    from portunus import Registry, mcp_server
+    Registry().add("x", "sm-x", project="demo")
+    result = mcp_server.portunus_sync("demo")
+    assert result == {"synced": [], "already_fresh": [], "failed": []}
+
+
+def test_portunus_drop_accepts_backend_override(home):
+    from portunus import mcp_server, Registry
+    result = mcp_server.portunus_drop(name="x", sm_name="sm-x", value="v", backend="local")
+    assert result == {"name": "x", "sm_name": "sm-x", "state": "dropped"}
+    assert Registry().require("x").backend == "local"
+
+
+# --- story 06 (portunus-vault-routing): portunus_drop_bulk ---------------
+
+def test_drop_bulk_creates_all_valid_entries(home):
+    from portunus import mcp_server, Registry
+    entries = [
+        {"name": "a", "sm_name": "sm-a", "value": "va"},
+        {"name": "b", "sm_name": "sm-b", "value": "vb"},
+        {"name": "c", "sm_name": "sm-c", "value": "vc"},
+    ]
+    result = mcp_server.portunus_drop_bulk(entries)
+    assert set(result["created"]) == {"a", "b", "c"}
+    assert result["failed"] == []
+    assert Registry().require("a").state == "dropped"
+    assert Registry().require("c").sm_name == "sm-c"
+
+
+def test_drop_bulk_handles_coin_finder_scale(home):
+    from portunus import mcp_server, Registry
+    entries = [
+        {"name": f"candidate-{i}", "sm_name": f"SM_{i}", "value": f"pw{i}"}
+        for i in range(100)
+    ]
+    result = mcp_server.portunus_drop_bulk(entries)
+    assert len(result["created"]) == 100
+    assert result["failed"] == []
+    reg = Registry()
+    assert reg.require("candidate-0").sm_name == "SM_0"
+    assert reg.require("candidate-99").sm_name == "SM_99"
+
+
+def test_drop_bulk_isolates_partial_failures(home):
+    from portunus import mcp_server, Registry
+    entries = [{"name": f"x{i}", "sm_name": f"sm-x{i}", "value": f"v{i}"} for i in range(100)]
+    entries[46] = {"name": "bad-empty", "sm_name": "sm-bad", "value": ""}
+    entries[60] = {"name": "x0", "sm_name": "sm-dup", "value": "v"}  # duplicate name (overwrite, not a failure)
+
+    result = mcp_server.portunus_drop_bulk(entries)
+    assert len(result["created"]) == 99  # 100 entries - 1 real failure (dup overwrites, doesn't fail)
+    assert len(result["failed"]) == 1
+    assert result["failed"][0]["name"] == "bad-empty"
+    assert "empty" in result["failed"][0]["error"]
+    # the other 98 valid entries + the overwritten x0 still landed
+    assert Registry().require("x1").sm_name == "sm-x1"
+    assert Registry().require("x0").sm_name == "sm-dup"
+
+
+def test_drop_bulk_backend_gate_checked_once_upfront(home, monkeypatch):
+    from portunus import mcp_server
+    monkeypatch.setenv("PORTUNUS_BACKEND", "gcloud")
+    entries = [{"name": "a", "sm_name": "sm-a", "value": "va"}]
+    result = mcp_server.portunus_drop_bulk(entries)
+    assert result == {
+        "error": "drop requires the local-encrypted backend "
+        "(unset PORTUNUS_BACKEND or set it to unset/local)"
+    }
+
+
+def test_drop_bulk_never_leaks_a_value_source_check():
+    """AST-level: no Return node anywhere in portunus_drop_bulk references
+    a variable holding an entry's value -- only names/error strings."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_drop_bulk))
+    tree = ast.parse(src)
+    func = tree.body[0]
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return) and node.value is not None:
+            names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+            assert "value" not in names, ast.unparse(node.value)
+
+
+def test_portunus_sync_never_returns_a_value_source_check():
+    """portunus_sync legitimately calls backend.access() to force a sync
+    check (unlike the pure-metadata tools) -- the real guarantee here is
+    structural: no Return node's expression tree references anything but
+    the report dict's own name/error-string lists."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_sync))
+    tree = ast.parse(src)
+    func = tree.body[0]
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return) and node.value is not None:
+            names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+            assert names <= {"synced", "fresh", "failed"}, ast.unparse(node.value)

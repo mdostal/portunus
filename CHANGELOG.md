@@ -4,6 +4,46 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-14
+
+### Added
+
+- **Per-project/per-reference vault routing** — closes the gap between `backend.py`'s own
+  long-standing docstring claim ("selected per-Reference by provider+project") and reality (one
+  global `PORTUNUS_BACKEND` env var per process). `Resolver` now routes each reference through a
+  3-level precedence: the reference's own `backend` override, else its project's
+  `VaultBinding.backend`, else the global `PORTUNUS_BACKEND`-selected backend as the final,
+  unchanged fallback. `PORTUNUS_BACKEND=mock` always short-circuits the router entirely — a
+  configured binding can never override a test/dry-run's mock mode.
+- **`VaultBinding`** (renamed from `GcpProjectBinding`) gains `backend`
+  (`local`/`gcp`/`aws`) and `sync_mode` (`direct`/`cached`) fields. Config lives in the new
+  `PORTUNUS_HOME/vault-bindings.json`, with a migration-safe fallback to the legacy
+  `gcp-bindings.json` (old schema, defaulting to `backend="gcp", sync_mode="direct"` — the real
+  vault's existing bindings keep working with zero manual migration).
+- **Recency-aware, pull-only sync-down cache** (`SyncingBackend`) — a project with
+  `sync_mode="cached"` fetches from GCP once, caches it in the local encrypted vault, and only
+  re-fetches when the remote's value has actually changed (a cheap `gcloud secrets versions
+  describe` recency check on every access). GCP → local only, never the reverse. `portunus sync
+  <project>` / `portunus_sync` (MCP) force an explicit recency check ahead of relying on
+  incidental access timing — useful for materializing a fresh set of secrets once at deploy time.
+- **`portunus bindings set --backend/--sync-mode`**, extended `bindings show`/
+  `portunus_bindings_show` output.
+- **`portunus_drop_bulk`** (MCP) / **`portunus drop-bulk <file.json>`** (CLI) — create many
+  local-vault secrets in one call, motivated by a real "try ~100 candidate passwords safely"
+  workflow. A malformed entry is reported separately without aborting the rest of the batch.
+  `portunus_drop`/`drop` also gain the `backend` override parameter their own design had
+  described but hadn't wired up yet.
+- **UI**: Project Explorer's read-only WIF badge becomes a real per-project backend/sync_mode
+  editor (new `/api/bindings` route). DetailDrawer gains a distinct, inert "Auto-rotate…" stub
+  signaling the future real-key-rotation direction, kept separate from the existing, working
+  manual "Rotate…" flow.
+
+### Fixed
+
+- Project Explorer's `load()` no longer lets one failing endpoint (`discover`, now an expected
+  failure for a local-only project with no live GCP project at all) block the other two
+  (`list`/`bindings`) from rendering — found via live browser testing during this release.
+
 ## [0.12.0] - 2026-08-14
 
 ### Added

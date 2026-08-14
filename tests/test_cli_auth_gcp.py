@@ -25,8 +25,8 @@ def test_auth_gcp_prints_identity_never_the_token(home, monkeypatch, capsys):
 
 
 def test_auth_gcp_resolves_audience_from_bindings_when_not_passed(home, monkeypatch, capsys):
-    from portunus.backend import GcpProjectBinding, save_gcp_bindings
-    save_gcp_bindings({"personalsites-487021": GcpProjectBinding("personalsites-487021", "aud-from-file")})
+    from portunus.backend import VaultBinding, save_vault_bindings
+    save_vault_bindings({"personalsites-487021": VaultBinding("personalsites-487021", "aud-from-file")})
     monkeypatch.setenv("PORTUNUS_OIDC_TOKEN", "OIDC.JWT.TEST")
 
     seen = {}

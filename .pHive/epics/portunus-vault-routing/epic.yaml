@@ -1,0 +1,48 @@
+name: portunus-vault-routing
+title: Per-project/per-reference vault adapters + recency-aware sync-down
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Closes the gap between backend.py's own docstring ("selected per-Reference by
+  provider+project") and reality (one global PORTUNUS_BACKEND env var per process). Adds:
+  a VaultBinding model generalizing gcp-bindings.json with backend/sync_mode fields
+  (migration-safe -- the real personalsites-487021/ffe-cicd bindings keep working
+  untouched); a backend router giving each reference a 3-level precedence (ref.backend
+  override > project VaultBinding > global PORTUNUS_BACKEND fallback); a recency-aware,
+  pull-only sync-down cache (GCP -> local only, never the reverse); CLI/MCP surface for
+  all of it; a UI per-project vault menu + inert rotate-key stub; and a bulk-import tool
+  motivated by a real "try ~100 candidate passwords safely" use case. Real key-rotation
+  integrations, local->cloud push, and "Portunus as an embeddable vault inside a
+  third-party installable app" are explicitly out of scope -- future epics.
+
+stories:
+  - id: 01-vault-binding-model
+    title: VaultBinding model + migration-safe config (Slice A)
+    complexity: high
+    depends_on: []
+  - id: 02-backend-router
+    title: Per-reference backend router (Slice B)
+    complexity: high
+    depends_on: [01-vault-binding-model]
+  - id: 03-sync-down-cache
+    title: Recency-aware sync-down cache (Slice C)
+    complexity: high
+    depends_on: [02-backend-router]
+  - id: 04-cli-mcp-surface
+    title: CLI/MCP surface for bindings + sync (Slice D)
+    complexity: medium
+    depends_on: [03-sync-down-cache]
+  - id: 05-ui-vault-menu
+    title: UI per-project vault menu + rotate-key stub (Slice E)
+    complexity: medium
+    depends_on: [04-cli-mcp-surface]
+  - id: 06-bulk-import
+    title: portunus_drop_bulk (Slice F)
+    complexity: medium
+    depends_on: [01-vault-binding-model]
+  - id: 07-closeout
+    title: Docs, version bump, live proof (Slice G)
+    complexity: medium
+    depends_on: [05-ui-vault-menu, 06-bulk-import]

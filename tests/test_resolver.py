@@ -101,3 +101,46 @@ def test_no_placeholder_passthrough(stack):
     seen = {}
     stack["resolver"].resolve_call("nothing to see here", lambda s: seen.setdefault("v", s))
     assert seen["v"] == "nothing to see here"
+
+
+# --- story 02 (portunus-vault-routing): per-reference backend router ----
+
+def test_backend_for_none_is_byte_identical_to_no_router(stack):
+    """Default behavior (backend_for omitted) is the exact pre-existing
+    code path -- self.backend.access(...) directly."""
+    _register(stack)
+    from portunus import Resolver
+    resolver = Resolver(stack["registry"], stack["backend"], stack["broker"])
+    assert resolver.backend_for is None
+    seen = {}
+    resolver.resolve_call("{{secret:shared-anthropic}}", lambda s: seen.setdefault("v", s))
+    assert seen["v"] == SECRET
+
+
+def test_backend_for_used_when_provided(stack):
+    from portunus import Resolver, MockBackend
+    _register(stack)
+    other = MockBackend()
+    other.set("dostal-shared-anthropic", "FROM-OTHER-BACKEND")
+
+    def router(ref):
+        return other
+
+    resolver = Resolver(stack["registry"], stack["backend"], stack["broker"], backend_for=router)
+    seen = {}
+    resolver.resolve_call("{{secret:shared-anthropic}}", lambda s: seen.setdefault("v", s))
+    assert seen["v"] == "FROM-OTHER-BACKEND"
+
+
+def test_backend_for_receives_the_full_reference(stack):
+    from portunus import Resolver
+    _register(stack)
+    seen_refs = []
+
+    def router(ref):
+        seen_refs.append(ref)
+        return stack["backend"]
+
+    resolver = Resolver(stack["registry"], stack["backend"], stack["broker"], backend_for=router)
+    resolver.resolve_call("{{secret:shared-anthropic}}", lambda s: None)
+    assert seen_refs[0].name == "shared-anthropic"

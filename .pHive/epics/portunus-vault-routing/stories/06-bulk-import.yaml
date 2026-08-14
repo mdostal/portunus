@@ -1,0 +1,78 @@
+id: 06-bulk-import
+epic: portunus-vault-routing
+title: portunus_drop_bulk (Slice F)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-vault-binding-model]
+
+description: |
+  New portunus_drop_bulk(entries: List[dict]) -> dict (MCP) / `portunus drop --bulk
+  <file.json>` (CLI): accepts a list of entries, each with portunus_drop's same field set
+  (name, sm_name, value, plus optional metadata including the new backend field from story
+  01). Same per-entry logic as portunus_drop -- same backend gate, same empty-value guard,
+  same state="dropped" landing, same audit entry per secret -- just looped, with one
+  summary report back: {"created": [names...], "failed": [{"name": ..., "error": ...}]} --
+  names and error strings only, never a value, on any entry, on any path. A partial
+  failure doesn't abort the whole batch. Directly motivated by the "coin finder" scenario:
+  importing ~100 candidate passwords/keys at once instead of one portunus_drop call each.
+
+acceptance_criteria:
+  - "Given a list of 5 valid entries, when portunus_drop_bulk runs, then all 5 are created (state=dropped) and the report is {\"created\": [the 5 names], \"failed\": []}"
+  - "Given 100 valid entries (the coin-finder scale), when portunus_drop_bulk runs, then all 100 are created correctly and each is independently resolvable afterward"
+  - "Given a batch where entry 47 of 100 has an empty value and entry 61 duplicates an earlier name in the same batch, when portunus_drop_bulk runs, then both are reported under \"failed\" with clear error strings, and the other 98 valid entries still land"
+  - "Given the active backend is gcloud/aws, when portunus_drop_bulk runs, then it returns a single top-level error (same message portunus_drop uses) before attempting any entry -- the backend gate is checked once, not per-entry"
+  - "Given portunus_drop_bulk's full source, when inspected via AST, then no return path (including inside the per-entry loop) references any entry's `value` field except via the same backend.store() call pattern story 01's portunus_drop already established"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for the happy path (small + 100-entry scale), partial failure isolation, the single upfront backend gate, and the AST-level never-leaks-a-value check.
+    agent: tester
+  - id: implement
+    description: Implement portunus_drop_bulk reusing portunus_drop's per-entry logic (registry.add/backend.store/audit.append), not reimplementing it.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the per-entry loop can't leak a value into the summary report on any failure path, and that partial failures are genuinely isolated.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_drop (portunus-local-create epic) -- the exact per-entry logic this story loops, not reimplements
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_drop_bulk tool
+  - file: src/portunus/cli.py
+    change: Add `drop --bulk <file.json>` flag
+  - file: tests/test_mcp_server.py
+    change: Add bulk tests including the 100-entry scale test
+
+design_decisions:
+  - decision: One upfront backend-gate check, not per-entry
+    rationale: "The gate is a property of the active backend/process, not of any individual entry -- checking once avoids 100 identical error messages in a failed-fast scenario"
+  - decision: Partial failure never aborts the batch
+    rationale: "Directly serves the coin-finder use case -- a malformed entry among 100 shouldn't cost the other 99"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Same three-layer discipline as portunus_drop (story 01 of portunus-local-create), applied per-entry across the whole batch -- AST check on the summary-report return path, never a per-entry value leak."
+  - concern: audit-chain-integrity
+    action: "One audit entry per successfully-created secret, identical to calling portunus_drop N times -- unchanged mechanism, just batched."
+
+risks:
+  - severity: medium
+    description: A very large batch (the coin-finder's 100+ entries) could be slow or leave the registry in a confusing half-written state if interrupted mid-batch
+    mitigation: Each entry's registry.add()/backend.store() is independently complete before moving to the next -- an interruption leaves a valid prefix of the batch created, not a corrupted partial entry; the report always reflects exactly what was actually created
+
+references:
+  - path: .pHive/epics/portunus-vault-routing/docs/design-discussion.md
+    relevant_excerpt: "Slice F -- Bulk import"

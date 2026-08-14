@@ -1,0 +1,105 @@
+id: 01-vault-binding-model
+epic: portunus-vault-routing
+title: VaultBinding model + migration-safe config (Slice A)
+status: pending
+complexity: high
+methodology: tdd
+depends_on: []
+
+description: |
+  Rename GcpProjectBinding -> VaultBinding (backend.py), adding backend: str = "gcp" (one
+  of local|gcp|aws) and sync_mode: str = "direct" (one of direct|cached). Rename
+  load_gcp_bindings/save_gcp_bindings -> load_vault_bindings/save_vault_bindings across
+  every call site (backend.py's GcloudBackend.__init__, cli.py's _build/cmd_bindings_set/
+  cmd_bindings_show/cmd_auth_gcp/cmd_discover/_wif_configured, mcp_server.py's
+  portunus_bindings_show/portunus_discover) -- a clean rename, not a back-compat shim.
+
+  Migration is safe by construction, not a script: save_vault_bindings() always writes to
+  a NEW file, PORTUNUS_HOME/vault-bindings.json. load_vault_bindings() checks that file
+  first; if absent, reads the LEGACY gcp-bindings.json under the old schema and defaults
+  every entry to backend="gcp", sync_mode="direct" -- byte-for-byte the same effective
+  behavior the real vault has today. The legacy file is never written, moved, or deleted
+  by this story. The acceptance-critical test loads the ACTUAL current gcp-bindings.json
+  content (not a simplified fixture) and confirms both real projects still resolve
+  correctly.
+
+  Also add Reference.backend: str = "" (registry.py) -- the per-reference override field
+  story 02's router will read. Registry.add()/retag() both accept an optional `backend`
+  parameter, following the exact pattern group/related already established. Not a
+  _STRUCTURED_TAG_FIELDS entry -- never collision-checked, same treatment as
+  description/purpose/group/related.
+
+acceptance_criteria:
+  - "Given the real, actual current PORTUNUS_HOME/gcp-bindings.json content (personalsites-487021 + ffe-cicd, verbatim), when load_vault_bindings() reads it, then both projects resolve to backend='gcp' with their existing account/wif_audience values intact, and no new file is written as a side effect of reading"
+  - "Given no vault-bindings.json and no gcp-bindings.json, when load_vault_bindings() reads, then it falls back to the existing PORTUNUS_GCP_PROJECT/PORTUNUS_GCP_WIF_AUDIENCE env-derived single binding, unchanged from today"
+  - "Given a fresh vault-bindings.json written via save_vault_bindings(), when load_vault_bindings() reads it back, then backend/sync_mode round-trip correctly alongside wif_audience/account, and it takes precedence over any legacy gcp-bindings.json present"
+  - "Given save_vault_bindings() is called, when inspected, then the legacy gcp-bindings.json file (if present) is untouched -- not read-then-rewritten, not deleted, not renamed"
+  - "Given registry.add(..., backend='local') and registry.retag(name, backend='gcp'), when called, then Reference.backend is set/updated correctly and never participates in the tag-collision check (two references with identical provider/project/env/tags but different backend must not collide)"
+  - "Given every existing call site of load_gcp_bindings/save_gcp_bindings/GcpProjectBinding (backend.py, cli.py, mcp_server.py), when grepped after the rename, then none remain -- a clean rename, not a dual-named shim"
+
+methodology: tdd
+steps:
+  - id: research
+    description: Confirm every call site of GcpProjectBinding/load_gcp_bindings/save_gcp_bindings (grep across backend.py/cli.py/mcp_server.py/tests) and the actual current gcp-bindings.json content in ~/.portunus to build the migration test against real data.
+    agent: researcher
+  - id: test-spec
+    description: Write failing tests for the migration-safe load/save, the Reference.backend field on add/retag, and the collision-exemption.
+    agent: tester
+    depends_on: [research]
+  - id: implement
+    description: Rename the dataclass/functions across every call site; implement the new/legacy file precedence; add Reference.backend.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the legacy gcp-bindings.json is genuinely never written/moved/deleted anywhere in the changed code, and that the real vault's actual content round-trips correctly.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: GcpProjectBinding/load_gcp_bindings/save_gcp_bindings (lines 61-127) -- the exact precedent this story generalizes
+    - path: src/portunus/registry.py
+      purpose: Reference dataclass, Registry.add()/retag() -- add the backend field following group/related's exact precedent
+    - path: src/portunus/cli.py
+      purpose: Every call site of load_gcp_bindings/save_gcp_bindings that needs renaming (_build, cmd_bindings_set, cmd_bindings_show, cmd_auth_gcp, cmd_discover, _wif_configured)
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_bindings_show/portunus_discover -- both import load_gcp_bindings today
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: Rename GcpProjectBinding -> VaultBinding (add backend/sync_mode fields), load_gcp_bindings/save_gcp_bindings -> load_vault_bindings/save_vault_bindings, new file with legacy fallback
+  - file: src/portunus/registry.py
+    change: Add Reference.backend field; Registry.add()/retag() accept it
+  - file: src/portunus/cli.py
+    change: Update every call site to the renamed functions/class
+  - file: src/portunus/mcp_server.py
+    change: Update portunus_bindings_show/portunus_discover's imports
+  - file: tests/test_backend*.py
+    change: Update to renamed names; add migration tests against real-shaped data
+
+design_decisions:
+  - decision: New file (vault-bindings.json) + legacy-fallback read, never a migration script that touches the old file
+    rationale: "The real, already-populated gcp-bindings.json for personalsites-487021/ffe-cicd must never be at risk of a bad rewrite -- read-only fallback is strictly safer than any write-based migration"
+  - decision: Clean rename across all call sites, not a load_gcp_bindings back-compat alias
+    rationale: "Every call site is known in advance within this one epic -- a dual-named shim would be exactly the kind of unnecessary back-compat cruft this codebase avoids elsewhere"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- bindings/backend metadata are not secret values (matches the existing gcp-bindings.json's own restraint: account/audience, never a credential)."
+  - concern: audit-chain-integrity
+    action: "N/A -- config/metadata changes, not access events."
+
+risks:
+  - severity: critical
+    description: A bug in the migration read path silently breaks the real vault's existing GCP bindings
+    mitigation: Acceptance criterion 1 tests against the actual current file content, not a simplified fixture; the legacy file is read-only, never mutated by this story
+
+references:
+  - path: .pHive/epics/portunus-vault-routing/docs/design-discussion.md
+    relevant_excerpt: "Slice A -- VaultBinding model + migration-safe config"

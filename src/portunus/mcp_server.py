@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .backend import BackendError, load_gcp_bindings
+from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, NotInjectable
 from .cli import _build, _build_tree, _wif_configured
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
@@ -112,15 +112,22 @@ def portunus_ask_preview(request: str) -> dict:
 
 @mcp.tool()
 def portunus_bindings_show(project: str = "") -> dict:
-    """Show configured GCP project bindings (account/WIF audience) -- one
-    project or all. Same values as `portunus bindings show --json`."""
-    bindings = load_gcp_bindings()
+    """Show configured per-project vault bindings (backend/sync_mode/
+    account/WIF audience) -- one project or all. Same values as
+    `portunus bindings show --json`."""
+    bindings = load_vault_bindings()
     if project:
         binding = bindings.get(project)
         if binding is None:
             return {}
         bindings = {project: binding}
-    return {p: {"account": b.account, "wif_audience": b.wif_audience} for p, b in bindings.items()}
+    return {
+        p: {
+            "account": b.account, "wif_audience": b.wif_audience,
+            "backend": b.backend, "sync_mode": b.sync_mode,
+        }
+        for p, b in bindings.items()
+    }
 
 
 @mcp.tool()
@@ -288,6 +295,7 @@ def portunus_drop(
     injected_as: Optional[dict] = None,
     group: str = "",
     related: Optional[list] = None,
+    backend: str = "",
 ) -> dict:
     """Create a new LOCAL-VAULT secret -- the harness-side counterpart to
     `portunus drop`. Restricted to the local-encrypted backend only, same as
@@ -297,7 +305,9 @@ def portunus_drop(
     state="dropped" (fail-closed); call portunus_state(name, "enabled")
     separately to make it injectable. `tags`/`injected_as` are plain dicts,
     `related` is a plain list of reference names -- no CLI-style comma-
-    separated string parsing.
+    separated string parsing. `backend` optionally overrides which backend
+    THIS reference routes to later (e.g. "gcp") once you've dropped it here
+    locally -- empty means "use the project's default binding."
 
     `value` is the one place in this tool's surface where a secret flows IN
     from your own context rather than out of Portunus -- that's inherent to
@@ -308,8 +318,8 @@ def portunus_drop(
     output after a successful store -- Portunus can't undo you already
     having it."""
     registry, _audit, broker, resolver = _build()
-    backend = resolver.backend
-    if not hasattr(backend, "store"):
+    local_backend = resolver.backend
+    if not hasattr(local_backend, "store"):
         return {
             "error": "drop requires the local-encrypted backend "
             "(unset PORTUNUS_BACKEND or set it to unset/local)"
@@ -320,12 +330,61 @@ def portunus_drop(
         name, sm_name, scope=scope, kind=kind, state="dropped",
         provider=provider, project=project, env=env, tags=tags,
         description=description, purpose=purpose, injected_as=injected_as,
-        group=group, related=related,
+        group=group, related=related, backend=backend,
     )
-    backend.store(ref.sm_name, value)
+    local_backend.store(ref.sm_name, value)
     del value
     broker.audit.append("drop", ref.sm_name, "stored")
     return {"name": ref.name, "sm_name": ref.sm_name, "state": ref.state}
+
+
+@mcp.tool()
+def portunus_drop_bulk(entries: List[dict]) -> dict:
+    """Create many LOCAL-VAULT secrets in one call -- the bulk counterpart
+    to portunus_drop, for cases like importing ~100 candidate passwords/
+    keys at once (e.g. trying each one against a wallet-unlock operation
+    via portunus_resolve_exec later, without ever seeing which one worked
+    until you check the result). Each entry takes the same fields as
+    portunus_drop (name, sm_name, value required; scope/kind/provider/
+    project/env/tags/description/purpose/injected_as/group/related/backend
+    optional). The backend gate is checked ONCE upfront, not per-entry --
+    same fail-closed message as portunus_drop. A malformed entry (empty
+    value, missing required field) is reported under "failed" and does NOT
+    abort the rest of the batch -- every valid entry still lands, exactly
+    like calling portunus_drop N times would. Returns {"created": [names],
+    "failed": [{"name", "error"}]} -- names and error strings only, never a
+    value, on any entry, on any path."""
+    registry, _audit, broker, resolver = _build()
+    local_backend = resolver.backend
+    if not hasattr(local_backend, "store"):
+        return {
+            "error": "drop requires the local-encrypted backend "
+            "(unset PORTUNUS_BACKEND or set it to unset/local)"
+        }
+    created: List[str] = []
+    failed: List[dict] = []
+    for entry in entries:
+        entry_name = entry.get("name", "")
+        try:
+            entry_value = entry.get("value", "")
+            if not entry_value:
+                raise ValueError("empty secret value; nothing dropped")
+            ref = registry.add(
+                entry_name, entry.get("sm_name", ""),
+                scope=entry.get("scope", ""), kind=entry.get("kind", ""), state="dropped",
+                provider=entry.get("provider", ""), project=entry.get("project", ""),
+                env=entry.get("env", ""), tags=entry.get("tags"),
+                description=entry.get("description", ""), purpose=entry.get("purpose", ""),
+                injected_as=entry.get("injected_as"), group=entry.get("group", ""),
+                related=entry.get("related"), backend=entry.get("backend", ""),
+            )
+            local_backend.store(ref.sm_name, entry_value)
+            del entry_value
+            broker.audit.append("drop", ref.sm_name, "stored")
+            created.append(ref.name)
+        except (ValueError, KeyError) as exc:
+            failed.append({"name": entry_name, "error": str(exc)})
+    return {"created": created, "failed": failed}
 
 
 @mcp.tool()
@@ -343,6 +402,37 @@ def portunus_state(name: str, state: str) -> dict:
     except ValueError as exc:
         return {"error": str(exc)}
     return {"name": ref.name, "state": ref.state}
+
+
+@mcp.tool()
+def portunus_sync(project: str) -> dict:
+    """Force a recency check (and re-fetch if stale) for every cached-mode
+    reference in a project -- the harness-side counterpart to
+    `portunus sync <project>`. Ahead of relying on incidental access
+    timing: the deploy use case is materializing a fresh set of secrets
+    once, not a live Secret Manager round-trip per secret per instance.
+    Returns {"synced": [names], "already_fresh": [names], "failed":
+    [{"name", "error"}]} -- names and error strings only, never a value.
+    References not currently injectable, or not routed through a
+    sync_mode="cached" project binding, are silently skipped -- nothing to
+    sync, not a failure."""
+    registry, _audit, broker, resolver = _build()
+    synced, fresh, failed = [], [], []
+    for ref in registry.list_by_project(project):
+        try:
+            gated_ref = broker.check_injectable(ref.name)
+        except (NotInjectable, ApprovalRequired):
+            continue
+        backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
+        if not isinstance(backend, SyncingBackend):
+            continue
+        try:
+            backend.access(gated_ref.sm_name, project=gated_ref.project)
+        except BackendError as exc:
+            failed.append({"name": ref.name, "error": str(exc)})
+            continue
+        (synced if backend.last_sync_result == "synced" else fresh).append(ref.name)
+    return {"synced": synced, "already_fresh": fresh, "failed": failed}
 
 
 def run_server() -> None:
