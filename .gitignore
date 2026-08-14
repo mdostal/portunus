@@ -32,3 +32,4 @@ dist/
 # os
 .DS_Store
 .venv/
+.playwright-mcp/
