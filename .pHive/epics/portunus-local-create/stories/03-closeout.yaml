@@ -1,0 +1,85 @@
+id: 03-closeout
+epic: portunus-local-create
+title: Docs, version bump, live local smoke test
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [01-drop-tool, 02-state-tool]
+
+description: |
+  Full pytest suite green. README.md/.pHive/CONTEXT.md/the portunus-ask skill doc updated to
+  document portunus_drop/portunus_state (repo copy AND the ~/.claude/skills/portunus-ask
+  user-scope copy installed this session -- keep both in sync). Version bump (minor: 0.11.0 ->
+  0.12.0) in lockstep across pyproject.toml/manifest.json/src/portunus/__init__.py. CHANGELOG
+  entry. Real proof: create a real local secret for a "gig-tracker" project end-to-end through
+  the actual MCP tools (portunus_drop -> portunus_state enabled -> portunus_resolve_to_tempfile),
+  confirm the value never appears in any tool's return or this session's own output, then remove
+  the demo entry (it's a smoke-test artifact, not something the user asked to keep in their real
+  vault).
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given README.md's MCP tool table, when read, then it lists portunus_drop and portunus_state alongside the 8 existing tools"
+  - "Given a live smoke test calling the real (non-mocked) portunus_drop then portunus_state then portunus_resolve_to_tempfile against a gig-tracker-tagged reference, when run, then the round trip succeeds and the value is confirmed absent from every tool's return value via direct comparison (not just visual inspection)"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry 0.12.0 in lockstep"
+  - "Given CHANGELOG.md, when read, then it has a new entry for this epic"
+  - "Given ~/.claude/skills/portunus-ask/SKILL.md, when read, then it is up to date with the repo copy's cross-reference note (both were already in sync from the portunus-mcp-server epic's user-scope install; confirm the create-tools mention gets added to both)"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest; update README/CONTEXT.md/skill docs (repo + user-scope copies); apply version bump; write CHANGELOG entry; run the live local smoke test and clean up its demo entry afterward.
+    agent: developer
+  - id: review
+    description: Confirm the live smoke test's own output (this session's tool results) never contains the raw value string.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: MCP tool table this story extends
+    - path: .pHive/CONTEXT.md
+      purpose: OSTIARIUS terminology entry (already documents the MCP server as a third entry point; this story doesn't need to change the entry point description, only note the new tools exist)
+    - path: .claude/skills/portunus-ask/SKILL.md
+      purpose: Repo copy of the skill doc
+    - path: ~/.claude/skills/portunus-ask/SKILL.md
+      purpose: User-scope copy installed this session so other Claude Code instances see it automatically -- must be kept in sync with the repo copy
+
+files_to_modify:
+  - file: README.md
+    change: Add portunus_drop/portunus_state to the MCP tool table, note the local-only restriction
+  - file: .claude/skills/portunus-ask/SKILL.md
+    change: Note create capability now exists via MCP (portunus_drop), still CLI-first guidance for this skill's own scope
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Smoke-test demo entry is created then removed, not left in the real vault
+    rationale: "Mirrors this session's own discipline (real proofs use real entries, but a gig-tracker demo secret isn't something the user asked to actually keep) -- registry.remove() after the round-trip is confirmed"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The closeout's own smoke test is the final, real-world check of this epic's central risk (portunus_drop's value-in path) -- explicitly re-verified against actual tool output, not just unit-test assertions, same discipline as the portunus-mcp-server epic's Gemini-key proof."
+  - concern: audit-chain-integrity
+    action: "N/A beyond what stories 01/02 already cover -- documentation/verification-only story."
+
+risks:
+  - severity: low
+    description: The live smoke test's own visible output could accidentally include the demo value if the verification method is careless (e.g. printing the resolved tempfile's contents directly)
+    mitigation: Use the same indirect comparison technique already established this session (grep -F the tempfile's content against the tool's full return, never print either directly) -- proven pattern from the portunus-mcp-server epic's Gemini-key proof
+
+references:
+  - path: .pHive/epics/portunus-local-create/docs/design-discussion.md
+    relevant_excerpt: "Slice C -- Closeout"

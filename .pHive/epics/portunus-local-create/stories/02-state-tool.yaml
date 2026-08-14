@@ -1,0 +1,83 @@
+id: 02-state-tool
+epic: portunus-local-create
+title: portunus_state MCP tool -- lifecycle transition
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  Thin MCP wrapper over Registry.set_state(), mirroring cmd_state exactly. Closes the loop
+  portunus_drop deliberately leaves open (state=dropped, fail-closed by default) -- lets a
+  handed-off agent instance actually promote a freshly-created secret to state=enabled without
+  shelling out to the CLI. Pure metadata: no backend, no value, ever touched.
+
+acceptance_criteria:
+  - "Given an existing reference, when portunus_state is called with a valid state (enabled/locked/dropped/revoked/requested), then registry.set_state is called and the tool returns {\"name\", \"state\"}"
+  - "Given an unknown reference name, when portunus_state is called, then it returns {\"error\": \"unknown reference: <name>\"} -- KeyError from registry.set_state caught cleanly"
+  - "Given an invalid state string, when portunus_state is called, then it returns a clean {\"error\": ...} -- ValueError from registry.set_state caught cleanly, never a raw traceback"
+  - "Given portunus_state's full source, when inspected via AST, then it never imports or references SecretBackend.access() -- pure metadata operation"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for the happy path, unknown-reference error, and invalid-state error.
+    agent: tester
+  - id: implement
+    description: Implement portunus_state wrapping registry.set_state(), mirroring cmd_state's exception handling.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no backend/value access anywhere in the tool -- pure metadata, low risk given VALID_STATES validation already happens inside Registry.set_state.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: "cmd_state (lines 650-657) -- the exact logic this tool mirrors"
+    - path: src/portunus/registry.py
+      purpose: "Registry.set_state() (lines 184-190) and VALID_STATES (line 25) -- validates the state string, raises ValueError/KeyError"
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_state tool
+  - file: tests/test_mcp_server.py
+    change: Add tests
+
+code_examples:
+  - title: cmd_state's exact call sequence
+    file: src/portunus/cli.py
+    snippet: |
+      def cmd_state(args) -> int:
+          registry, *_ = _build()
+          try:
+              registry.set_state(args.name, args.state)
+          except KeyError:
+              return _err(f"unknown reference: {args.name}")
+          print(f"{args.name}: state={args.state}")
+          return 0
+
+design_decisions:
+  - decision: No new validation logic -- reuse Registry.set_state()'s own VALID_STATES check
+    rationale: "Single implementation everywhere principle (same as every other tool in mcp_server.py) -- Registry already validates and raises the right exceptions"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- pure metadata operation, no backend/value access anywhere in this tool."
+  - concern: audit-chain-integrity
+    action: "N/A -- state transitions are not audit-chain events today (cmd_state doesn't audit either); unchanged behavior."
+
+risks:
+  - severity: low
+    description: An agent could enable a secret that should have stayed gated
+    mitigation: set_state doesn't touch approval/gate machinery -- Broker.check_injectable still runs at resolve time regardless of state; no gate bypass introduced
+
+references:
+  - path: .pHive/epics/portunus-local-create/docs/design-discussion.md
+    relevant_excerpt: "Slice B -- portunus_state (lifecycle transition)"

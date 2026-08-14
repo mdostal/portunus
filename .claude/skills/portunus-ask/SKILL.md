@@ -29,6 +29,9 @@ value.
   of shelling out to this CLI. Same gating, same boundary-only guarantee; see README.md's "MCP
   server — for other agents/harnesses" section for the tool list (`portunus_resolve_to_tempfile`,
   `portunus_resolve_exec`, etc).
+- You need to *create* a new secret, not fetch an existing one — this skill only wraps `ask`'s
+  fetch/request flow. Use the MCP server's `portunus_drop` tool instead (local-vault only; see
+  README.md), or `portunus drop --stdin` directly if you're on the CLI.
 
 ## Requesting an add or rotate (you still never see the value)
 
