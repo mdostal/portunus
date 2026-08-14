@@ -1,0 +1,34 @@
+name: portunus-metadata-and-rotation-provenance
+title: Unified UI metadata + rotation provenance (Vercel-priority stubs)
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Two confirmed slices. (A) Unify AddSecretForm/DetailDrawer's metadata fields (kind/scope/
+  backend/description/purpose/injected_as/group/related consistently available at both
+  creation and edit time) -- mostly UI-completeness, plus one real backend gap: cmd_drop has
+  no --backend CLI flag today even though reg add/retag/portunus_drop (MCP) all do. (B)
+  RotationBinding (which provider, what account/context) + a RotationAdapter stub registry
+  (Vercel named as the confirmed priority target, still shipping as a stub this epic --
+  "not going to care too much for first version") mirroring ARCA's own real/stub posture.
+  The Auto-rotate button (portunus-swappable-trio) becomes wired to derived real/stub state
+  instead of being unconditionally disabled -- still effectively disabled today since no real
+  adapter exists yet, but now computed from the registry, not hardcoded. The recursive design
+  decision (a future real rotation adapter uses Portunus's own resolve_call to fetch its own
+  admin credential -- Portunus rotating secrets using a Portunus-managed secret) is documented
+  but not exercised, since no real adapter ships this epic.
+
+stories:
+  - id: 01-ui-metadata-unification
+    title: Unify AddSecretForm/DetailDrawer metadata fields + cmd_drop --backend flag
+    complexity: medium
+    depends_on: []
+  - id: 02-rotation-provenance
+    title: RotationBinding + RotationAdapter stub registry (Vercel priority) + UI wiring
+    complexity: medium
+    depends_on: []
+  - id: 03-closeout
+    title: Docs, version bump, live proof
+    complexity: low
+    depends_on: [01-ui-metadata-unification, 02-rotation-provenance]

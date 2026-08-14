@@ -1,0 +1,78 @@
+id: 03-closeout
+epic: portunus-metadata-and-rotation-provenance
+title: Docs, version bump, live proof
+status: pending
+complexity: low
+methodology: classic
+depends_on: [01-ui-metadata-unification, 02-rotation-provenance]
+
+description: |
+  Full pytest suite green; npm run build clean. README/CONTEXT.md/docs/architecture.md
+  updated: the Petitio-adjacent "rotation provenance" concept documented (RotationBinding/
+  RotationAdapter, Vercel as the named priority target, the recursive self-vaulted-admin-
+  credential pattern for when a real adapter eventually ships). Version bump (minor).
+  Live proof: create a real reference via the UI's now-unified metadata form against a
+  scratch project, confirm every field round-trips; confirm rotation-bindings set/show works
+  against a real (scratch) provider entry; confirm cleanup leaves the real vault untouched.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given `cd ui && npm run build`, when run, then it completes clean"
+  - "Given docs/architecture.md, when read, then it documents RotationBinding/RotationAdapter and the recursive admin-credential pattern, distinct from ARCA's own real/stub backends"
+  - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped minor version in lockstep"
+  - "Given the live proof, when run, then it demonstrates the unified metadata form and rotation-bindings round trip against real (scratch) data, and the real vault's existing references/bindings are confirmed untouched afterward"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Run full pytest + npm build; update docs; apply version bump; write CHANGELOG entry; run the live proofs against scratch data.
+    agent: developer
+  - id: review
+    description: Confirm the real vault (personalsites-487021/ffe-cicd bindings, existing references) is genuinely untouched by the live proof.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: docs/architecture.md
+      purpose: This story's doc target -- add rotation provenance alongside the existing 4 diagrams
+    - path: README.md
+      purpose: Component table -- Petitio row could note the rotation-provenance relationship, or a new row/section
+
+files_to_modify:
+  - file: docs/architecture.md
+    change: Document RotationBinding/RotationAdapter + the recursive admin-credential pattern
+  - file: README.md
+    change: Note rotation provenance exists as a config layer, still all stubs
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+
+design_decisions:
+  - decision: Live proof uses scratch data, not the real personalsites-487021/ffe-cicd projects
+    rationale: "This story doesn't need to touch the real vault to prove the new capability -- lower risk to use a clean scratch project, matching the pattern used for the swappable-trio epic's stub-kind proof"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A beyond what stories 01/02 already cover -- documentation/verification-only story."
+  - concern: audit-chain-integrity
+    action: "Live proof confirms `portunus verify` stays INTACT."
+
+risks:
+  - severity: low
+    description: Docs could overstate rotation as more real than it is
+    mitigation: Explicit acceptance criterion (3) requires the docs to clearly distinguish this from ARCA's real/stub backends -- rotation has ZERO real adapters yet, unlike ARCA's local+GCP
+
+references:
+  - path: .pHive/epics/portunus-metadata-and-rotation-provenance/docs/design-discussion.md
+    relevant_excerpt: "Full document -- closeout ties together both slices"

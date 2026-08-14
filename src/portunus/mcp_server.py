@@ -23,6 +23,7 @@ from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, re
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
+from .rotation import load_rotation_bindings
 
 mcp = FastMCP("portunus")
 
@@ -128,6 +129,23 @@ def portunus_bindings_show(project: str = "") -> dict:
         }
         for p, b in bindings.items()
     }
+
+
+@mcp.tool()
+def portunus_rotation_status(provider: str = "") -> dict:
+    """Show configured per-provider rotation bindings (status/account) --
+    one provider or all. Metadata only, never a credential -- rotation
+    adapters resolve their own admin token via the normal boundary-only
+    resolver, never a value this tool could see. Same values as
+    `portunus rotation-bindings show --json`. Every provider is a stub
+    today (status="stub") -- no real rotation has ever fired."""
+    bindings = load_rotation_bindings()
+    if provider:
+        binding = bindings.get(provider)
+        if binding is None:
+            return {}
+        bindings = {provider: binding}
+    return {p: {"status": b.status, "account": b.account} for p, b in bindings.items()}
 
 
 @mcp.tool()

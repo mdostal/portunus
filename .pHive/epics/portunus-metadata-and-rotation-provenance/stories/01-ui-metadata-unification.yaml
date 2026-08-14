@@ -1,0 +1,82 @@
+id: 01-ui-metadata-unification
+epic: portunus-metadata-and-rotation-provenance
+title: Unify AddSecretForm/DetailDrawer metadata fields + cmd_drop --backend flag
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  AddSecretDraft (ui/app/types.ts) grows to match DetailDrawer's Move form's field set plus
+  the CLI/MCP-only fields: kind, scope, backend, description, purpose, injected_as, group,
+  related -- alongside the existing name/sm_name/provider/project/env/tags. AddSecretForm.tsx
+  gains the missing inputs, matching DetailDrawer's existing input patterns exactly. cmd_drop
+  gains a --backend flag (confirmed gap: reg add/retag/portunus_drop MCP tool all already
+  support it, cmd_drop doesn't). No new backend concepts -- every other field already has full
+  CLI/route support.
+
+acceptance_criteria:
+  - "Given `portunus drop <name> <sm_name> --stdin --backend local`, when run, then the created reference has backend='local', matching reg add/retag's existing --backend behavior exactly"
+  - "Given AddSecretForm, when rendered, then it exposes inputs for kind/scope/backend/description/purpose/injected_as/group/related alongside the existing name/sm_name/provider/project/env/tags fields"
+  - "Given a secret created via AddSecretForm with all fields filled, when the resulting reference is inspected, then every field round-trips correctly through /api/drop -> portunus drop"
+  - "Given `npm run build`, when run after this story's changes, then it completes with no TypeScript errors"
+  - "Given a live browser smoke test, when a secret is created with the full field set via the UI, then DetailDrawer immediately shows the same values without needing a separate edit step"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for cmd_drop's new --backend flag.
+    agent: tester
+  - id: implement
+    description: Add --backend to cmd_drop's argparser; extend AddSecretDraft + AddSecretForm.tsx with the missing fields, matching DetailDrawer's input patterns.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm every field round-trips correctly and no field is silently dropped between the form, the route, and the CLI.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_drop's argparser (drop subparser) -- gains --backend; reg add's existing --backend flag is the exact precedent to mirror
+    - path: ui/app/components/AddSecretForm.tsx
+      purpose: The create-time form this story extends
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: The edit-time Move form -- the field set/input patterns AddSecretForm should match
+    - path: ui/app/types.ts
+      purpose: AddSecretDraft interface to extend
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add --backend to drop's argparser
+  - file: ui/app/types.ts
+    change: Extend AddSecretDraft
+  - file: ui/app/components/AddSecretForm.tsx
+    change: Add the missing metadata inputs
+  - file: tests/test_cli_drop.py
+    change: Add --backend flag test (or the existing drop test file)
+
+design_decisions:
+  - decision: No new backend concepts -- purely wiring existing CLI/route capability into the UI
+    rationale: "Confirmed by direct code audit (research-brief.md) -- every field except --backend on cmd_drop already has full backend support"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- metadata-only fields, the value input itself is unchanged (still the one deliberate plaintext-entry point, still POST-body-only, never an argv element)."
+  - concern: audit-chain-integrity
+    action: "N/A -- no new audited action, same drop/audit.append('drop', ...) path unchanged."
+
+risks:
+  - severity: low
+    description: A field could be silently dropped somewhere in the form -> route -> CLI chain
+    mitigation: Explicit acceptance criterion (3) requires round-trip verification of every field, not just the new ones
+
+references:
+  - path: .pHive/epics/portunus-metadata-and-rotation-provenance/docs/design-discussion.md
+    relevant_excerpt: "§2 -- Slice A: unify metadata across create and edit"
