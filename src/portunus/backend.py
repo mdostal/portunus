@@ -236,6 +236,36 @@ class GcloudBackend:
             )
         return proc.stdout
 
+    def latest_version(self, sm_name: str, project: str = "") -> str:
+        """Return the latest VERSION's createTime -- a cheap, metadata-only
+        recency marker for SyncingBackend, distinct from discover.py's
+        create_time (the secret RESOURCE's creation time, which never
+        changes on rotation). Never touches the value."""
+        if shutil.which("gcloud") is None:
+            raise BackendError("gcloud CLI not found on PATH")
+        effective_project = project or self.project
+        provider = self._credential_provider_for(effective_project)
+        binding = self.bindings.get(effective_project)
+        with self._access_token_file(provider) as token_file:
+            cmd = ["gcloud"]
+            if token_file:
+                cmd.append(f"--access-token-file={token_file}")
+            elif binding and binding.account:
+                cmd.append(f"--account={binding.account}")
+            cmd.extend(["secrets", "versions", "describe", "latest", f"--secret={sm_name}"])
+            if effective_project:
+                cmd.append(f"--project={effective_project}")
+            cmd.append("--format=json")
+            try:
+                proc = self.runner(cmd, capture_output=True, text=True, timeout=self.timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise BackendError(f"gcloud timeout for {sm_name}") from exc
+        if proc.returncode != 0:
+            raise BackendError(
+                f"gcloud versions describe failed for {sm_name}: {proc.stderr.strip()[:200]}"
+            )
+        return json.loads(proc.stdout or "{}").get("createTime", "")
+
     @contextmanager
     def _access_token_file(self, provider: Optional[GCPWorkloadIdentityAuth]):
         if provider is None:
@@ -272,3 +302,61 @@ class AWSSecretsManagerBackend:
             "AWS Secrets Manager backend is not yet implemented -- "
             "see portunus-vault-metadata design discussion"
         )
+
+
+class SyncingBackend:
+    """Recency-aware, pull-only sync-down cache -- GCP -> local only, never
+    the reverse (portunus-vault-routing). Wraps `remote` (the real backend,
+    e.g. GcloudBackend) + `local` (the cache tier, LocalEncryptedBackend in
+    practice -- duck-typed here, not imported directly, to avoid a circular
+    import with localvault.py) + a small on-disk SyncState file
+    (`f"{project}:{sm_name}"` -> last-synced version marker, never a value).
+
+    access(): if `remote` doesn't implement `latest_version`, always fetches
+    live and still caches (correct, just not optimally cached -- keeps this
+    wrapper generic for future adapters without a cheap recency check yet).
+    Else, compares `remote.latest_version(...)` to the stored marker; a
+    match serves straight from the local cache with zero remote value-fetch;
+    a mismatch (or first sync) fetches the real value, caches it, and
+    updates the marker.
+    """
+
+    def __init__(self, remote: SecretBackend, local: SecretBackend, state_path: Path):
+        self.remote = remote
+        self.local = local
+        self.state_path = Path(state_path)
+
+    def _load_state(self) -> Dict[str, str]:
+        if self.state_path.exists():
+            return json.loads(self.state_path.read_text() or "{}")
+        return {}
+
+    def _save_state(self, state: Dict[str, str]) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.state_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.state_path)
+        os.chmod(self.state_path, 0o600)
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        cache_key = f"{project}:{sm_name}"
+        latest_version = getattr(self.remote, "latest_version", None)
+        if latest_version is None:
+            value = self.remote.access(sm_name, project=project)
+            self.local.store(cache_key, value)
+            return value
+
+        state = self._load_state()
+        marker = latest_version(sm_name, project=project)
+        if state.get(cache_key) == marker:
+            try:
+                return self.local.access(cache_key)
+            except BackendError:
+                pass  # marker recorded but local copy missing -- refetch below
+
+        value = self.remote.access(sm_name, project=project)
+        self.local.store(cache_key, value)
+        state[cache_key] = marker
+        self._save_state(state)
+        return value

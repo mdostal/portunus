@@ -109,6 +109,37 @@ def test_two_projects_route_to_different_backends_in_same_process(home, monkeypa
     assert "--project=gcp-proj" in observed[0]
 
 
+def test_router_wraps_cached_gcp_binding_in_syncing_backend(home, monkeypatch):
+    """A project bound with sync_mode='cached' routes through SyncingBackend
+    -- second access serves from the local cache, no redundant gcloud
+    value-fetch (story 03's wiring into the router)."""
+    import json as _json
+    from types import SimpleNamespace as _NS
+
+    calls = []
+
+    def fake_run(cmd, capture_output, text, timeout):
+        calls.append(cmd)
+        if "describe" in cmd:
+            return _NS(returncode=0, stdout=_json.dumps({"name": "v1", "createTime": "T1"}), stderr="")
+        return _NS(returncode=0, stdout="CACHED-VALUE", stderr="")
+
+    monkeypatch.setattr("portunus.backend.subprocess.run", fake_run)
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    save_vault_bindings({"demo": VaultBinding("demo", backend="gcp", sync_mode="cached")})
+    registry = Registry()
+    registry.add("x", "sm-x", project="demo")
+
+    _, _, _, resolver = _build()
+    seen = {}
+    resolver.resolve_call("{{secret:x}}", lambda v: seen.setdefault("first", v))
+    resolver.resolve_call("{{secret:x}}", lambda v: seen.setdefault("second", v))
+    assert seen["first"] == "CACHED-VALUE"
+    assert seen["second"] == "CACHED-VALUE"
+    # 3 calls: describe+access on first, describe-only on second (cache hit)
+    assert len(calls) == 3
+
+
 def test_backend_gate_no_longer_requires_manual_portunus_backend_env(home, monkeypatch):
     """The exact friction point from this session: PORTUNUS_BACKEND=gcloud
     should no longer be REQUIRED for a bound project to resolve correctly."""

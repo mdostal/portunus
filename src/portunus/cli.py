@@ -22,9 +22,10 @@ from . import __version__
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import (
-    AWSSecretsManagerBackend, BackendError, GcloudBackend, VaultBinding, MockBackend,
-    load_vault_bindings, save_vault_bindings,
+    AWSSecretsManagerBackend, BackendError, GcloudBackend, SyncingBackend, VaultBinding,
+    MockBackend, load_vault_bindings, save_vault_bindings,
 )
+from .paths import home
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -47,10 +48,13 @@ def _err(msg: str) -> int:
 def _make_backend_router(vault_bindings, audit, fallback_backend):
     """The actual per-project/per-reference router (portunus-vault-routing).
     3-level precedence: (1) ref.backend, if set, wins outright; (2) else the
-    reference's project VaultBinding.backend; (3) else `fallback_backend`
-    (today's global PORTUNUS_BACKEND-selected backend, unchanged). One
-    backend instance is constructed and cached per backend kind for this
-    router's lifetime, not reconstructed per call."""
+    reference's project VaultBinding.backend (wrapped in a recency-aware
+    SyncingBackend when that project's sync_mode="cached"); (3) else
+    `fallback_backend` (today's global PORTUNUS_BACKEND-selected backend,
+    unchanged). Backend instances are constructed once and cached for this
+    router's lifetime, not reconstructed per call -- including the shared
+    SyncingBackend, so its sync-state file sees every cached-mode access
+    regardless of which project triggered it."""
     instances: dict = {}
 
     def _for_kind(kind: str):
@@ -67,11 +71,20 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
         instances[kind] = inst
         return inst
 
+    def _synced_gcp():
+        if "synced-gcp" not in instances:
+            instances["synced-gcp"] = SyncingBackend(
+                _for_kind("gcp"), _for_kind("local"), home() / "sync-state.json",
+            )
+        return instances["synced-gcp"]
+
     def router(ref):
         if ref.backend:
             return _for_kind(ref.backend)
         binding = vault_bindings.get(ref.project)
         if binding is not None:
+            if binding.backend == "gcp" and binding.sync_mode == "cached":
+                return _synced_gcp()
             return _for_kind(binding.backend)
         return fallback_backend
 
