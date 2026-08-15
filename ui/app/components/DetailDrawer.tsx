@@ -47,6 +47,11 @@ export default function DetailDrawer({
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveStatus, setMoveStatus] = useState<string | null>(null);
   const [rotationStatus, setRotationStatus] = useState<{ status: string; account: string } | null>(null);
+  // Free-text rotation-account draft, resynced whenever rotationStatus
+  // changes (reference switch, or after a successful save) -- same
+  // explicit-save pattern as ProjectExplorer's account/wif_audience fields.
+  const [rotationAccountDraft, setRotationAccountDraft] = useState("");
+  const [rotationAccountBusy, setRotationAccountBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,6 +94,31 @@ export default function DetailDrawer({
   }, [reference.provider]);
 
   const autoRotateReal = rotationStatus?.status === "real";
+
+  useEffect(() => {
+    setRotationAccountDraft(rotationStatus?.account ?? "");
+  }, [rotationStatus]);
+
+  // Sets ONLY the account hint -- never status. Mirrors ProjectExplorer's
+  // updateBinding() shell-out shape; a stub provider stays a stub no
+  // matter what this saves (design-discussion.md §1, research-brief.md §5).
+  async function saveRotationAccount() {
+    if (!reference.provider) return;
+    setRotationAccountBusy(true);
+    try {
+      const res = await fetch("/api/rotation-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: reference.provider, account: rotationAccountDraft }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRotationStatus(data[reference.provider] ?? null);
+      }
+    } finally {
+      setRotationAccountBusy(false);
+    }
+  }
 
   async function submitMove(e: React.FormEvent) {
     e.preventDefault();
@@ -229,6 +259,34 @@ export default function DetailDrawer({
           Auto-rotate…
         </button>
       </div>
+
+      {/* Sets ONLY the rotation-account hint (e.g. a Vercel team slug) --
+          never `status`, which stays derived from the real adapter
+          registry above. This never enables Auto-rotate itself; it only
+          makes the tooltip's account hint configurable without the CLI. */}
+      {reference.provider && (
+        <div className="inject-target-row">
+          <label className="form-field">
+            <span>Rotation account ({reference.provider})</span>
+            <input
+              className="field"
+              type="text"
+              placeholder="free-text context, e.g. a Vercel team slug or GitHub org"
+              value={rotationAccountDraft}
+              disabled={rotationAccountBusy}
+              onChange={(e) => setRotationAccountDraft(e.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn quiet"
+            disabled={rotationAccountBusy || rotationAccountDraft === (rotationStatus?.account ?? "")}
+            onClick={saveRotationAccount}
+          >
+            Save
+          </button>
+        </div>
+      )}
 
       {moveOpen && (
         <form className="inject-controls" onSubmit={submitMove}>

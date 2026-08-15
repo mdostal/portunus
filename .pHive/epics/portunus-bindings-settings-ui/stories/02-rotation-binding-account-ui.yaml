@@ -1,0 +1,90 @@
+id: 02-rotation-binding-account-ui
+epic: portunus-bindings-settings-ui
+title: rotation-binding account hint editable in DetailDrawer
+status: pending
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: []
+
+description: |
+  DetailDrawer.tsx already fetches per-reference rotation status (GET /api/rotation-status,
+  keyed on reference.provider) to derive the Auto-rotate button's disabled state and tooltip
+  text ("...account {rotationStatus?.account || '-'}") -- read-only. This story adds a small
+  inline text field + save button next to that tooltip, scoped to the currently-viewed
+  reference's provider, wired to a new POST /api/rotation-status handler that forwards to
+  `portunus rotation-bindings set <provider> --account <value>`. Deliberately never exposes
+  `status` -- every rotation adapter is a stub today, and letting a UI control claim
+  status=real without a real adapter existing would be a false "this actually rotates" claim
+  (research-brief.md §5, design-discussion.md §1). The Auto-rotate button itself stays disabled
+  and unwired regardless -- this story only makes the account HINT configurable, not rotation
+  itself.
+
+acceptance_criteria:
+  - "Given a reference whose provider has no existing rotation binding, when the account field is set and saved through DetailDrawer, then GET /api/rotation-status?provider=<p> reflects it AND `portunus rotation-bindings show <p> --json` (CLI, independently) shows the same value, with status still 'stub'"
+  - "Given a provider WITH an existing rotation binding (status=stub, some account), when only the account is changed, then status is unchanged (only-passed-fields-change, matching cmd_rotation_bindings_set's own existing behavior)"
+  - "Given the new POST handler and the DetailDrawer UI, when inspected, then no code path anywhere accepts or forwards a `status` value from the UI -- status stays derived from the real adapter registry, exactly as before this story"
+  - "Given the Auto-rotate button, when this story is done, then it is still disabled/unwired for every stub provider -- setting an account hint never changes autoRotateReal's derivation"
+  - "Given a live Playwright pass, when a rotation account is set for a real reference's provider through the browser UI and the drawer is reopened, then the saved value renders in the tooltip/field"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: Add POST /api/rotation-status (mirrors /api/bindings's GET-after-POST pattern) and the inline account field + save control in DetailDrawer, next to the existing Auto-rotate button/tooltip.
+    agent: developer
+  - id: build-check
+    description: cd ui && npm run build -- must be clean.
+    agent: developer
+    depends_on: [implement]
+  - id: review
+    description: Confirm no code path accepts/forwards a `status` value from the UI (acceptance criterion 3) -- this is the one guardrail this story must not regress.
+    agent: reviewer
+    depends_on: [build-check]
+  - id: live-verify
+    description: Playwright pass against a real running dev server + scratch PORTUNUS_HOME.
+    agent: tester
+    depends_on: [review]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/api/rotation-status/route.ts
+      purpose: Existing GET-only handler -- this story adds POST, mirroring ui/app/api/bindings/route.ts's own GET-after-POST pattern
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: Existing per-reference rotation-status fetch + Auto-rotate button/tooltip -- this story adds the inline editable account field right next to it
+    - path: src/portunus/cli.py
+      purpose: cmd_rotation_bindings_set -- only-passed-fields-change semantics; status defaults to existing/"stub", never inferred as "real" by this story's UI
+    - path: src/portunus/rotation.py
+      purpose: RotationBinding dataclass -- status ("stub"|"real") is what this story must never let the UI set
+
+files_to_modify:
+  - file: ui/app/api/rotation-status/route.ts
+    change: Add POST handler accepting {provider, account}, forwarding to `rotation-bindings set --account`, never accepting/forwarding status
+  - file: ui/app/components/DetailDrawer.tsx
+    change: Inline account text field + save button next to the Auto-rotate button/tooltip
+
+design_decisions:
+  - decision: status is never UI-editable, only account
+    rationale: "research-brief.md §5 -- a stub that LOOKS real through the UI is a safety-relevant misrepresentation, same class of risk the two-zone real/stub backend picker already guards against"
+  - decision: field lives in DetailDrawer, scoped per-reference/provider, not a new provider-keyed settings list
+    rationale: "design-discussion.md §2 -- rotation status is already fetched and rendered per-reference here; adding one field where the data already lives is smaller than a new surface"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "account is a free-text context hint (e.g. a Vercel team slug), never a credential -- no value-fetch path is introduced. Confirm the new POST handler never touches Broker/Resolver/any SecretBackend."
+  - concern: audit-chain-integrity
+    action: "Not applicable -- rotation-bindings.json is config, not audited today (same as vault-bindings.json before this session's own lock work); this story doesn't change that posture, just confirms it isn't silently changed either."
+
+risks:
+  - severity: medium
+    description: A future UI change could accidentally start passing status through this new POST handler, letting a stub provider be marked "real" from the browser
+    mitigation: "Explicit review step (acceptance criterion 3) checks this specifically; the handler's own implementation should structurally never read a status field off the request body, not just avoid using one today"
+
+references:
+  - path: .pHive/epics/portunus-bindings-settings-ui/docs/research-brief.md
+    relevant_excerpt: "§3 (real gap #2), §5 (status stays code-driven)"
+  - path: .pHive/epics/portunus-bindings-settings-ui/docs/design-discussion.md
+    relevant_excerpt: "§1, §4, §6"

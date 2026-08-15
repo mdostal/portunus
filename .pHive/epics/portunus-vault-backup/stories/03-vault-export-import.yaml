@@ -1,7 +1,7 @@
 id: 03-vault-export-import
 epic: portunus-vault-backup
 title: portunus vault export/import -- passphrase-locked portable archive
-status: pending
+status: shipped
 complexity: high
 methodology: tdd
 depends_on: [02-vault-lock-and-coordinated-snapshot]

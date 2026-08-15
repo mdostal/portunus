@@ -1,0 +1,101 @@
+id: 03-closeout
+epic: portunus-bindings-settings-ui
+title: docs, version bump, live browser proof
+status: pending
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [01-vault-binding-account-wif-audience-ui, 02-rotation-binding-account-ui]
+
+description: |
+  Standard epic closeout: update README.md's "Per-project/per-reference vault routing" section
+  and docs/architecture.md for the two new UI write paths, apply version_bump: minor across all
+  5 lockstep version sources with a real `cargo build`/`pip install -e ".[test]"` afterward (not
+  sed-only), write the CHANGELOG.md entry, run the full pytest suite, run `cd ui && npm run
+  build`, and do one combined live-proof pass exercising both stories' features end to end in a
+  real browser against a real running dev server + scratch PORTUNUS_HOME (Playwright).
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run after both stories land, then it is fully green with zero regressions"
+  - "Given `cd ui && npm run build`, when run, then it completes with zero TypeScript errors"
+  - "Given a live Playwright session against the running dev server, when account/wif_audience are set via Project Explorer AND a rotation account is set via DetailDrawer, then both round-trip correctly and are independently confirmed via the CLI (`portunus bindings show`/`portunus rotation-bindings show --json`)"
+  - "Given the version bump, when checked, then all 5 lockstep sources agree, Cargo.lock is regenerated via a real `cargo build`, and dist-info is refreshed via a real `pip install -e \".[test]\"`"
+  - "Given CHANGELOG.md, when checked, then it has a correctly-ordered new entry (newest first) describing both shipped UI additions in user-facing terms"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs
+    description: Update README.md + docs/architecture.md for both new UI write paths.
+    agent: developer
+  - id: version-bump
+    description: Apply minor version bump across all 5 lockstep sources; real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: Write the CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Full pytest suite + npm run build + combined Playwright pass for both stories together.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, open PR into dev, merge (local verification sufficient per standing authorization), promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: "Per-project/per-reference vault routing + sync-down caching" section, needs an account/wif_audience UI mention
+    - path: docs/architecture.md
+      purpose: Architecture doc -- add a short note under the existing ARCA/§2 precedent or as a new small section
+    - path: pyproject.toml
+      purpose: Lockstep version source
+    - path: src/portunus/__init__.py
+      purpose: Lockstep version source
+    - path: manifest.json
+      purpose: Lockstep version source
+    - path: ui/src-tauri/tauri.conf.json
+      purpose: Lockstep version source
+    - path: ui/src-tauri/Cargo.toml
+      purpose: Lockstep version source -- requires a real `cargo build` afterward to refresh Cargo.lock
+    - path: CHANGELOG.md
+      purpose: Release notes, strict descending version order
+
+files_to_modify:
+  - file: README.md
+    change: Document account/wif_audience + rotation-account UI editing
+  - file: docs/architecture.md
+    change: Short note on the two new UI write paths
+  - file: pyproject.toml
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: Version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: Version bump
+  - file: CHANGELOG.md
+    change: New entry
+
+design_decisions:
+  - decision: Real cargo build + real pip install -e after every version-string edit
+    rationale: "Established this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Live-proof step uses scratch/mock data throughout -- no real GCP credential or the user's real vault required for either UI addition"
+  - concern: audit-chain-integrity
+    action: "Not applicable to this epic's own changes -- neither vault-bindings.json nor rotation-bindings.json writes are audited today, unchanged by this epic"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list in acceptance criteria 4"
+
+references:
+  - path: .pHive/epics/portunus-bindings-settings-ui/epic.yaml
+    relevant_excerpt: "version_bump: minor"

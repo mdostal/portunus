@@ -475,6 +475,18 @@ Config lives in `PORTUNUS_HOME/vault-bindings.json` (0600) — the successor to 
 entry loads with `backend="gcp", sync_mode="direct"`, byte-for-byte today's real behavior, no
 manual migration step.
 
+`account` (a local gcloud identity, e.g. for multi-account setups) and `wif_audience` (the WIF
+provider resource name) are also editable straight from Project Explorer's binding panel — the
+Standalone UI isn't CLI-shelled-out-only for these anymore. Neither field is a credential
+(account is an identity *selector*; the identity itself must already be authenticated locally
+via `gcloud auth login`), so neither is masked in the UI.
+
+A rotation binding's `account` (the free-text context hint `portunus rotation-bindings set
+<provider> --account ...` already accepted, e.g. a Vercel team slug) is likewise editable inline
+in a reference's detail view, next to the Auto-rotate button. `status` (`stub`/`real`) stays
+code-driven and is never reachable from the UI — every rotation adapter is a stub today, and a
+UI control that could claim otherwise would misrepresent what actually happens on click.
+
 Bulk-import many secrets at once — e.g. importing a batch of candidate passwords/keys before
 trying each one against something via `portunus_resolve_exec`, without exposing which one worked
 until you check the result:
