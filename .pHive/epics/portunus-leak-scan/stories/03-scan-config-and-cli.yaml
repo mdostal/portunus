@@ -1,0 +1,77 @@
+id: 03-scan-config-and-cli
+epic: portunus-leak-scan
+title: scan-path config store + full CLI surface
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: [01-scan-engine-core, 02-leak-status-and-escalation]
+
+description: |
+  New scan-path config store (PORTUNUS_HOME/leak-scan-config.json, its own lock -- separate
+  from leak-status.json's higher-churn writes, design-discussion.md self-grill) -- a list of
+  path globs, empty by default. `portunus leak-scan config add-path/remove-path/show`.
+  `portunus leak-scan [--json]` runs a real scan over the configured paths using story 01's
+  engine and story 02's store, prints/returns new findings; with zero configured paths it says
+  so explicitly rather than silently no-op-succeeding (matching crawl_candidates()'s own
+  "(no candidates)" honesty). `portunus leak status [name]` shows current severity + finding
+  counts. `portunus leak mark-rotated <name>` clears escalation. Every scan run and every new
+  finding is audited (action name only, reference name only, never a value) -- the first
+  audit-chain integration this epic needs.
+
+acceptance_criteria:
+  - "Given no configured scan paths, when `portunus leak-scan` runs, then it explicitly reports nothing is configured, not a silent empty success"
+  - "Given configured paths and a fixture file with a real match, when `portunus leak-scan` runs, then it reports the new finding and exits non-zero (useful for CI-style invocation)"
+  - "Given `portunus leak-scan config add-path`/`remove-path`/`show`, when used, then the config persists correctly across process invocations"
+  - "Given `portunus leak status <name>`, when a reference has active findings, then its current severity and finding count are shown"
+  - "Given `portunus leak mark-rotated <name>`, when run, then subsequent `leak status` shows no active findings for that reference"
+  - "Given a scan run or a new finding, when the audit chain is inspected, then an entry exists naming the reference, never containing a value"
+  - "Given `build_parser()`, when called after this story's argparse additions, then it still parses cleanly -- sanity check matching every prior CLI story this session"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for config persistence, each CLI subcommand, --json output shape, audit entries, empty-config honesty, build_parser() sanity.
+    agent: tester
+  - id: implement
+    description: scan-path config store + cmd_leak_scan/cmd_leak_status/cmd_leak_mark_rotated + argparse wiring + audit.append() calls.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_crawl/cmd_report (portunus-metadata-crawl) -- the immediate CLI-subcommand pattern this story's leak commands follow
+    - path: src/portunus/audit.py
+      purpose: AuditChain.append(action, secret, result) -- secret is always a name, this story's calls follow the same discipline
+
+files_to_modify:
+  - file: src/portunus/leakscan.py
+    change: scan-path config store (or a sibling module)
+  - file: src/portunus/cli.py
+    change: leak-scan/leak status/leak mark-rotated subcommands
+
+design_decisions:
+  - decision: scan-path config lives in its own locked JSON file, separate from leak-status.json
+    rationale: "design-discussion.md self-grill -- config is rarely-written, status is written on every scan; sharing one lock would serialize a frequent cheap update behind a lock a rare config-edit also wants, for no benefit"
+  - decision: portunus leak-scan exits non-zero when new findings exist
+    rationale: "makes the command usable in a CI/cron context without inventing a separate --check flag, matching how many scanners signal findings via exit code"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "CLI output (--json and plain) only ever prints ref_name/path/line_number/severity -- never a value, never a match excerpt. Structural check on the CLI handler functions, same AST pattern as story 01/02."
+  - concern: audit-chain-integrity
+    action: "Every scan run and new finding appended to the audit chain with the reference name only -- verified via portunus verify continuing to pass after these entries land"
+
+risks:
+  - severity: low
+    description: A user could configure an enormous or sensitive path they didn't mean to (e.g. a whole home directory glob)
+    mitigation: "add-path is explicit and one-glob-at-a-time; `show` always lists exactly what's configured so there's no ambiguity about scan scope"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan/docs/horizontal-plan.md
+    relevant_excerpt: "Layer: scan-path config, Layer: CLI"

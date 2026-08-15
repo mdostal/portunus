@@ -49,6 +49,17 @@ export interface CrawlCandidate {
   rotation_binding: { status: string; account: string } | null;
 }
 
+// portunus_leak_status's own summary shape -- severity/finding_count/
+// timestamps only, never a value, never a file's content (portunus-leak-
+// scan Slice 4).
+export interface LeakSummary {
+  ref_name: string;
+  severity: "warn" | "urgent" | "critical" | null;
+  finding_count: number;
+  first_detected_at: number | null;
+  last_detected_at: number | null;
+}
+
 export interface PortunusView {
   name: string;
   description: string;

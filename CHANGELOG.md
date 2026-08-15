@@ -4,6 +4,33 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-15
+
+### Added
+
+- **Leak detection.** New `portunus leak-scan` detects whether a managed secret's actual value
+  shows up somewhere it shouldn't -- logs, `.claude` conversation transcripts, shell history, or
+  any other explicitly human-configured local path (never a default; nothing is scanned until a
+  path is added via `portunus leak-scan config add-path`). Line-based, incremental scanning
+  (per-file watermarks -- a rescan only reads newly-appended bytes) proved against real scale
+  data (3.4 GB / 4,421 files found under one user's `~/.claude` alone during planning). A match
+  escalates a visible severity (warn -> urgent -> critical) over `portunus leak status` as time
+  passes, cleared via `portunus leak mark-rotated <name>` -- a documented human assertion, not a
+  verified fact. Advisory only: proven, not asserted, that `check_injectable()`/`resolve()`
+  behave identically regardless of leak status, mirroring the `roles.json` stub precedent.
+- **Settings "Leak scan" section** -- configured paths, a severity-badged findings table,
+  "Run scan now" and "Mark rotated." Explicit copy: this is a detective, not preventive,
+  control.
+- **Full MCP automation surface for leak-scan.** `portunus_leak_status` (read-only) plus, by
+  explicit user decision widening the epic's own initial CLI/UI-only scope,
+  `portunus_run_leak_scan`, `portunus_leak_scan_config_show/add_path/remove_path`, and
+  `portunus_leak_mark_rotated` -- an MCP-connected agent can now trigger a scan, but only over
+  paths a human has already configured; every tool is structurally verified to never surface a
+  value or file content.
+- New `.claude/skills/portunus-vault-audit` skill wrapping crawl/report/leak-scan for
+  convenient session-triggered use, and a documented cron/launchd example for scheduled
+  `portunus leak-scan` runs (already CI-ready: exits 1 on new findings, 0 otherwise).
+
 ## [0.22.0] - 2026-08-15
 
 ### Added

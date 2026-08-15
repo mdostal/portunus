@@ -1,0 +1,76 @@
+id: 02-leak-status-and-escalation
+epic: portunus-leak-scan
+title: leak-status store, severity derivation, mark-rotated
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: [01-scan-engine-core]
+
+description: |
+  Persists Slice 1's findings to PORTUNUS_HOME/leak-status.json -- one LeakStatus per
+  reference, deduped by (ref, path, line) with last_detected_at updated on re-detection rather
+  than duplicated. Severity (warn/urgent/critical) is DERIVED at read time from elapsed time
+  since the EARLIEST first_detected_at across all of a reference's findings (design-discussion
+  §3's thresholds: 0-2/3-6/7+ days) -- never stored redundantly out of sync with its inputs,
+  same discipline completeness.ts already established. mark_rotated(ref_name) clears active
+  findings and resets the escalation clock -- documented (not silently implied) as a human
+  assertion Portunus cannot independently verify (design-discussion.md §7). Locked from day one
+  via one flock_path() acquisition per mutating operation, matching views.py/roles.py.
+
+acceptance_criteria:
+  - "Given a new finding for a reference with no prior status, when recorded, then a LeakStatus is created with first_detected_at == last_detected_at"
+  - "Given a re-detection of the same (ref, path, line), when recorded, then last_detected_at updates and no duplicate finding is created"
+  - "Given a reference whose earliest finding is 0-2 days old, when severity is read, then it is warn; 3-6 days, urgent; 7+ days, critical"
+  - "Given a reference with findings from multiple dates, when severity is read, then it uses the EARLIEST first_detected_at, not the most recent"
+  - "Given mark_rotated(name), when called, then all active findings for that reference are cleared and a subsequent new finding starts a fresh escalation clock"
+  - "Given concurrent scan processes writing findings for different references, when both complete, then no write is lost -- a real multi-process lock test, matching views.py's own precedent"
+  - "Given check_injectable()/resolve() are called against a reference with active leak findings at any severity, when compared to the same calls with no findings, then behavior is byte-identical -- advisory only, proven not asserted (design-discussion.md §4)"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for dedup, severity derivation at threshold boundaries, mark_rotated, concurrency, and the check_injectable byte-identical proof.
+    agent: tester
+  - id: implement
+    description: leak-status store (LeakFinding/LeakStatus dataclasses, load/save, record_finding, mark_rotated, severity derivation).
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/views.py
+      purpose: the locked-from-day-one small-JSON-store pattern this story's leak-status store follows exactly
+    - path: src/portunus/roles.py
+      purpose: "test_check_injectable_and_retag_are_byte_identical_with_or_without_roles_configured -- the exact test shape this story's advisory-only proof mirrors"
+    - path: src/portunus/filelock.py
+      purpose: flock_path() -- the shared locking primitive
+
+files_to_modify:
+  - file: src/portunus/leakscan.py
+    change: LeakFinding/LeakStatus dataclasses, persisted store, severity derivation, mark_rotated (same module as story 01, or a sibling)
+
+design_decisions:
+  - decision: severity is derived at read time from stored timestamps, never stored as its own field
+    rationale: "avoids a stored severity drifting out of sync with the timestamps it should be computed from -- same reasoning completeness.ts and generate_report()'s gap section already used"
+  - decision: mark_rotated is a human assertion, not a verified fact, and says so in its own semantics
+    rationale: "design-discussion.md §7 -- Portunus cannot independently confirm a provider-side rotation happened; a rescan naturally re-flags if marked prematurely"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The store persists only ref_name/path/line_number/timestamps -- never a value. Same structural check pattern as story 01, applied to the store's own read/write paths."
+  - concern: audit-chain-integrity
+    action: "Deferred to story 03 (CLI wiring is where audit.append() calls land) -- this story's store layer has no audit dependency of its own."
+
+risks:
+  - severity: low
+    description: Unbounded finding growth per reference if the same (ref, path, line) somehow re-triggers differently each scan
+    mitigation: "Dedup key is (ref, path, line) -- a stable key by construction; re-detection updates in place, never appends"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan/docs/design-discussion.md
+    relevant_excerpt: "§3, §4, §7"

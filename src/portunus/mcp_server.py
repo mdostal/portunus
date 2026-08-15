@@ -20,6 +20,15 @@ from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotInjectable
 from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
 from .crawl import crawl_candidates
+from .leakscan import (
+    add_scan_path,
+    load_leak_status,
+    load_scan_paths,
+    mark_rotated,
+    remove_scan_path,
+    run_scan,
+    summarize,
+)
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
@@ -203,6 +212,96 @@ def portunus_crawl_candidates(org: str = "", project: str = "") -> dict:
     have a real proposal for -- this tool never writes anything itself."""
     registry, *_ = _build()
     return {"candidates": crawl_candidates(registry, org=org, project=project)}
+
+
+@mcp.tool()
+def portunus_leak_status(name: str = "") -> dict:
+    """Read-only leak-scan status: severity (warn/urgent/critical),
+    finding count, and first/last-detected timestamps for one reference
+    (name set) or every reference with active findings (name omitted).
+    NEVER a file path's content, NEVER a value, NEVER a match excerpt --
+    only already-computed status. This specific tool never triggers a scan
+    itself -- see portunus_run_leak_scan for the tool that does."""
+    statuses = load_leak_status()
+    if name:
+        status = statuses.get(name)
+        if status is None:
+            return {"ref_name": name, "severity": None, "finding_count": 0,
+                     "first_detected_at": None, "last_detected_at": None}
+        return summarize(status)
+    return {"statuses": [summarize(s) for s in statuses.values() if s.findings]}
+
+
+@mcp.tool()
+def portunus_run_leak_scan() -> dict:
+    """Runs a real leak-scan over the CURRENTLY CONFIGURED scan paths (see
+    portunus_leak_scan_config_show) and persists any new findings -- the
+    same operation `portunus leak-scan` performs from the CLI.
+
+    Unlike portunus_leak_status, this tool can cause Portunus to read the
+    content of every file matching a configured scan path (e.g. .claude
+    transcripts, logs, shell history) and compare it against decrypted
+    secret values in memory. By explicit user decision (design-discussion.md
+    §2 addendum) an MCP-connected agent may trigger this. It returns only
+    {ref_name, path, line_number} per NEW finding -- never a value, never
+    file content beyond the fact that a match occurred at that location.
+
+    This tool cannot scan anything outside the human-configured path set --
+    it has no path argument. Add paths first via
+    portunus_leak_scan_config_add_path."""
+    registry, audit, broker, resolver = _build()
+    result = run_scan(registry, broker, resolver.backend, backend_for=resolver.backend_for)
+    if not result.configured_paths:
+        return {"configured": False, "findings": []}
+    audit.append("leak-scan", "*", f"{len(result.findings)}-new-findings")
+    for finding in result.findings:
+        audit.append("leak-scan-finding", finding.ref_name, finding.path)
+    return {
+        "configured": True,
+        "findings": [
+            {"ref_name": f.ref_name, "path": f.path, "line_number": f.line_number}
+            for f in result.findings
+        ],
+    }
+
+
+@mcp.tool()
+def portunus_leak_scan_config_show() -> dict:
+    """Read-only: the currently configured leak-scan path globs. Empty by
+    default -- nothing is scanned until a human or agent explicitly adds a
+    path."""
+    return {"paths": load_scan_paths()}
+
+
+@mcp.tool()
+def portunus_leak_scan_config_add_path(glob: str) -> dict:
+    """Add a path glob to the leak-scan configuration (e.g.
+    "~/.claude/projects/**/*.jsonl"). Idempotent. Returns the full
+    resulting path list -- never touches a value or scans anything itself."""
+    return {"paths": add_scan_path(glob)}
+
+
+@mcp.tool()
+def portunus_leak_scan_config_remove_path(glob: str) -> dict:
+    """Remove a path glob from the leak-scan configuration. Idempotent --
+    removing an unconfigured path is a harmless no-op. Returns the full
+    resulting path list."""
+    return {"paths": remove_scan_path(glob)}
+
+
+@mcp.tool()
+def portunus_leak_mark_rotated(name: str) -> dict:
+    """A human or agent's own assertion that reference `name` has been
+    rotated at its provider -- Portunus cannot independently verify this.
+    Clears active findings and resets the escalation clock; also
+    invalidates the watermark for every file where this reference had a
+    finding, so a genuinely premature mark-rotated will still be caught by
+    a later scan rather than silently protected by an already-advanced
+    watermark."""
+    _, audit, _, _ = _build()
+    mark_rotated(name)
+    audit.append("leak-mark-rotated", name, "ok")
+    return {"ref_name": name, "marked_rotated": True}
 
 
 @mcp.tool()

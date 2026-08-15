@@ -887,3 +887,158 @@ def test_portunus_crawl_candidates_never_touches_a_value_source_check():
     tree = ast.parse(src)
     code = ast.unparse(tree)
     assert ".access(" not in code
+
+
+def test_portunus_leak_status_returns_summary_for_named_reference(home):
+    from portunus import mcp_server
+    from portunus.leakscan import Finding, record_findings
+
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=0.0)
+    result = mcp_server.portunus_leak_status(name="x")
+    assert result["ref_name"] == "x"
+    assert result["finding_count"] == 1
+    assert result["severity"] in ("warn", "urgent", "critical")
+
+
+def test_portunus_leak_status_unknown_reference_returns_clean_no_findings(home):
+    from portunus import mcp_server
+
+    result = mcp_server.portunus_leak_status(name="never-scanned")
+    assert result == {
+        "ref_name": "never-scanned", "severity": None, "finding_count": 0,
+        "first_detected_at": None, "last_detected_at": None,
+    }
+
+
+def test_portunus_leak_status_with_no_name_lists_all_active(home):
+    from portunus import mcp_server
+    from portunus.leakscan import Finding, record_findings
+
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=0.0)
+    record_findings([Finding("y", "/var/log/b.log", 1, 0)], now=0.0)
+    result = mcp_server.portunus_leak_status()
+    ref_names = sorted(s["ref_name"] for s in result["statuses"])
+    assert ref_names == ["x", "y"]
+
+
+def test_portunus_leak_status_never_calls_backend_access_or_scan_source_check():
+    """AST-level: this tool must never be able to reach Backend.access()
+    or the scan-triggering function -- a structural proof it cannot cause
+    a scan or read file content, not just that it doesn't currently."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_leak_status))
+    tree = ast.parse(src)
+    code = ast.unparse(tree)
+    assert ".access(" not in code
+    assert "run_scan(" not in code
+    assert "scan_paths(" not in code
+
+
+# ---------------------------------------------------------------------------
+# portunus_run_leak_scan / config / mark_rotated (portunus-leak-scan Story 06
+# -- explicit, informed reversal of the "no MCP scan-trigger" boundary; see
+# design-discussion.md §2 addendum)
+# ---------------------------------------------------------------------------
+
+
+def test_portunus_run_leak_scan_with_no_config_reports_explicitly(home):
+    from portunus import mcp_server
+
+    result = mcp_server.portunus_run_leak_scan()
+    assert result == {"configured": False, "findings": []}
+
+
+def test_portunus_run_leak_scan_finds_and_persists_a_real_leak(home, tmp_path):
+    import os
+
+    from portunus import Registry, mcp_server
+    from portunus.leakscan import load_leak_status
+
+    Registry().add("x", "sm-x")
+    os.environ["PORTUNUS_BACKEND"] = "mock"
+    os.environ["PORTUNUS_MOCK_SM_X"] = "SECRET-VALUE-abc123-xyz"
+    try:
+        f = tmp_path / "app.log"
+        f.write_text("uh oh: SECRET-VALUE-abc123-xyz\n")
+        mcp_server.portunus_leak_scan_config_add_path(str(f))
+
+        result = mcp_server.portunus_run_leak_scan()
+        assert result["configured"] is True
+        assert result["findings"] == [{"ref_name": "x", "path": str(f), "line_number": 1}]
+        assert "x" in load_leak_status()
+    finally:
+        del os.environ["PORTUNUS_BACKEND"]
+        del os.environ["PORTUNUS_MOCK_SM_X"]
+
+
+def test_portunus_leak_scan_config_add_show_remove_round_trip(home):
+    from portunus import mcp_server
+
+    assert mcp_server.portunus_leak_scan_config_show() == {"paths": []}
+    mcp_server.portunus_leak_scan_config_add_path("/tmp/*.log")
+    assert mcp_server.portunus_leak_scan_config_show() == {"paths": ["/tmp/*.log"]}
+    mcp_server.portunus_leak_scan_config_remove_path("/tmp/*.log")
+    assert mcp_server.portunus_leak_scan_config_show() == {"paths": []}
+
+
+def test_portunus_leak_mark_rotated_clears_findings(home):
+    from portunus import mcp_server
+    from portunus.leakscan import Finding, load_leak_status, record_findings
+
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=0.0)
+    result = mcp_server.portunus_leak_mark_rotated("x")
+    assert result == {"ref_name": "x", "marked_rotated": True}
+    assert load_leak_status()["x"].findings == []
+
+
+def test_portunus_leak_mark_rotated_then_rescan_re_flags(home, tmp_path):
+    """Same regression proof as the CLI/engine layer, exercised through
+    the MCP tool set end to end."""
+    import os
+
+    from portunus import Registry, mcp_server
+
+    Registry().add("x", "sm-x")
+    os.environ["PORTUNUS_BACKEND"] = "mock"
+    os.environ["PORTUNUS_MOCK_SM_X"] = "SECRET-VALUE-abc123-xyz"
+    try:
+        f = tmp_path / "app.log"
+        f.write_text("uh oh: SECRET-VALUE-abc123-xyz\n")
+        mcp_server.portunus_leak_scan_config_add_path(str(f))
+        mcp_server.portunus_run_leak_scan()
+
+        mcp_server.portunus_leak_mark_rotated("x")
+        result = mcp_server.portunus_run_leak_scan()
+        assert len(result["findings"]) == 1
+        assert result["findings"][0]["ref_name"] == "x"
+    finally:
+        del os.environ["PORTUNUS_BACKEND"]
+        del os.environ["PORTUNUS_MOCK_SM_X"]
+
+
+def test_new_leak_mcp_tools_never_return_a_value_source_check():
+    """AST-level structural check across every new tool in this story --
+    none of them decode/read raw file content or reference a decrypted
+    value directly; they only ever call the already-vetted leakscan.py
+    functions and pass through ref_name/path/line_number/paths."""
+    import ast
+    import inspect
+    from portunus import mcp_server
+
+    for fn in (
+        mcp_server.portunus_run_leak_scan,
+        mcp_server.portunus_leak_scan_config_show,
+        mcp_server.portunus_leak_scan_config_add_path,
+        mcp_server.portunus_leak_scan_config_remove_path,
+        mcp_server.portunus_leak_mark_rotated,
+    ):
+        src = inspect.getsource(fn)
+        tree = ast.parse(src)
+        code = ast.unparse(tree)
+        assert ".decode(" not in code
+        assert ".access(" not in code
+        assert "open(" not in code
