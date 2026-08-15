@@ -1,0 +1,73 @@
+id: 03-tree-by-repo
+epic: portunus-provenance-graph
+title: portunus tree --by {group,repo} (CLI + MCP), parameterized _build_tree
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [01-repo-and-source-files-schema]
+
+description: |
+  `_build_tree(refs)` becomes `_build_tree(refs, key_fn=lambda r: r.group)` by default, with the
+  `tree` command gaining `--by {group,repo}` (default group -- zero behavior change when
+  omitted) that swaps in `key_fn=lambda r: r.repo or "(no repo set)"`. Same output shape
+  (ungrouped/tree/refs) either way, same renderer. `portunus_tree(project="", by="group")` (MCP)
+  mirrors it.
+
+acceptance_criteria:
+  - "Given `portunus tree --project ffe-cicd` (no --by), when run, then output is byte-identical to today's group-keyed tree -- zero behavior change for the default"
+  - "Given `portunus tree --project ffe-cicd --by repo`, when run, then references are nested under their repo field instead of group, and any reference with repo='' lands under '(no repo set)' -- never silently dropped, same non-drop guarantee --by group already has for ungrouped refs"
+  - "Given `portunus_tree(project='ffe-cicd', by='repo')` (MCP), when called, then it returns the same repo-keyed shape as the CLI's --json output"
+  - "Given `--by` with an invalid value, when run, then argparse rejects it with a clear choices error, not a silent fallback"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for --by repo, the default-unchanged case, the MCP by param, and the invalid-choice rejection.
+    agent: tester
+  - id: implement
+    description: Parameterize _build_tree with key_fn, wire --by through cmd_tree and portunus_tree.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the default (--by omitted) path is truly byte-identical to pre-change output.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: _build_tree(), cmd_tree -- the function this story parameterizes
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_tree -- the MCP mirror
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Parameterize _build_tree with key_fn; add --by to tree subcommand
+  - file: src/portunus/mcp_server.py
+    change: Add by param to portunus_tree
+  - file: tests/test_cli_tree.py
+    change: New/extended tests for --by
+
+design_decisions:
+  - decision: Reuse _build_tree entirely rather than writing a second tree-builder
+    rationale: "The only real difference between group-tree and repo-tree is which field supplies path segments -- a key_fn parameter is the smallest change that covers both, not a new concept"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- metadata-only, same guarantee portunus tree already has (no backend touched)"
+  - concern: audit-chain-integrity
+    action: "N/A -- read-only query, no new audited action"
+
+risks:
+  - severity: low
+    description: A silent fallback on an invalid --by value could mask a typo
+    mitigation: "Explicit acceptance criterion requires argparse's own choices validation to reject it, not a code-level default"
+
+references:
+  - path: .pHive/epics/portunus-provenance-graph/docs/design-discussion.md
+    relevant_excerpt: "§3 -- tree by repo"

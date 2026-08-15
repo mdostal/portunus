@@ -1,0 +1,80 @@
+id: 01-repo-and-source-files-schema
+epic: portunus-provenance-graph
+title: repo + source_files fields on Reference, registry, CLI/MCP surface
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  `Reference` gains `repo: str = ""` (joins `_STRUCTURED_TAG_FIELDS` alongside provider/project/
+  env/scope/kind -- immediately queryable via `find --tags repo=...`, fail-closed collision-
+  checked on retag) and `source_files: list = field(default_factory=list)` (same posture as
+  `related` -- optional, additive, no collision semantics). `Registry.add()`/`retag()` gain
+  `repo`/`source_files` kwargs. CLI: `reg add --repo`, `drop --repo`, `retag --repo
+  --source-files` (comma-separated, same convention as `--related`). MCP: `portunus_drop` gains
+  `repo`/`source_files` params.
+
+acceptance_criteria:
+  - "Given `portunus reg add x sm-x --repo event-api`, when run, then the reference's repo field is 'event-api' and `portunus find --tags repo=event-api` returns it"
+  - "Given two references with identical provider/project/env/scope/kind but different repo, when both exist, then they do NOT collide (repo is part of the same structured-tag identity tuple retag's collision check already uses)"
+  - "Given `portunus retag x --repo event-api --source-files docker-compose.yml,ci.yml`, when run, then repo is set and source_files is ['docker-compose.yml', 'ci.yml']"
+  - "Given every one of the 384 real references in the actual vault (checked, not assumed), when loaded after this change, then repo defaults to '' and source_files defaults to [] -- zero migration step, zero behavior change for anything that doesn't opt in"
+  - "Given `portunus_drop(..., repo='x', source_files=['a.yml'])` (MCP), when called, then the created reference carries both fields, never echoing a value"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for the new fields on Reference/Registry.add/retag, the CLI flags, and the MCP drop params, including the real-vault backward-compat check.
+    agent: tester
+  - id: implement
+    description: Add the fields, wire kwargs through add()/retag(), add CLI flags, add MCP params.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no existing test broke, confirm the real 384-reference vault still loads unchanged.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Reference dataclass, _STRUCTURED_TAG_FIELDS, Registry.add()/retag() -- the exact pattern every prior metadata field followed
+    - path: src/portunus/cli.py
+      purpose: reg add / drop / retag argparsers and handlers
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: Add repo/source_files fields, add repo to _STRUCTURED_TAG_FIELDS, thread through add()/retag()
+  - file: src/portunus/cli.py
+    change: Add --repo to reg add/drop, --repo/--source-files to retag
+  - file: src/portunus/mcp_server.py
+    change: Add repo/source_files params to portunus_drop
+  - file: tests/test_registry.py
+    change: New tests for the fields + collision behavior
+  - file: tests/test_reference_metadata.py
+    change: New tests for CLI flags
+
+design_decisions:
+  - decision: repo joins _STRUCTURED_TAG_FIELDS, source_files does not
+    rationale: "repo is a scalar meant for exact-match querying (find --tags repo=X), matching provider/project/env/scope/kind exactly. source_files is a list describing declaration sites, same shape/posture as related -- neither is queryable via tag-match, both are just descriptive."
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- pure metadata fields, no value ever touched"
+  - concern: audit-chain-integrity
+    action: "N/A -- no new audited action, same reg add/drop/retag audit entries unchanged"
+
+risks:
+  - severity: low
+    description: Adding repo to _STRUCTURED_TAG_FIELDS could theoretically change collision behavior for existing data
+    mitigation: "Verified directly against acceptance criterion 4 -- every real reference defaults repo='', so nothing new collides until a human explicitly sets conflicting values, same as when scope/kind were first added"
+
+references:
+  - path: .pHive/epics/portunus-provenance-graph/docs/design-discussion.md
+    relevant_excerpt: "§1 -- schema design"
