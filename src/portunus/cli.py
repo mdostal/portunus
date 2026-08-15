@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from . import __version__
 from .audit import AuditChain
@@ -961,12 +961,41 @@ def _wif_configured(project: str) -> bool:
     return bool(binding and binding.wif_audience)
 
 
+def _eager_sync_down(registry, resolver, names: List[str]) -> Dict[str, str]:
+    """Warm the local encrypted cache immediately for freshly-registered
+    references under a sync_mode=cached project (portunus-vault-backup story
+    01) -- reuses SyncingBackend.access() exactly as `cmd_sync` does, purely
+    for its cache-populating side effect. Deliberately bypasses
+    Broker.check_injectable: the reference's `state` stays "requested"
+    throughout, so every real resolve/inject/ask/MCP path remains fully
+    fail-closed exactly as before -- only the local cache gets populated.
+    Best-effort and per-reference: a fetch failure here never fails
+    registration itself, and the fetched value is never captured into
+    anything that escapes this function."""
+    results: Dict[str, str] = {}
+    for name in names:
+        ref = registry.get(name)
+        if ref is None:
+            continue
+        backend = resolver.backend_for(ref) if resolver.backend_for else resolver.backend
+        if not isinstance(backend, SyncingBackend):
+            continue  # not a cached-mode reference -- nothing to warm
+        try:
+            backend.access(ref.sm_name, project=ref.project)
+        except BackendError as exc:
+            results[name] = f"sync-failed: {exc}"
+            continue
+        results[name] = "synced"
+    return results
+
+
 def cmd_discover(args) -> int:
     """Read-only: list what already exists in a live GCP project (names/labels
     only, never a value). --register writes not-yet-registered ones as
     state=requested placeholders. See discover.py -- this command never
-    touches SecretBackend.access()."""
-    registry = Registry()
+    touches SecretBackend.access() directly; --register additionally warms
+    the local cache for sync_mode=cached projects via _eager_sync_down()."""
+    registry, _audit, _broker, resolver = _build()
     account = ""
     binding = load_vault_bindings().get(args.project)
     if binding:
@@ -978,16 +1007,24 @@ def cmd_discover(args) -> int:
 
     if args.register:
         report = register_discovered(registry, args.project, discovered)
+        sync_results = _eager_sync_down(registry, resolver, report.registered)
         if args.json:
             print(json.dumps({
                 "registered": report.registered,
                 "conflicts": report.conflicts,
                 "already_registered": report.already_registered,
                 "wif_configured": _wif_configured(args.project),
+                "sync_results": sync_results,
             }))
             return 0
         for name in report.registered:
-            print(f"registered  {name} (state=requested)")
+            note = ""
+            status = sync_results.get(name)
+            if status == "synced":
+                note = " (cache warmed)"
+            elif status is not None:
+                note = f" ({status})"
+            print(f"registered  {name} (state=requested){note}")
         for name in report.conflicts:
             print(f"conflict    {name} -- already points at a different secret, skipped")
         for name in report.already_registered:

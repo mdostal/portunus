@@ -18,7 +18,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, NotInjectable
-from .cli import _build, _build_tree, _TREE_KEY_FNS, _wif_configured
+from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import AmbiguousMatch, NoMatch, Registry
@@ -160,10 +160,11 @@ def portunus_discover(project: str, register: bool = False) -> dict:
     project (names + labels + create-time only, never a value). With
     register=True, writes not-yet-registered secrets as state=requested
     placeholders (never overwrites an existing reference -- a naming
-    collision is reported, not silently replaced). Mirrors `portunus
-    discover [--register] --json` exactly -- one safety-reviewed
-    implementation, three entry points (CLI, UI, MCP)."""
-    registry = Registry()
+    collision is reported, not silently replaced), then warms the local
+    cache for any newly-registered reference under a sync_mode=cached
+    project. Mirrors `portunus discover [--register] --json` exactly -- one
+    safety-reviewed implementation, three entry points (CLI, UI, MCP)."""
+    registry, _audit, _broker, resolver = _build()
     try:
         discovered = list_gcp_secrets(project)
     except DiscoverError as exc:
@@ -171,11 +172,13 @@ def portunus_discover(project: str, register: bool = False) -> dict:
 
     if register:
         report = register_discovered(registry, project, discovered)
+        sync_results = _eager_sync_down(registry, resolver, report.registered)
         return {
             "registered": report.registered,
             "conflicts": report.conflicts,
             "already_registered": report.already_registered,
             "wif_configured": _wif_configured(project),
+            "sync_results": sync_results,
         }
 
     already, not_yet = diff_against_registry(registry, project, discovered)
