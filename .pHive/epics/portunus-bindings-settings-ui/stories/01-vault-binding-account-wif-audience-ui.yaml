@@ -1,0 +1,86 @@
+id: 01-vault-binding-account-wif-audience-ui
+epic: portunus-bindings-settings-ui
+title: account + wif_audience editable in Project Explorer's binding panel
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  ProjectExplorer.tsx's existing per-project binding panel (backend picker + sync-mode select,
+  both already live) gains two text fields: `account` (gcloud identity email) and `wif_audience`
+  (WIF provider resource name). POST /api/bindings/route.ts gains matching optional body fields,
+  forwarded to `portunus bindings set --account/--wif-audience`. Also corrects the route's own
+  stale comment claiming wif_audience is never returned by `bindings show` -- verified false by
+  direct CLI test (research-brief.md §3). Neither field is a credential -- account is an identity
+  selector (the real gcloud identity must already be locally authenticated), wif_audience is
+  infrastructure topology -- so this is a write-path completion, not a new exposure (both are
+  already returned in full by the existing GET handler).
+
+acceptance_criteria:
+  - "Given a project with no existing binding, when the account field is set and saved, then GET /api/bindings?project=<p> reflects the new account value and `portunus bindings show <p> --json` (CLI, independently) shows the same value"
+  - "Given a project with an existing binding, when only wif_audience is changed and saved, then account/backend/sync_mode are unchanged (only-passed-fields-change, matching cmd_bindings_set's own existing behavior) -- verified both via the API response and independently via the CLI"
+  - "Given the account/wif_audience fields, when rendered, then wif_audience has placeholder/helper text showing the expected shape and neither field uses password-style masking (both are non-secret; masking would wrongly imply otherwise)"
+  - "Given the stale route comment, when read after this story, then it accurately states that GET /api/bindings DOES return the real wif_audience value"
+  - "Given a live Playwright pass against the running dev server, when a real project's account/wif_audience are set through the browser UI, then the change is visible after a page reload (proves the round-trip through the real backend, not just a mocked fetch)"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: >
+      This repo's ui/ has no unit-test framework (no jest/RTL, no test script -- confirmed by
+      checking package.json and finding zero *.test.*/*.spec.* files; every prior UI story in
+      this session verified the same way). TDD applies where a test framework exists (pytest,
+      for any Python-side change); the UI side is verified via `npm run build` (TypeScript
+      correctness) and a real live Playwright pass, not invented unit tests. Extend the API
+      route and ProjectExplorer's binding panel form fields.
+    agent: developer
+  - id: build-check
+    description: cd ui && npm run build -- must be clean, catches TypeScript errors.
+    agent: developer
+    depends_on: [implement]
+  - id: live-verify
+    description: Playwright pass against a real running dev server + scratch PORTUNUS_HOME -- set account/wif_audience through the actual browser UI, reload, confirm persisted; cross-check independently via the CLI.
+    agent: tester
+    depends_on: [build-check]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/api/bindings/route.ts
+      purpose: Existing GET/POST handler -- POST currently only forwards backend/sync_mode; this story adds account/wif_audience. Contains the stale comment to fix.
+    - path: ui/app/components/ProjectExplorer.tsx
+      purpose: Existing binding panel (backend picker, sync-mode select) -- this story adds two form-field text inputs alongside them, using the existing updateBinding()/form-field CSS pattern.
+    - path: src/portunus/cli.py
+      purpose: cmd_bindings_set -- the only-passed-fields-change semantics this story's API/UI must preserve exactly (never overwrite an unset field with empty string)
+    - path: src/portunus/backend.py
+      purpose: VaultBinding dataclass docstring -- the account/wif_audience non-credential framing this story's design relies on
+
+files_to_modify:
+  - file: ui/app/api/bindings/route.ts
+    change: POST accepts optional account/wif_audience fields, forwards as --account/--wif-audience; fix the stale comment
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: Two new form-field text inputs (account, wif_audience) in the binding panel, wired through updateBinding() or a small sibling function
+
+design_decisions:
+  - decision: No password-style masking on wif_audience
+    rationale: "design-discussion.md §3, §6 -- both fields are non-credential (identity selector / infrastructure topology); masking would misrepresent their sensitivity"
+  - decision: Explicit save (button), not on-blur auto-save
+    rationale: "design-discussion.md §6 -- matches updateBinding()'s existing click-to-set interaction pattern"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Confirm neither account nor wif_audience is ever treated as a value passed through resolve/inject paths -- both are configuration, sourced and returned the same way the CLI already does. No new value-fetch path is introduced by this story."
+
+risks:
+  - severity: low
+    description: A user could mistake the wif_audience field for a place to paste a real credential
+    mitigation: "Placeholder/helper text showing the real expected shape (a WIF provider resource name, not a token); explicitly not masked, which itself signals non-secret"
+
+references:
+  - path: .pHive/epics/portunus-bindings-settings-ui/docs/design-discussion.md
+    relevant_excerpt: "§1, §3, §5, §6"

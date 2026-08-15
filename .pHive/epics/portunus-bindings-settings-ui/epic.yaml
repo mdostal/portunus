@@ -1,0 +1,31 @@
+name: portunus-bindings-settings-ui
+title: complete vault-binding and rotation-binding configuration in the UI
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Two real, verified CLI-vs-UI parity gaps, both additive to existing working machinery, no new
+  page/nav/CLI surface. (1) Project Explorer's vault-binding panel already edits backend/
+  sync_mode live but not account/wif_audience (both already returned by GET /api/bindings,
+  just never accepted by POST) -- both are identity-selector/topology fields, not credentials,
+  same trust level as the CLI flags they mirror. (2) Rotation bindings have zero write path in
+  the UI at all (GET-only /api/rotation-status feeds DetailDrawer's read-only Auto-rotate
+  tooltip) -- adds a POST for the account hint only, never status (status stays derived from the
+  real adapter registry, unreachable from the UI, so a stub can never be made to LOOK real
+  through the UI). Also fixes a small, real, stale comment found while reading the bindings
+  route ("WIF audience is never returned by bindings show" -- verified false).
+
+stories:
+  - id: 01-vault-binding-account-wif-audience-ui
+    title: account + wif_audience editable in Project Explorer's binding panel
+    complexity: medium
+    depends_on: []
+  - id: 02-rotation-binding-account-ui
+    title: rotation-binding account hint editable in DetailDrawer
+    complexity: medium
+    depends_on: []
+  - id: 03-closeout
+    title: docs, version bump, live browser proof
+    complexity: low
+    depends_on: [01-vault-binding-account-wif-audience-ui, 02-rotation-binding-account-ui]
