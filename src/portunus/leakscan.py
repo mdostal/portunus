@@ -36,16 +36,27 @@ scan's time budget on noise instead of signal).
 from __future__ import annotations
 
 import glob as glob_module
+import json
+import os
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .backend import BackendError, SecretBackend
 from .broker import ApprovalRequired, Broker, NotInjectable
+from .filelock import flock_path
+from .paths import home
 from .registry import Registry
 
 MIN_SEARCHABLE_VALUE_LENGTH = 8
+
+# Escalation ladder (design-discussion.md §3) -- days since the EARLIEST
+# first_detected_at across a reference's active findings.
+WARN_TO_URGENT_DAYS = 3
+URGENT_TO_CRITICAL_DAYS = 7
+_SECONDS_PER_DAY = 86400.0
 
 
 @dataclass(frozen=True)
@@ -208,3 +219,163 @@ def scan_paths(
         new_watermarks[key] = watermark
 
     return all_findings, new_watermarks
+
+
+# ---------------------------------------------------------------------------
+# Leak-status store (portunus-leak-scan Slice 2) -- persisted escalation
+# state, locked from day one (matching views.py/roles.py), never a value.
+# ---------------------------------------------------------------------------
+
+
+class LeakScanError(RuntimeError):
+    """Raised for a leak-status operation that can't complete. Never
+    carries a secret value -- this store only ever holds ref
+    names/paths/line numbers/timestamps."""
+
+
+@dataclass
+class LeakFinding:
+    path: str
+    line_number: int
+    first_detected_at: float
+    last_detected_at: float
+
+
+@dataclass
+class LeakStatus:
+    ref_name: str
+    findings: List[LeakFinding] = field(default_factory=list)
+    rotated_at: Optional[float] = None
+
+
+def _leak_status_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "leak-status.json")
+
+
+def _leak_status_lock_path(path: Optional[Path] = None) -> Path:
+    return _leak_status_path(path).with_suffix(".lock")
+
+
+def _load_status_unlocked(path: Optional[Path] = None) -> Dict[str, LeakStatus]:
+    status_path = _leak_status_path(path)
+    if not status_path.exists():
+        return {}
+    raw = json.loads(status_path.read_text() or "{}")
+    statuses: Dict[str, LeakStatus] = {}
+    for ref_name, cfg in raw.items():
+        statuses[ref_name] = LeakStatus(
+            ref_name=ref_name,
+            findings=[
+                LeakFinding(
+                    path=f["path"],
+                    line_number=f["line_number"],
+                    first_detected_at=f["first_detected_at"],
+                    last_detected_at=f["last_detected_at"],
+                )
+                for f in cfg.get("findings", [])
+            ],
+            rotated_at=cfg.get("rotated_at"),
+        )
+    return statuses
+
+
+def _save_status_unlocked(statuses: Dict[str, LeakStatus], path: Optional[Path] = None) -> None:
+    status_path = _leak_status_path(path)
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = {
+        ref_name: {
+            "findings": [
+                {
+                    "path": f.path,
+                    "line_number": f.line_number,
+                    "first_detected_at": f.first_detected_at,
+                    "last_detected_at": f.last_detected_at,
+                }
+                for f in status.findings
+            ],
+            "rotated_at": status.rotated_at,
+        }
+        for ref_name, status in statuses.items()
+    }
+    tmp = status_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(raw, indent=2))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, status_path)
+    os.chmod(status_path, 0o600)
+
+
+def load_leak_status(path: Optional[Path] = None) -> Dict[str, LeakStatus]:
+    """Plain read -- missing file means no findings recorded yet, returns
+    {}. Unlocked, matching every other config-load's own posture in this
+    codebase (a reader never observes a torn write; os.replace() is
+    atomic)."""
+    return _load_status_unlocked(path)
+
+
+def record_findings(
+    findings: List[Finding], now: Optional[float] = None, path: Optional[Path] = None
+) -> Dict[str, LeakStatus]:
+    """Persist `findings` (from scan_paths()) into the leak-status store.
+    Re-detecting the same (ref_name, path, line_number) updates
+    last_detected_at in place rather than duplicating. Locked for the
+    entire load -> mutate -> save, matching views.py's own from-day-one
+    discipline. Returns the full, updated store."""
+    ts = now if now is not None else time.time()
+    with flock_path(_leak_status_lock_path(path)):
+        statuses = _load_status_unlocked(path)
+        for finding in findings:
+            status = statuses.setdefault(finding.ref_name, LeakStatus(ref_name=finding.ref_name))
+            existing = next(
+                (
+                    f
+                    for f in status.findings
+                    if f.path == finding.path and f.line_number == finding.line_number
+                ),
+                None,
+            )
+            if existing is not None:
+                existing.last_detected_at = ts
+            else:
+                status.findings.append(
+                    LeakFinding(
+                        path=finding.path,
+                        line_number=finding.line_number,
+                        first_detected_at=ts,
+                        last_detected_at=ts,
+                    )
+                )
+        _save_status_unlocked(statuses, path)
+        return statuses
+
+
+def mark_rotated(ref_name: str, now: Optional[float] = None, path: Optional[Path] = None) -> None:
+    """A human's own assertion that `ref_name` has been rotated at its
+    provider -- Portunus cannot independently verify this
+    (design-discussion.md §7). Clears active findings and resets the
+    escalation clock; a rescan will naturally re-flag the reference if the
+    old value is still present somewhere. A harmless no-op for a reference
+    with no active findings."""
+    ts = now if now is not None else time.time()
+    with flock_path(_leak_status_lock_path(path)):
+        statuses = _load_status_unlocked(path)
+        if ref_name not in statuses or not statuses[ref_name].findings:
+            return
+        statuses[ref_name] = LeakStatus(ref_name=ref_name, findings=[], rotated_at=ts)
+        _save_status_unlocked(statuses, path)
+
+
+def severity(status: LeakStatus, now: Optional[float] = None) -> Optional[str]:
+    """warn/urgent/critical, derived at read time from elapsed time since
+    the EARLIEST first_detected_at across all of `status`'s active
+    findings -- never stored redundantly (design-discussion.md §3). None
+    when there are no active findings."""
+    if not status.findings:
+        return None
+    ts = now if now is not None else time.time()
+    earliest = min(f.first_detected_at for f in status.findings)
+    elapsed_days = (ts - earliest) / _SECONDS_PER_DAY
+    if elapsed_days < WARN_TO_URGENT_DAYS:
+        return "warn"
+    if elapsed_days < URGENT_TO_CRITICAL_DAYS:
+        return "urgent"
+    return "critical"
