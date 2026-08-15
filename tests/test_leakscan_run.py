@@ -5,6 +5,7 @@ from portunus.leakscan import (
     add_scan_path,
     load_scan_paths,
     load_watermarks,
+    mark_rotated,
     remove_scan_path,
     run_scan,
 )
@@ -67,3 +68,29 @@ def test_run_scan_second_run_does_not_reduplicate_watermarks(stack, tmp_path):
     result2 = run_scan(stack["registry"], stack["broker"], stack["backend"])
     assert result2.findings == []
     assert str(f) in load_watermarks()
+
+
+def test_mark_rotated_then_rescan_re_flags_if_value_still_present(stack, tmp_path):
+    """The defining proof behind design-discussion.md §7's own promise: if
+    a human marks a reference rotated but the old value is still sitting
+    in an already-scanned file, a later scan must genuinely be able to
+    re-detect it -- the incremental watermark must not silently protect a
+    premature mark-rotated from ever being caught."""
+    stack["registry"].add("x", "sm-x")
+    stack["backend"].set("sm-x", "SECRET-VALUE-abc123-xyz")
+    f = tmp_path / "log.txt"
+    f.write_text("uh oh: SECRET-VALUE-abc123-xyz\n")
+    add_scan_path(str(f))
+
+    run_scan(stack["registry"], stack["broker"], stack["backend"])
+    from portunus.leakscan import load_leak_status
+
+    assert load_leak_status()["x"].findings
+
+    mark_rotated("x")  # premature -- the value in the file never actually changed
+    assert load_leak_status()["x"].findings == []
+
+    result = run_scan(stack["registry"], stack["broker"], stack["backend"])
+    assert len(result.findings) == 1
+    assert result.findings[0].ref_name == "x"
+    assert load_leak_status()["x"].findings

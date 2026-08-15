@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { checkMetadataCompleteness } from "../completeness";
-import type { CrawlCandidate, PortunusPolicy, PortunusReference } from "../types";
+import type { CrawlCandidate, LeakSummary, PortunusPolicy, PortunusReference } from "../types";
 
 const SCOPE_TYPES: PortunusPolicy["scope_type"][] = ["org", "project", "env"];
 
@@ -130,6 +130,101 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
     }
   }
 
+  const [scanPaths, setScanPaths] = useState<string[]>([]);
+  const [newScanPath, setNewScanPath] = useState("");
+  const [leakStatuses, setLeakStatuses] = useState<LeakSummary[]>([]);
+  const [leakBusy, setLeakBusy] = useState(false);
+  const [leakError, setLeakError] = useState<string | null>(null);
+  const [lastScanAt, setLastScanAt] = useState<string | null>(null);
+
+  function refreshScanPaths() {
+    fetch("/api/leak-scan-config")
+      .then((r) => r.json())
+      .then((data) => setScanPaths(data.paths || []))
+      .catch(() => setScanPaths([]));
+  }
+
+  function refreshLeakStatuses() {
+    fetch("/api/leak-status")
+      .then((r) => r.json())
+      .then((data) => setLeakStatuses(data.statuses || []))
+      .catch(() => setLeakStatuses([]));
+  }
+
+  useEffect(() => {
+    refreshScanPaths();
+    refreshLeakStatuses();
+  }, []);
+
+  async function addScanPath(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newScanPath.trim()) return;
+    setLeakBusy(true);
+    setLeakError(null);
+    try {
+      const res = await fetch("/api/leak-scan-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", glob: newScanPath.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLeakError(data.error || "failed to add scan path");
+        return;
+      }
+      setScanPaths(data.paths || []);
+      setNewScanPath("");
+    } finally {
+      setLeakBusy(false);
+    }
+  }
+
+  async function removeScanPath(glob: string) {
+    setLeakBusy(true);
+    try {
+      const res = await fetch("/api/leak-scan-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", glob }),
+      });
+      const data = await res.json();
+      if (res.ok) setScanPaths(data.paths || []);
+    } finally {
+      setLeakBusy(false);
+    }
+  }
+
+  async function runLeakScanNow() {
+    setLeakBusy(true);
+    setLeakError(null);
+    try {
+      const res = await fetch("/api/leak-scan", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setLeakError(data.error || "leak-scan failed");
+        return;
+      }
+      setLastScanAt(new Date().toLocaleString());
+      refreshLeakStatuses();
+    } finally {
+      setLeakBusy(false);
+    }
+  }
+
+  async function markRotated(refName: string) {
+    setLeakBusy(true);
+    try {
+      const res = await fetch("/api/leak-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: refName }),
+      });
+      if (res.ok) refreshLeakStatuses();
+    } finally {
+      setLeakBusy(false);
+    }
+  }
+
   return (
     <div className="settings-page">
       <section className="settings-section">
@@ -193,6 +288,70 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
             )}
           </div>
         )}
+      </section>
+
+      <section className="settings-section">
+        <h2>Leak scan</h2>
+        <p className="stub-banner">
+          Detective, not preventive: this finds secrets that already leaked into the paths you
+          configure below -- it does not stop the next paste into a chat window, and it never
+          scans anything you haven't explicitly added here. Nothing is auto-rotated;
+          "Mark rotated" only records that you rotated the credential yourself.
+        </p>
+
+        <p className="inline-status">
+          {scanPaths.length} scan path{scanPaths.length === 1 ? "" : "s"} configured
+          {lastScanAt ? ` -- last scan ${lastScanAt}` : ""}.
+        </p>
+
+        {leakError && <p className="inline-status error">✗ {leakError}</p>}
+
+        <div className="settings-hierarchy-list">
+          {scanPaths.map((p) => (
+            <div className="settings-hierarchy-row" key={p}>
+              <span>{p}</span>
+              <button className="btn quiet" disabled={leakBusy} onClick={() => removeScanPath(p)}>
+                Remove
+              </button>
+            </div>
+          ))}
+          {scanPaths.length === 0 && <p className="inline-status">(no scan paths configured)</p>}
+        </div>
+
+        <form className="settings-policy-form" onSubmit={addScanPath}>
+          <input
+            className="field"
+            placeholder="path glob, e.g. ~/.claude/projects/**/*.jsonl"
+            value={newScanPath}
+            disabled={leakBusy}
+            onChange={(e) => setNewScanPath(e.target.value)}
+          />
+          <button className="btn quiet" type="submit" disabled={leakBusy || !newScanPath.trim()}>
+            + add path
+          </button>
+        </form>
+
+        <div className="settings-actions">
+          <button className="btn quiet" disabled={leakBusy || scanPaths.length === 0} onClick={runLeakScanNow}>
+            {leakBusy ? "Scanning…" : "Run scan now"}
+          </button>
+        </div>
+
+        <div className="settings-hierarchy-list">
+          {leakStatuses.map((s) => (
+            <div className="settings-hierarchy-row" key={s.ref_name}>
+              <span>{s.ref_name}</span>
+              <span className={`leak-severity leak-severity-${s.severity}`}>{s.severity}</span>
+              <span>{s.finding_count} finding{s.finding_count === 1 ? "" : "s"}</span>
+              <button className="btn quiet" disabled={leakBusy} onClick={() => markRotated(s.ref_name)}>
+                Mark rotated
+              </button>
+            </div>
+          ))}
+          {leakStatuses.length === 0 && (
+            <p className="inline-status">(no references with active leak findings)</p>
+          )}
+        </div>
       </section>
 
       <section className="settings-section settings-stub">

@@ -348,20 +348,32 @@ def record_findings(
         return statuses
 
 
-def mark_rotated(ref_name: str, now: Optional[float] = None, path: Optional[Path] = None) -> None:
+def mark_rotated(
+    ref_name: str,
+    now: Optional[float] = None,
+    path: Optional[Path] = None,
+    watermarks_path: Optional[Path] = None,
+) -> None:
     """A human's own assertion that `ref_name` has been rotated at its
     provider -- Portunus cannot independently verify this
     (design-discussion.md §7). Clears active findings and resets the
-    escalation clock; a rescan will naturally re-flag the reference if the
-    old value is still present somewhere. A harmless no-op for a reference
-    with no active findings."""
+    escalation clock, AND invalidates the watermark for every file where
+    this reference had a finding -- so a rescan genuinely re-reads those
+    bytes rather than trusting a watermark that already scanned past them.
+    Without this, "a rescan will naturally re-flag a premature
+    mark-rotated" would be a documented promise the incremental watermark
+    silently broke. A harmless no-op for a reference with no active
+    findings."""
     ts = now if now is not None else time.time()
     with flock_path(_leak_status_lock_path(path)):
         statuses = _load_status_unlocked(path)
         if ref_name not in statuses or not statuses[ref_name].findings:
             return
+        affected_paths = {f.path for f in statuses[ref_name].findings}
         statuses[ref_name] = LeakStatus(ref_name=ref_name, findings=[], rotated_at=ts)
         _save_status_unlocked(statuses, path)
+
+    _invalidate_watermarks_for_paths(affected_paths, watermarks_path)
 
 
 def severity(status: LeakStatus, now: Optional[float] = None) -> Optional[str]:
@@ -483,19 +495,44 @@ def load_watermarks(path: Optional[Path] = None) -> Dict[str, Watermark]:
     }
 
 
+def _save_watermarks_unlocked(watermarks: Dict[str, Watermark], path: Optional[Path] = None) -> None:
+    watermarks_path = _watermarks_path(path)
+    watermarks_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = {
+        key: {"offset": w.offset, "size": w.size, "mtime": w.mtime, "line_count": w.line_count}
+        for key, w in watermarks.items()
+    }
+    tmp = watermarks_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(raw, indent=2))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, watermarks_path)
+    os.chmod(watermarks_path, 0o600)
+
+
 def save_watermarks(watermarks: Dict[str, Watermark], path: Optional[Path] = None) -> None:
     with flock_path(_watermarks_lock_path(path)):
-        watermarks_path = _watermarks_path(path)
-        watermarks_path.parent.mkdir(parents=True, exist_ok=True)
-        raw = {
-            key: {"offset": w.offset, "size": w.size, "mtime": w.mtime, "line_count": w.line_count}
-            for key, w in watermarks.items()
-        }
-        tmp = watermarks_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(raw, indent=2))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, watermarks_path)
-        os.chmod(watermarks_path, 0o600)
+        _save_watermarks_unlocked(watermarks, path)
+
+
+def _invalidate_watermarks_for_paths(
+    file_paths: "set[str]", watermarks_path: Optional[Path] = None
+) -> None:
+    """Drop the watermark entry for each of `file_paths`, so the NEXT scan
+    re-reads those specific files from byte 0 instead of trusting a
+    watermark that already scanned past their content. Used by
+    mark_rotated() to make good on its own documented promise (design-
+    discussion.md §7): a rescan after a premature mark-rotated must
+    actually be able to re-detect the old value, which an untouched
+    watermark would silently prevent."""
+    if not file_paths:
+        return
+    with flock_path(_watermarks_lock_path(watermarks_path)):
+        watermarks = load_watermarks(watermarks_path)
+        if not any(p in watermarks for p in file_paths):
+            return
+        for p in file_paths:
+            watermarks.pop(p, None)
+        _save_watermarks_unlocked(watermarks, watermarks_path)
 
 
 # ---------------------------------------------------------------------------
