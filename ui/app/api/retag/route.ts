@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
   }
 
   const args = ["retag", name];
+  if (body.org !== undefined) args.push("--org", String(body.org));
   if (body.provider !== undefined) args.push("--provider", String(body.provider));
   if (body.project !== undefined) args.push("--project", String(body.project));
   if (body.env !== undefined) args.push("--env", String(body.env));
@@ -29,6 +30,13 @@ export async function POST(req: NextRequest) {
   if (body.related !== undefined) {
     const related = Array.isArray(body.related) ? body.related.join(",") : String(body.related);
     if (related) args.push("--related", related);
+  }
+  if (body.repo !== undefined) args.push("--repo", String(body.repo));
+  if (body.source_files !== undefined) {
+    const sourceFiles = Array.isArray(body.source_files)
+      ? body.source_files.join(",")
+      : String(body.source_files);
+    if (sourceFiles) args.push("--source-files", sourceFiles);
   }
 
   const result = await runPortunus(args);

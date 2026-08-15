@@ -1,0 +1,91 @@
+id: 01-org-field-and-repo-plumbing-fix
+epic: portunus-vault-trust-and-access
+title: org field + repo/source_files UI plumbing fix
+status: shipped
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: []
+
+description: |
+  Reference gains org: str = "" -- an organizational umbrella one level above project, using
+  the same flat-structured-tag pattern provider/project/env/repo already use. Added to
+  _STRUCTURED_TAG_FIELDS (find/resolve_by_tags work by org immediately) and to retag()'s
+  collision-check set. Wired through reg add/retag/retag-bulk/drop's CLI args. Also fixes a
+  real, concrete gap this epic's research found: repo/source_files already worked end-to-end
+  in the CLI/Registry but never reached the UI (neither /api/retag nor /api/drop forwarded
+  them, neither edit form had inputs for them) -- the exact field pair the user named first
+  ("keys per REPO").
+
+acceptance_criteria:
+  - "Given org is set via reg add/retag/drop, when the reference is reloaded, then org round-trips correctly"
+  - "Given a reference with no org set, when any existing tag-based/list code path runs, then it behaves exactly as before this story -- absent org is never an error"
+  - "Given two references with identical org+project+env+provider, when one is retagged to collide with the other, then AmbiguousMatch is raised, same as the existing provider/project/env/repo collision precedent"
+  - "Given a different org on two otherwise-identical references, when retagged, then they do NOT collide -- org is part of the identity, not incidental"
+  - "Given AddSecretForm and DetailDrawer's Move form, when org/repo/source_files are set through the browser, then GET /api/retag's round-trip is confirmed independently via `portunus reg json`"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: Reference.org field, _STRUCTURED_TAG_FIELDS, retag() collision set, CLI wiring, UI plumbing fix across /api/retag, /api/drop, AddSecretForm, DetailDrawer.
+    agent: developer
+  - id: test
+    description: pytest for registry-level and CLI-level org behavior (10 + 5 tests).
+    agent: tester
+    depends_on: [implement]
+  - id: live-verify
+    description: Playwright pass against a real dev server + scratch PORTUNUS_HOME.
+    agent: tester
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Reference dataclass, _STRUCTURED_TAG_FIELDS, add()/retag()/retag_bulk()/request()
+    - path: src/portunus/cli.py
+      purpose: reg add / retag / retag-bulk / drop argparse + handlers
+    - path: ui/app/api/retag/route.ts
+      purpose: repo/source_files were never forwarded here -- the concrete plumbing bug
+    - path: ui/app/api/drop/route.ts
+      purpose: also missing org/repo/source_files forwarding, and drop's own CLI lacked --source-files entirely
+    - path: ui/app/components/AddSecretForm.tsx
+      purpose: creation-time form, gained org/repo/source_files inputs
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: Move form, gained the same three inputs + chip display
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: org field + collision handling
+  - file: src/portunus/cli.py
+    change: --org across reg add/retag/retag-bulk/drop; --source-files added to drop
+  - file: ui/app/api/retag/route.ts
+    change: forward org/repo/source_files
+  - file: ui/app/api/drop/route.ts
+    change: forward org/repo/source_files
+  - file: ui/app/components/AddSecretForm.tsx
+    change: org/repo/source_files inputs
+  - file: ui/app/components/DetailDrawer.tsx
+    change: org/repo/source_files inputs + chips
+  - file: ui/app/types.ts
+    change: org/repo/source_files on PortunusReference/AddSecretDraft
+
+design_decisions:
+  - decision: org participates in retag()'s collision check alongside provider/project/env/repo
+    rationale: "design-discussion.md §0 -- org is structural/identifying, same category as those fields, not descriptive like group/description"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "org/repo/source_files are pure metadata, never a value -- no new value-fetch path introduced"
+
+risks:
+  - severity: low
+    description: Standard additive-schema risk
+    mitigation: "486 tests green with zero regressions before this story; org defaults to empty string everywhere"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/design-discussion.md
+    relevant_excerpt: "§0"

@@ -8,6 +8,7 @@ export interface PortunusReference {
   state: string;
   approval: string;
   sm_path: string;
+  org: string;
   provider: string;
   project: string;
   env: string;
@@ -19,6 +20,12 @@ export interface PortunusReference {
   related: string[];
   repo: string;
   source_files: string[];
+}
+
+export interface PortunusView {
+  name: string;
+  description: string;
+  ref_names: string[];
 }
 
 export interface AuditEntry {
@@ -36,6 +43,7 @@ export interface AddSecretDraft {
   kind: string;
   scope: string;
   backend: string;
+  org: string;
   provider: string;
   project: string;
   env: string;
@@ -45,4 +53,6 @@ export interface AddSecretDraft {
   injected_as: string;
   group: string;
   related: string;
+  repo: string;
+  source_files: string;
 }

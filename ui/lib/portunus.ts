@@ -15,6 +15,7 @@ export interface PortunusReference {
   state: string;
   approval: string;
   sm_path: string;
+  org: string;
   provider: string;
   project: string;
   env: string;

@@ -1,0 +1,77 @@
+id: 02-metadata-completeness-signal
+epic: portunus-vault-trust-and-access
+title: missing-metadata warning badge + sortable facet
+status: shipped
+complexity: small
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [01-org-field-and-repo-plumbing-fix]
+
+description: |
+  New checkMetadataCompleteness() (ui/app/completeness.ts) -- a pure client-side derivation
+  over fields already fetched with every PortunusReference (description/purpose/org/project/
+  tags), computed on render, nothing new stored. "Extra metadata" = description/purpose;
+  "project tags" = org/project/tags -- directly the two things the user named. CompletenessBadge
+  (mirrors RotationBadge's self-clearing pattern) renders wherever a reference already renders
+  (Console, Project Explorer, DetailDrawer). Console's rail also gets a real clickable Metadata
+  facet (missing/complete counts + filter).
+
+acceptance_criteria:
+  - "Given a reference missing description, purpose, or org/project/tags, when rendered anywhere, then a '⚠ missing metadata' badge appears"
+  - "Given a fully-filled reference, when rendered, then no badge appears"
+  - "Given the Console rail's Metadata facet, when clicked, then the list filters to exactly the missing (or complete) subset"
+  - "Given DetailDrawer's prominent badge, when hovered, then the tooltip names exactly which fields are missing"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: completeness.ts derivation + CompletenessBadge component + wiring into Console/ProjectExplorer/DetailDrawer + Console's Metadata facet.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass against 3 fixture references at different fill levels.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/completeness.ts
+      purpose: the derivation function
+    - path: ui/app/components/CompletenessBadge.tsx
+      purpose: the badge, mirrors RotationBadge.tsx's own pattern
+    - path: ui/app/components/Console.tsx
+      purpose: Metadata facet + row-level badge
+
+files_to_modify:
+  - file: ui/app/completeness.ts
+    change: new file
+  - file: ui/app/components/CompletenessBadge.tsx
+    change: new file
+  - file: ui/app/components/Console.tsx
+    change: Metadata facet + badge wiring
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: badge wiring
+  - file: ui/app/components/DetailDrawer.tsx
+    change: prominent badge
+  - file: ui/app/globals.css
+    change: .completeness-badge styles
+
+design_decisions:
+  - decision: derived, not stored
+    rationale: "horizontal-plan.md -- avoids a second source of truth that can drift from the fields it's computed from"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Pure metadata derivation, no value ever touched"
+
+risks:
+  - severity: low
+    description: None material -- purely additive UI signal
+    mitigation: "npm run build clean; live Playwright proof"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/horizontal-plan.md
+    relevant_excerpt: "Layer: Registry (hierarchy + metadata) -- DERIVED, NOT STORED"
