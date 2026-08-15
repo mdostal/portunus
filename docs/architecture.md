@@ -259,6 +259,46 @@ No bidirectional multi-machine sync was built — `SyncingBackend` already solve
 conflict-resolution design given this vault has real concurrent-writer traffic (see the
 `AuditChain`/`LocalEncryptedBackend` lock fixes this epic's own prerequisite work built on).
 
+## 9. `org` hierarchy, sub-vault navigation, and custom views (portunus-vault-trust-and-access)
+
+Planned with a heavier horizontal/vertical process (`.pHive/epics/portunus-vault-trust-and-
+access/docs/`) rather than the lighter research-brief-only shape recent epics defaulted to —
+the ask (metadata quality, an organizational hierarchy, stubbed RBAC, onboarding) was
+genuinely large and interdependent enough to warrant it, the same process
+`portunus-standalone-core` used for the original registry/adapter/UI buildout.
+
+**`org`, one level above `project`.** `Reference` gains `org: str = ""` — the same flat-
+structured-tag pattern `provider`/`project`/`env`/`repo` already use, added to
+`_STRUCTURED_TAG_FIELDS` (so `find --tags org=...` and `retag()`'s collision check both pick it
+up immediately) rather than a new nested hierarchy object. `VaultBinding` + `project` already
+gave "each vault is its own thing" (per-project backend/credential, already proven for GCP
+multi-account); `org` fills the one real missing rung — grouping several projects under one
+organizational umbrella (e.g. `firefly-events` spanning `ffe-cicd`/`shindig`).
+
+**Sub-vault navigation is a UI concept, not a new store.** The Standalone UI's Vault Map
+renders an org → project drill-down over the `org`/`project` fields — no new backend, no new
+API call, no new permission boundary (that's explicitly deferred, stubbed-only future work).
+Drilling into a project *feels* like its own small vault (its own list, its own completeness
+summary) without duplicating any state.
+
+**Custom views** (`views.py`, `PORTUNUS_HOME/views.json`) are deliberately orthogonal to that
+structural hierarchy — a named, human-curated list of reference names for task-shaped
+clustering ("everything for the Shindig deploy") that doesn't map onto org/project/env.
+Every mutator wraps its own load→mutate→save inside one `flock` acquisition from the start —
+unlike `vault-bindings.json`'s own retrofitted save-only lock (§8), this store never had the
+race in the first place, proven with a real multi-process concurrent-write test.
+
+**Missing-metadata signal** (`ui/app/completeness.ts`) is a pure, derived-on-render function
+over fields the UI already fetches — no new stored field, nothing to drift out of sync with
+what it's computed from.
+
+**Explicitly not built here:** any RBAC enforcement. `roles.json` (a future story) will define
+a `{scope_type: org|project|env, scope_value, role, actions[]}` policy shape building on
+`Identity`/`check_injectable`'s already-inert `requester` seam (§3) — schema and a config
+surface only, never wired into `retag()`/`check_injectable`. A visibly greyed-out "coming soon"
+treatment in any UI surface that shows it, never a control that looks live but silently does
+nothing.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

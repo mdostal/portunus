@@ -296,10 +296,16 @@ to the existing tag schema:
 
 ```bash
 portunus reg add stripe-prod dostal-stripe-live \
-  --scope shared --kind stripe --project mdostal.com --env prod \
+  --scope shared --kind stripe --org firefly-events --project mdostal.com --env prod \
   --group mdostal.com/stripe --related mdostal-com-mongodb-prod
 # description/purpose/injected_as/group/related are also settable via retag or the UI's edit form
 ```
+
+`org` sits one level above `project` — an organizational umbrella spanning several projects
+(e.g. `firefly-events` spanning `ffe-cicd`, `shindig`, and more), the structural field the
+Standalone UI's Vault Map drill-down and Console's facets key off of. Like every other
+structured tag, an absent `org` is never an error — it lands in a `(no org set)` bucket, same
+non-dropping treatment `group`'s own `(ungrouped)` bucket already gets.
 
 ### `portunus tree` — navigate secrets by hierarchy and relationship
 
@@ -641,17 +647,32 @@ metadata.
 ## Standalone UI
 
 A localhost-only Next.js app under `ui/` — Console (default tab, faceted table + detail
-drawer), Vault Map (second tab, cards grouped by provider/project), Project Explorer (third
-tab — a GCP-project-scoped view: what's already registered, what's discoverable via
-`portunus discover` with a one-click "register all", and whether that project has a WIF
-binding configured), and an Ask Bar (persistent side panel across all three, backed by
-`portunus ask`). No gating logic is duplicated in TypeScript: every API route under
-`ui/app/api/` shells out to the same `portunus` console script the CLI uses, so
+drawer), Vault Map (second tab, an org → project drill-down — pick an org card, then a project
+card, and the view scopes to just that slice, each level showing its own reference count and
+completeness summary; a real fix for what becomes an unmanageable flat card wall once a vault
+spans 30+ repos), Project Explorer (third tab — a GCP-project-scoped view: what's already
+registered, what's discoverable via `portunus discover` with a one-click "register all", and
+whether that project has a WIF binding configured), and an Ask Bar (persistent side panel
+across all three, backed by `portunus ask`). No gating logic is duplicated in TypeScript: every
+API route under `ui/app/api/` shells out to the same `portunus` console script the CLI uses, so
 `Broker.check_injectable` stays the single, only implementation of the gate. The add-secret
 form is the one deliberate human-plaintext-entry point (mirroring `portunus drop --stdin`) — a
 value is piped to the CLI via stdin only, never an argv element, never logged. A secret's
-description/purpose/injected_as metadata is viewable and editable from the detail drawer's
-Move form — never a value, always through the same `portunus retag` path.
+org/provider/project/env/repo/source_files/description/purpose/injected_as metadata is viewable
+and editable from the detail drawer's Move form — never a value, always through the same
+`portunus retag` path.
+
+**Missing-metadata signal.** A reference with no `description`/`purpose`/`org`/`project`/`tags`
+gets a "⚠ missing metadata" badge everywhere it renders, plus a real clickable Metadata facet
+in Console to filter down to exactly what still needs filling in — a real vault checked live
+this project has this problem for nearly every reference, so this is a genuine, not
+theoretical, gap to close.
+
+**Custom views.** Named, human-curated collections of references for task-shaped clustering
+that doesn't map onto org/project/env — "everything for the Shindig deploy," assembled from
+wherever those references actually live. Create one from Console's "My views" panel; add/remove
+a reference to any view straight from its own detail drawer. CLI: `portunus views create/add/
+remove/delete/show`.
 
 ```bash
 cd ui

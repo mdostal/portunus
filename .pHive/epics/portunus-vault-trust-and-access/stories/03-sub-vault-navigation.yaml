@@ -1,0 +1,63 @@
+id: 03-sub-vault-navigation
+epic: portunus-vault-trust-and-access
+title: org -> project drill-down replaces VaultMap's flat render
+status: shipped
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [01-org-field-and-repo-plumbing-fix]
+
+description: |
+  VaultMap.tsx rewritten as a real drill-down: All orgs -> org -> project -> the scoped
+  reference list (provider-grouped, same card rendering as before). Built entirely on the
+  org/project fields -- no new store, no new API call. Each level shows a completeness summary
+  (Slice 2's derivation, aggregated). A breadcrumb tracks position with clickable back-
+  navigation. Directly answers "the map is a giant flat thing and is unmanageable at 30+ repos."
+
+acceptance_criteria:
+  - "Given a fixture vault with several orgs/projects, when the org-level view renders, then each org card shows its own reference count and missing-metadata count"
+  - "Given a drill into an org, then a project, when the reference list renders, then it contains ONLY references matching that exact org+project scope"
+  - "Given a breadcrumb segment for a prior level, when clicked, then navigation returns to that level with the correct unscoped/partially-scoped list"
+  - "Given the org/project collision check (Slice 1), when two references would otherwise collide across org+project+provider, then AmbiguousMatch still fires correctly even when navigated to via this drill-down"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: Rewrite VaultMap.tsx with org/project drill-down state, breadcrumb, scope-card summaries.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass against a fixture vault with 3 orgs and 3 projects.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/VaultMap.tsx
+      purpose: the component rewritten this story -- external props interface (refs/onSelect/onAdd) kept unchanged so page.tsx needed no edits
+
+files_to_modify:
+  - file: ui/app/components/VaultMap.tsx
+    change: full rewrite -- drill-down navigation
+  - file: ui/app/globals.css
+    change: .map-breadcrumb, .scope-cards, .scope-card styles
+
+design_decisions:
+  - decision: only 2 real navigation levels (org, project); env stays a lighter facet, not a third tier
+    rationale: "Keeps the UI change proportional to the real ask (the user named org->project explicitly); env can be added as a real third level later if needed without redesigning this"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Pure client-side scoping over already-fetched metadata, no new value exposure"
+
+risks:
+  - severity: low
+    description: None material -- purely a navigation/UX change over existing data
+    mitigation: "npm run build clean; live Playwright proof with real multi-org/project fixture data"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/vertical-plan.md
+    relevant_excerpt: "Slice 3"

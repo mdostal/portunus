@@ -4,6 +4,41 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-15
+
+### Added
+
+- **`org` field** — an organizational umbrella one level above `project` (e.g. `firefly-events`
+  spanning `ffe-cicd`/`shindig`), the same flat-structured-tag pattern `provider`/`project`/
+  `env`/`repo` already use. Wired through `reg add`/`retag`/`retag-bulk`/`drop` and into
+  `retag()`'s collision check.
+- **Sub-vault navigation** — Vault Map is now a real org → project drill-down (each level
+  showing its own reference count and completeness summary) instead of one flat card wall —
+  the fix for "the map is unmanageable once a vault spans 30+ repos." Built entirely on the
+  `org`/`project` fields, no new store.
+- **Missing-metadata warning** — a real "⚠ missing metadata" badge wherever a reference
+  renders, plus a clickable Metadata facet in Console to filter down to exactly what needs
+  filling in. Purely derived from existing fields, nothing new stored.
+- **Custom views** (`portunus views create/add/remove/delete/show`) — named, human-curated
+  reference collections for task-shaped clustering that doesn't map onto org/project/env
+  ("everything for the Shindig deploy"). New `views.json` store, locked from day one (every
+  mutator wraps its own load-mutate-save in one `flock` acquisition — proven with a real
+  10-process concurrent-write test, zero lost entries).
+
+### Fixed
+
+- **`repo`/`source_files` never reached the UI** despite working end-to-end in the CLI/
+  Registry already — `/api/retag` and `/api/drop` now forward both fields, and both edit forms
+  (Add Secret, DetailDrawer's Move) gained the missing inputs. `portunus drop` itself was also
+  missing `--source-files` entirely (only `--repo` existed) — added for symmetry with `retag`.
+
+This is a checkpoint release — the first 4 of 10 planned stories in the
+`portunus-vault-trust-and-access` epic (`.pHive/epics/portunus-vault-trust-and-access/`), the
+part directly answering "get the metadata right and stop the vault feeling like one giant flat
+list." Stubbed role/policy schema, an LLM-suggests/human-confirms metadata workflow, a Settings
+page, an expanded setup wizard, and an in-app About/Help page are planned as a follow-on
+release.
+
 ## [0.19.0] - 2026-08-14
 
 ### Added

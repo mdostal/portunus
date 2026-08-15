@@ -1,0 +1,90 @@
+id: 04-custom-views
+epic: portunus-vault-trust-and-access
+title: named, human-curated reference collections
+status: shipped
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: []
+
+description: |
+  New src/portunus/views.py: View(name, description, ref_names) persisted to PORTUNUS_HOME/
+  views.json. Every mutator wraps its own load->mutate->save inside ONE flock acquisition --
+  the lock-from-day-one lesson from vault-bindings.json's own retrofitted save-only lock
+  earlier this session. CLI: portunus views create/add/remove/delete/show. UI: /api/views
+  route; Console gets a "My views" facet group; DetailDrawer gets add-to-view/remove-from-view
+  controls on the reference itself. Simplest possible v1 -- a curated list, not a saved query
+  (design-discussion.md §4a).
+
+acceptance_criteria:
+  - "Given a new view created via CLI or UI, when a reference is added to it, then it appears in views.json and GET /api/views"
+  - "Given a reference already in a view, when added again, then it's a no-op (idempotent), not a duplicate entry"
+  - "Given N concurrent processes each adding a distinct reference to the SAME view, when all complete, then all N entries are present -- zero lost writes"
+  - "Given the Console 'My views' facet, when a view is clicked, then the list filters to exactly that view's ref_names"
+  - "Given DetailDrawer's add-to-view control, when a reference is added through the browser, then it's confirmed independently via `portunus views show --json`"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: views.py + CLI subcommands + /api/views route + Console/DetailDrawer UI.
+    agent: developer
+  - id: test
+    description: pytest including a real multi-process concurrency test (10 processes, matches this session's own established technique).
+    agent: tester
+    depends_on: [implement]
+  - id: live-verify
+    description: Playwright pass creating a view and curating it from DetailDrawer.
+    agent: tester
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/views.py
+      purpose: the new store, locked from day one
+    - path: src/portunus/filelock.py
+      purpose: the shared flock primitive reused here (built earlier this session for the vault-backup epic)
+    - path: ui/app/api/views/route.ts
+      purpose: GET/POST shell-out route
+    - path: ui/app/components/Console.tsx
+      purpose: My views facet
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: add-to-view/remove-from-view controls
+
+files_to_modify:
+  - file: src/portunus/views.py
+    change: new module
+  - file: src/portunus/cli.py
+    change: views create/add/remove/delete/show subcommands
+  - file: ui/app/api/views/route.ts
+    change: new route
+  - file: ui/app/components/Console.tsx
+    change: My views facet + create form
+  - file: ui/app/components/DetailDrawer.tsx
+    change: add/remove-from-view controls
+  - file: ui/app/types.ts
+    change: PortunusView type
+
+design_decisions:
+  - decision: a curated list of ref_names, not a saved tag-query
+    rationale: "design-discussion.md §4a -- serves the described manual-curation use case without speculatively building a bigger query-language feature"
+  - decision: every mutator locks its own full load-mutate-save cycle
+    rationale: "Direct lesson from vault-bindings.json's still-unfixed read-modify-write race (flagged, not fixed, in the vault-backup epic) -- do it right from day one here instead"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Views only ever hold reference NAMES -- structural check confirms no .access( call anywhere in views.py or the CLI handlers"
+  - concern: audit-chain-integrity
+    action: "Not audited (matches vault-bindings.json/rotation-bindings.json's own existing un-audited config posture) -- consistent, not a new gap"
+
+risks:
+  - severity: low
+    description: Lock-ordering risk if a future feature needs to hold views.lock alongside another lock
+    mitigation: "views.lock is never acquired alongside any other lock in this story -- if that changes later, the same fixed-alphabetical-order discipline backup.py already established should be reused"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/design-discussion.md
+    relevant_excerpt: "§4a"

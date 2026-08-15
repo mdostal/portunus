@@ -1,0 +1,71 @@
+name: portunus-vault-trust-and-access
+title: metadata quality + org hierarchy + stubbed RBAC + onboarding
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Large-scope epic, planned with the horizontal/vertical process (docs/horizontal-plan.md,
+  docs/vertical-plan.md) after this session's own established lighter research-brief-only
+  process proved insufficient for the ask's real size. Two chains: Chain A (this checkpoint,
+  stories 01-04) -- org field + repo/source_files UI plumbing fix, a missing-metadata warning
+  signal, org->project sub-vault drill-down navigation replacing the flat Vault Map, and named
+  human-curated custom views for task-shaped clustering. Chain C (stories 05-10, follow-on) --
+  a STUBBED (schema + CLI/UI config surface, zero enforcement) role/policy model building on
+  Petitio's already-inert Identity/requester seam, an LLM-suggests/human-confirms metadata
+  workflow, a Settings page, a substantially expanded first-run setup wizard, and an in-app
+  About/Help page. Full reasoning, including two rounds of user course-correction (roles
+  dropped to stub-only; org hierarchy + custom views promoted to top priority), lives in
+  docs/design-discussion.md.
+
+stories:
+  - id: 01-org-field-and-repo-plumbing-fix
+    title: org field + repo/source_files UI plumbing fix
+    complexity: medium
+    depends_on: []
+    status: shipped
+  - id: 02-metadata-completeness-signal
+    title: missing-metadata warning badge + sortable facet
+    complexity: small
+    depends_on: [01-org-field-and-repo-plumbing-fix]
+    status: shipped
+  - id: 03-sub-vault-navigation
+    title: org -> project drill-down replaces VaultMap's flat render
+    complexity: medium
+    depends_on: [01-org-field-and-repo-plumbing-fix]
+    status: shipped
+  - id: 04-custom-views
+    title: named, human-curated reference collections
+    complexity: medium
+    depends_on: []
+    status: shipped
+  - id: 05-role-policy-schema-stub
+    title: role/policy schema -- stub only, no enforcement
+    complexity: medium
+    depends_on: []
+    status: pending
+  - id: 06-llm-suggest-human-confirm-metadata
+    title: LLM-suggests / human-confirms metadata workflow
+    complexity: medium
+    depends_on: [02-metadata-completeness-signal]
+    status: pending
+  - id: 07-settings-page
+    title: Settings page (bindings + hierarchy config + greyed roles stub)
+    complexity: medium
+    depends_on: [05-role-policy-schema-stub]
+    status: pending
+  - id: 08-setup-wizard
+    title: expanded first-run setup wizard
+    complexity: medium
+    depends_on: [07-settings-page]
+    status: pending
+  - id: 09-about-help-page
+    title: in-app About/Help page
+    complexity: low
+    depends_on: [06-llm-suggest-human-confirm-metadata, 08-setup-wizard]
+    status: pending
+  - id: 10-closeout
+    title: docs, version bump, full end-to-end live proof
+    complexity: low
+    depends_on: [09-about-help-page]
+    status: pending
