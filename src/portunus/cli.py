@@ -31,6 +31,7 @@ from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
+from .roles import PolicyError, VALID_SCOPE_TYPES, delete_policy, load_policies, set_policy
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -1329,6 +1330,51 @@ def cmd_views_show(args) -> int:
     return 0
 
 
+def _policy_to_dict(p) -> dict:
+    return {"scope_type": p.scope_type, "scope_value": p.scope_value, "role": p.role, "actions": p.actions}
+
+
+def cmd_roles_set(args) -> int:
+    """STUB ONLY -- writes genuinely persist to roles.json, but nothing
+    reads them for enforcement. See roles.py's own module docstring."""
+    actions = [a.strip() for a in args.actions.split(",") if a.strip()] if args.actions else []
+    try:
+        record = set_policy(args.scope_type, args.scope_value, args.role, actions)
+    except PolicyError as exc:
+        return _err(str(exc))
+    _, audit, _, _ = _build()
+    audit.append("roles_config_changed", "-", f"set {record.key}")
+    print(f"set policy {record.key}: actions={record.actions}")
+    return 0
+
+
+def cmd_roles_delete(args) -> int:
+    existed = delete_policy(args.scope_type, args.scope_value, args.role)
+    if existed:
+        _, audit, _, _ = _build()
+        audit.append("roles_config_changed", "-", f"deleted {args.scope_type}:{args.scope_value}:{args.role}")
+    print("deleted" if existed else "no such policy")
+    return 0
+
+
+def cmd_roles_show(args) -> int:
+    policies = load_policies()
+    if args.scope_type:
+        policies = {k: p for k, p in policies.items() if p.scope_type == args.scope_type}
+    if args.scope_value:
+        policies = {k: p for k, p in policies.items() if p.scope_value == args.scope_value}
+    if args.json:
+        print(json.dumps({k: _policy_to_dict(p) for k, p in policies.items()}))
+        return 0
+    if not policies:
+        print("(no policies configured -- roles are not enforced yet, this is a stub)")
+        return 0
+    print("NOTE: roles are STUB ONLY -- not enforced by check_injectable/retag yet.")
+    for k, p in policies.items():
+        print(f"  {k}  actions={p.actions}")
+    return 0
+
+
 def _build_tree(refs, key_fn=None):
     """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
 
@@ -1782,6 +1828,32 @@ def build_parser() -> argparse.ArgumentParser:
     vw_show.add_argument("name", nargs="?", default="")
     vw_show.add_argument("--json", action="store_true")
     vw_show.set_defaults(func=cmd_views_show)
+
+    rl = sub.add_parser(
+        "roles",
+        help="STUB ONLY -- role/policy config surface, not enforced by check_injectable/retag "
+             "yet (Petitio's future access-level engine, portunus-vault-trust-and-access)",
+    )
+    rl_sub = rl.add_subparsers(dest="action", required=True)
+
+    rl_set = rl_sub.add_parser("set", help="create/update a policy record (writes persist; not enforced)")
+    rl_set.add_argument("--scope-type", required=True, choices=VALID_SCOPE_TYPES)
+    rl_set.add_argument("--scope-value", required=True)
+    rl_set.add_argument("--role", required=True)
+    rl_set.add_argument("--actions", default="", help="comma-separated, e.g. read,test,prod-release")
+    rl_set.set_defaults(func=cmd_roles_set)
+
+    rl_delete = rl_sub.add_parser("delete", help="delete a policy record")
+    rl_delete.add_argument("--scope-type", required=True, choices=VALID_SCOPE_TYPES)
+    rl_delete.add_argument("--scope-value", required=True)
+    rl_delete.add_argument("--role", required=True)
+    rl_delete.set_defaults(func=cmd_roles_delete)
+
+    rl_show = rl_sub.add_parser("show", help="show policy records (optionally filtered)")
+    rl_show.add_argument("--scope-type", choices=VALID_SCOPE_TYPES, default="")
+    rl_show.add_argument("--scope-value", default="")
+    rl_show.add_argument("--json", action="store_true")
+    rl_show.set_defaults(func=cmd_roles_show)
 
     tr = sub.add_parser(
         "tree",
