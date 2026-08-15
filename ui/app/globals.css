@@ -315,6 +315,37 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 
 /* vault map */
 .vault-map { display: flex; flex-direction: column; gap: 1rem; }
+.map-breadcrumb { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; }
+.breadcrumb-crumb {
+  border: none;
+  background: none;
+  color: var(--steel);
+  cursor: pointer;
+  padding: 0.1rem 0.2rem;
+}
+.breadcrumb-crumb:not(:disabled):hover { color: var(--brass); }
+.breadcrumb-crumb:disabled { color: var(--ink); cursor: default; font-weight: 600; }
+.breadcrumb-crumb.current { color: var(--ink); font-weight: 600; }
+.breadcrumb-sep { color: var(--hair); }
+.scope-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.6rem; }
+.scope-card {
+  border: 1px solid var(--hair);
+  background: var(--paper-raised);
+  padding: 0.8rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: left;
+  cursor: pointer;
+}
+.scope-card:hover { border-color: var(--verdigris); }
+.scope-card-name {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.scope-card-meta { display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; color: var(--steel); }
 .gallery-group-head {
   font-family: var(--font-mono);
   font-size: 0.68rem;
