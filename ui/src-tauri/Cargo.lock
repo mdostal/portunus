@@ -2629,7 +2629,7 @@ dependencies = [
 
 [[package]]
 name = "portunus-desktop"
-version = "0.16.1"
+version = "0.16.3"
 dependencies = [
  "log",
  "semver",

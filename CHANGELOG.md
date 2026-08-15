@@ -4,6 +4,21 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-08-15
+
+### Fixed
+
+- **Local vault: concurrent `store()`/`remove()` could silently lose writes.** Found live from
+  a real bug report — a different session resolving a shared, `sync_mode=cached` reference saw
+  Portunus serve a stale value while other sessions saw it working fine. Verified directly
+  first (hashed Portunus's served value against a fresh direct GCP fetch — identical, ruling
+  out an ongoing bad value), which pointed at a timing-dependent race rather than a static bug.
+  `LocalEncryptedBackend.store()`'s load-mutate-flush was unlocked — the same class of bug just
+  fixed in the audit chain (0.16.2), but here governing actual secret values in a codepath
+  (`SyncingBackend`'s cache refresh) multiple concurrent sessions hit by design. Reproduced
+  directly: 20 concurrent `store()` calls lost 14 of 20 writes and crashed twice on a shared
+  temp filename. Fixed with the same `flock` idiom `Registry`/`AuditChain` already use.
+
 ## [0.16.2] - 2026-08-15
 
 ### Fixed
