@@ -30,6 +30,7 @@ from .backend import (
 from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
+from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -160,7 +161,7 @@ def cmd_reg(args) -> int:
         except ValueError as exc:
             return _err(str(exc))
         ref = registry.add(args.name, args.sm_name, scope=args.scope,
-                           kind=args.kind, project=args.project or "",
+                           kind=args.kind, org=args.org or "", project=args.project or "",
                            description=args.description or "", purpose=args.purpose or "",
                            injected_as=injected_as, group=args.group or "", related=related,
                            repo=args.repo or "")
@@ -456,6 +457,8 @@ def cmd_retag(args) -> int:
         return _err(str(exc))
 
     kwargs = {}
+    if args.org:
+        kwargs["org"] = args.org
     if args.provider:
         kwargs["provider"] = args.provider
     if args.project:
@@ -490,7 +493,7 @@ def cmd_retag(args) -> int:
 
     broker.audit.append("retag", ref.sm_name, "ok")
     print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
-          f"(provider={ref.provider}, project={ref.project}, env={ref.env}, tags={ref.tags})")
+          f"(org={ref.org}, provider={ref.provider}, project={ref.project}, env={ref.env}, tags={ref.tags})")
     return 0
 
 
@@ -655,13 +658,15 @@ def cmd_drop(args) -> int:
         extra_tags = _parse_tags(args.tags) if args.tags else {}
         injected_as = _parse_tags(args.injected_as) if args.injected_as else {}
         related = _parse_related(args.related) if args.related else []
+        source_files = _parse_related(args.source_files) if args.source_files else []
     except ValueError as exc:
         return _err(str(exc))
     ref = registry.add(
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
-        provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
+        org=args.org, provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
         group=args.group, related=related, backend=args.backend, repo=args.repo,
+        source_files=source_files,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -742,6 +747,8 @@ def cmd_retag_bulk(args) -> int:
         return _err(str(exc))
 
     kwargs = {}
+    if args.org:
+        kwargs["org"] = args.org
     if args.repo:
         kwargs["repo"] = args.repo
     if source_files is not None:
@@ -1262,6 +1269,66 @@ def cmd_vault_import(args) -> int:
     return 0
 
 
+def _view_to_dict(view) -> dict:
+    return {"name": view.name, "description": view.description, "ref_names": view.ref_names}
+
+
+def cmd_views_create(args) -> int:
+    try:
+        view = create_view(args.name, description=args.description or "")
+    except ViewError as exc:
+        return _err(str(exc))
+    print(f"created view {view.name!r}")
+    return 0
+
+
+def cmd_views_add(args) -> int:
+    try:
+        view = add_to_view(args.name, args.ref_name)
+    except ViewError as exc:
+        return _err(str(exc))
+    print(f"{args.ref_name} -> {view.name} ({len(view.ref_names)} reference(s))")
+    return 0
+
+
+def cmd_views_remove(args) -> int:
+    try:
+        view = remove_from_view(args.name, args.ref_name)
+    except ViewError as exc:
+        return _err(str(exc))
+    print(f"{args.ref_name} removed from {view.name} ({len(view.ref_names)} reference(s))")
+    return 0
+
+
+def cmd_views_delete(args) -> int:
+    print("deleted" if delete_view(args.name) else "no such view")
+    return 0
+
+
+def cmd_views_show(args) -> int:
+    views = load_views()
+    if args.name:
+        view = views.get(args.name)
+        if view is None:
+            if args.json:
+                print(json.dumps({}))
+            else:
+                print(f"no such view: {args.name}")
+            return 0
+        views = {args.name: view}
+    if args.json:
+        print(json.dumps({name: _view_to_dict(v) for name, v in views.items()}))
+        return 0
+    if not views:
+        print("(no views configured)")
+        return 0
+    for name, v in views.items():
+        print(f"  {name}  ({v.description or 'no description'})  -- {len(v.ref_names)} reference(s)")
+        for ref_name in v.ref_names:
+            print(f"      {{{{secret:{ref_name}}}}}")
+    return 0
+
+
 def _build_tree(refs, key_fn=None):
     """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
 
@@ -1387,6 +1454,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("sm_name")
     a.add_argument("--scope", default="")
     a.add_argument("--kind", default="")
+    a.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     a.add_argument("--project", default="")
     a.add_argument("--description", default="", help="what this secret is")
     a.add_argument("--purpose", default="", help="what this secret is for")
@@ -1441,8 +1509,9 @@ def build_parser() -> argparse.ArgumentParser:
                       help="required for an 'add' request: comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
     ask.set_defaults(func=cmd_ask)
 
-    rt = sub.add_parser("retag", help="update a reference's provider/project/env/tags/metadata in place")
+    rt = sub.add_parser("retag", help="update a reference's org/provider/project/env/tags/metadata in place")
     rt.add_argument("name")
+    rt.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     rt.add_argument("--provider", default="")
     rt.add_argument("--project", default="")
     rt.add_argument("--env", default="")
@@ -1465,6 +1534,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rtb.add_argument("--group-prefix", required=True,
                       help="plain string prefix matched against each reference's group")
+    rtb.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     rtb.add_argument("--repo", default="", help="the git repo that consumes these secrets")
     rtb.add_argument("--source-files", default="",
                       help="comma-separated file paths, replaces the source_files list")
@@ -1515,6 +1585,7 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("sm_name", help="vault key, e.g. dostal-shared-anthropic")
     dr.add_argument("--scope", default="")
     dr.add_argument("--kind", default="")
+    dr.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     dr.add_argument("--provider", default="")
     dr.add_argument("--project", default="")
     dr.add_argument("--env", default="")
@@ -1526,6 +1597,8 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     dr.add_argument("--related", default="", help="comma-separated reference names")
     dr.add_argument("--repo", default="", help="the git repo that consumes this secret")
+    dr.add_argument("--source-files", default="",
+                     help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
         choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),
@@ -1680,6 +1753,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace existing vault state in PORTUNUS_HOME (full replace, not merge)",
     )
     vault_import.set_defaults(func=cmd_vault_import)
+
+    vw = sub.add_parser(
+        "views", help="named, human-curated reference collections for ad-hoc task clustering",
+    )
+    vw_sub = vw.add_subparsers(dest="action", required=True)
+
+    vw_create = vw_sub.add_parser("create", help="create a new, empty view")
+    vw_create.add_argument("name")
+    vw_create.add_argument("--description", default="")
+    vw_create.set_defaults(func=cmd_views_create)
+
+    vw_add = vw_sub.add_parser("add", help="add a reference to a view (idempotent)")
+    vw_add.add_argument("name")
+    vw_add.add_argument("ref_name")
+    vw_add.set_defaults(func=cmd_views_add)
+
+    vw_remove = vw_sub.add_parser("remove", help="remove a reference from a view (idempotent)")
+    vw_remove.add_argument("name")
+    vw_remove.add_argument("ref_name")
+    vw_remove.set_defaults(func=cmd_views_remove)
+
+    vw_delete = vw_sub.add_parser("delete", help="delete a view entirely")
+    vw_delete.add_argument("name")
+    vw_delete.set_defaults(func=cmd_views_delete)
+
+    vw_show = vw_sub.add_parser("show", help="show one or all views")
+    vw_show.add_argument("name", nargs="?", default="")
+    vw_show.add_argument("--json", action="store_true")
+    vw_show.set_defaults(func=cmd_views_show)
 
     tr = sub.add_parser(
         "tree",

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { PortunusReference } from "../types";
 import StatePill from "./StatePill";
+import CompletenessBadge from "./CompletenessBadge";
 
 interface DiscoveredSecret {
   sm_name: string;
@@ -128,6 +129,7 @@ function TreeRefRow({
       <span className="ref-name">{reference.name}</span>
       <span>
         {reference.sm_name} <StatePill state={reference.state} />
+        <CompletenessBadge reference={reference} />
       </span>
       <RelatedChips reference={reference} presentNames={presentNames} />
     </button>

@@ -26,7 +26,7 @@ VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested")
 
 # Tag keys resolved against Reference's own fields; anything else is looked
 # up in the open `tags` dict. Keep in sync with Reference's structured fields.
-_STRUCTURED_TAG_FIELDS = ("provider", "project", "env", "scope", "kind", "repo")
+_STRUCTURED_TAG_FIELDS = ("org", "provider", "project", "env", "scope", "kind", "repo")
 
 
 class NoMatch(KeyError):
@@ -56,6 +56,8 @@ class Reference:
     state: str = "enabled"
     approval: str = ""   # "required" if access is gated
     sm_path: str = ""    # projects/<p>/secrets/<sm_name> (informational)
+    org: str = ""        # organizational umbrella above project, e.g. "firefly-events" --
+                          # many projects can share one org (portunus-vault-trust-and-access)
     provider: str = ""   # e.g. "vercel", "gcp", "github"
     project: str = ""    # e.g. a project/site slug such as "mdostal.com"
     env: str = ""        # e.g. "prod" | "staging" | "dev"
@@ -155,6 +157,7 @@ class Registry:
         kind: str = "",
         state: str = "enabled",
         approval: str = "",
+        org: str = "",
         project: str = "",
         provider: str = "",
         env: str = "",
@@ -175,7 +178,7 @@ class Registry:
         with self._locked():
             ref = Reference(
                 name=name, sm_name=sm_name, scope=scope, kind=kind,
-                state=state, approval=approval, sm_path=sm_path,
+                state=state, approval=approval, sm_path=sm_path, org=org,
                 provider=provider, project=project, env=env, tags=dict(tags or {}),
                 description=description, purpose=purpose,
                 injected_as=dict(injected_as or {}),
@@ -228,6 +231,7 @@ class Registry:
         name: str,
         sm_name: str = "",
         *,
+        org: str = "",
         provider: str = "",
         project: str = "",
         env: str = "",
@@ -243,7 +247,7 @@ class Registry:
         """
         with self._locked():
             ref = Reference(
-                name=name, sm_name=sm_name, state="requested",
+                name=name, sm_name=sm_name, state="requested", org=org,
                 provider=provider, project=project, env=env, tags=dict(tags or {}),
             )
             self._data[name] = ref
@@ -253,6 +257,7 @@ class Registry:
         self,
         name: str,
         *,
+        org: Optional[str] = None,
         provider: Optional[str] = None,
         project: Optional[str] = None,
         env: Optional[str] = None,
@@ -266,20 +271,22 @@ class Registry:
         repo: Optional[str] = None,
         source_files: Optional[list] = None,
     ) -> Reference:
-        """Update a reference's provider/project/env/repo/tags/description/
+        """Update a reference's org/provider/project/env/repo/tags/description/
         purpose/injected_as/group/related/backend/source_files in place.
 
-        Only fields explicitly passed (non-None) change. provider/project/
-        env/repo/tags are collision-checked against every other reference
-        (reuses matches_tag(), the same exact-match logic resolve_by_tags()
-        uses, so there is one collision definition, not two; retagging to a
-        reference's own current tags always succeeds). description/purpose/
-        injected_as/group/related/backend/source_files are deliberately NOT
-        collision-checked -- they're not in _STRUCTURED_TAG_FIELDS, so two
-        references can never collide over them by definition.
+        Only fields explicitly passed (non-None) change. org/provider/
+        project/env/repo/tags are collision-checked against every other
+        reference (reuses matches_tag(), the same exact-match logic
+        resolve_by_tags() uses, so there is one collision definition, not
+        two; retagging to a reference's own current tags always succeeds).
+        description/purpose/injected_as/group/related/backend/source_files
+        are deliberately NOT collision-checked -- they're not in
+        _STRUCTURED_TAG_FIELDS, so two references can never collide over
+        them by definition.
         """
         with self._locked():
             ref = self.require(name)
+            new_org = org if org is not None else ref.org
             new_provider = provider if provider is not None else ref.provider
             new_project = project if project is not None else ref.project
             new_env = env if env is not None else ref.env
@@ -295,8 +302,8 @@ class Registry:
 
             full_tags: Dict[str, str] = {}
             for field_name, val in (
-                ("provider", new_provider), ("project", new_project), ("env", new_env),
-                ("repo", new_repo),
+                ("org", new_org), ("provider", new_provider), ("project", new_project),
+                ("env", new_env), ("repo", new_repo),
             ):
                 if val:
                     full_tags[field_name] = val
@@ -310,6 +317,7 @@ class Registry:
             if colliding:
                 raise AmbiguousMatch(sorted(colliding + [name]))
 
+            ref.org = new_org
             ref.provider = new_provider
             ref.project = new_project
             ref.env = new_env

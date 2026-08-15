@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
   if (body.kind) args.push("--kind", String(body.kind));
   if (body.scope) args.push("--scope", String(body.scope));
   if (body.backend) args.push("--backend", String(body.backend));
+  if (body.org) args.push("--org", String(body.org));
   if (body.provider) args.push("--provider", String(body.provider));
   if (body.project) args.push("--project", String(body.project));
   if (body.env) args.push("--env", String(body.env));
@@ -35,6 +36,8 @@ export async function POST(req: NextRequest) {
   if (injectedAs) args.push("--injected-as", injectedAs);
   if (body.group) args.push("--group", String(body.group));
   if (body.related) args.push("--related", String(body.related));
+  if (body.repo) args.push("--repo", String(body.repo));
+  if (body.source_files) args.push("--source-files", String(body.source_files));
 
   const result = await runPortunus(args, value + "\n");
 
