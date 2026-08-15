@@ -1,7 +1,7 @@
 id: 02-leak-status-and-escalation
 epic: portunus-leak-scan
 title: leak-status store, severity derivation, mark-rotated
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [01-scan-engine-core]

@@ -28,7 +28,7 @@ stories:
     title: leak-status store, severity derivation, mark-rotated
     complexity: medium
     depends_on: [01-scan-engine-core]
-    status: pending
+    status: shipped
   - id: 03-scan-config-and-cli
     title: scan-path config store + full CLI surface
     complexity: medium
