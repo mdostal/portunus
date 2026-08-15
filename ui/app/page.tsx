@@ -8,8 +8,9 @@ import AskBar from "./components/AskBar";
 import DetailDrawer from "./components/DetailDrawer";
 import AddSecretForm from "./components/AddSecretForm";
 import ProjectExplorer from "./components/ProjectExplorer";
+import SettingsPage from "./components/SettingsPage";
 
-type Tab = "console" | "map" | "project";
+type Tab = "console" | "map" | "project" | "settings";
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("console");
@@ -59,6 +60,9 @@ export default function Home() {
           <button className={`tab-btn ${tab === "project" ? "active" : ""}`} onClick={() => setTab("project")}>
             Project Explorer
           </button>
+          <button className={`tab-btn ${tab === "settings" ? "active" : ""}`} onClick={() => setTab("settings")}>
+            Settings
+          </button>
         </nav>
         <div className="topbar-actions">
           <button className="btn quiet" onClick={() => setAddDraftProvider("")}>
@@ -79,6 +83,7 @@ export default function Home() {
             <VaultMap refs={refs} onSelect={setSelected} onAdd={(provider) => setAddDraftProvider(provider)} />
           )}
           {tab === "project" && <ProjectExplorer onSelect={setSelected} />}
+          {!loading && !error && tab === "settings" && <SettingsPage refs={refs} />}
         </main>
 
         {askOpen && <AskBar onAdd={() => setAddDraftProvider("")} />}

@@ -402,6 +402,26 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
+.settings-page { display: flex; flex-direction: column; gap: 1.4rem; max-width: 40rem; }
+.settings-section { display: flex; flex-direction: column; gap: 0.6rem; }
+.settings-section h2 { font-size: 0.9rem; margin: 0; }
+.settings-stub { border: 1px solid var(--warn); border-radius: 4px; padding: 0.8rem 1rem; background: var(--warn-bg); }
+.stub-banner { font-size: 0.75rem; color: var(--ink-soft); margin: 0; }
+.settings-hierarchy-list { display: flex; flex-direction: column; gap: 0.2rem; }
+.settings-hierarchy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--paper-raised);
+  border: 1px solid var(--hair);
+}
+.policy-actions { flex: 1; color: var(--steel); font-family: var(--font-mono); font-size: 0.7rem; }
+.settings-policy-form { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
+.settings-policy-form .field { font-size: 0.74rem; padding: 0.25rem 0.5rem; flex: 1; min-width: 6rem; }
+
 .project-explorer { display: flex; flex-direction: column; gap: 0.7rem; }
 .explorer-section-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .explorer-list { display: flex; flex-direction: column; gap: 0.3rem; }

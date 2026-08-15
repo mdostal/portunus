@@ -29,6 +29,15 @@ export interface PortunusView {
   ref_names: string[];
 }
 
+// STUB ONLY -- see roles.py. Persisted for real, but not enforced by
+// check_injectable/retag yet (Petitio's future access-level engine).
+export interface PortunusPolicy {
+  scope_type: "org" | "project" | "env";
+  scope_value: string;
+  role: string;
+  actions: string[];
+}
+
 export interface AuditEntry {
   seq: number;
   actor: string;
