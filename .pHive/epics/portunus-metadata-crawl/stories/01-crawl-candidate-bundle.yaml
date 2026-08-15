@@ -1,7 +1,7 @@
 id: 01-crawl-candidate-bundle
 epic: portunus-metadata-crawl
 title: portunus crawl -- discovery/context-bundling for incomplete references
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []

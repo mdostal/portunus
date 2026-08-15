@@ -25,12 +25,12 @@ stories:
     title: portunus crawl -- discovery/context-bundling for incomplete references
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-deploy-docs-report
     title: portunus report -- Markdown vault-state report generator
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 03-ui-crawl-and-report-surface
     title: Settings UI surface for crawl bundle + report download
     complexity: medium
