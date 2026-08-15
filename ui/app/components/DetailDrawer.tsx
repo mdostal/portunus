@@ -18,14 +18,18 @@ function dictToKvString(dict: Record<string, string> | undefined): string {
 
 export default function DetailDrawer({
   reference,
+  allRefs,
   onClose,
   onRotate,
   onMoved,
+  onSelectRelated,
 }: {
   reference: PortunusReference;
+  allRefs: PortunusReference[];
   onClose: () => void;
   onRotate: (ref: PortunusReference) => void;
   onMoved: () => void;
+  onSelectRelated: (ref: PortunusReference) => void;
 }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -135,7 +139,8 @@ export default function DetailDrawer({
       </div>
 
       {(reference.description || reference.purpose || Object.keys(reference.injected_as || {}).length > 0
-        || reference.group || (reference.related || []).length > 0) && (
+        || reference.group || reference.repo || (reference.related || []).length > 0
+        || (reference.source_files || []).length > 0) && (
         <div className="metadata-block">
           {reference.description && (
             <p className="metadata-line">
@@ -158,10 +163,36 @@ export default function DetailDrawer({
               <span className="k">group</span> {reference.group}
             </p>
           )}
-          {(reference.related || []).length > 0 && (
+          {reference.repo && (
             <p className="metadata-line">
-              <span className="k">related</span> {reference.related.join(", ")}
+              <span className="k">repo</span> {reference.repo}
             </p>
+          )}
+          {(reference.source_files || []).length > 0 && (
+            <p className="metadata-line">
+              <span className="k">source_files</span> {reference.source_files.join(", ")}
+            </p>
+          )}
+          {(reference.related || []).length > 0 && (
+            <div className="metadata-line">
+              <span className="k">related</span>{" "}
+              {reference.related.map((name) => {
+                const target = allRefs.find((r) => r.name === name);
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`chip chip-clickable ${target ? "" : "chip-unresolved"}`}
+                    disabled={!target}
+                    onClick={() => target && onSelectRelated(target)}
+                    title={target ? `Open ${name}` : `${name} is not in the currently loaded set`}
+                  >
+                    {name}
+                    {!target && " (unresolved)"}
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
       )}

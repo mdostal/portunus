@@ -333,6 +333,10 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 .project-explorer { display: flex; flex-direction: column; gap: 0.7rem; }
 .explorer-section-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .explorer-list { display: flex; flex-direction: column; gap: 0.3rem; }
+.explorer-list-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
+.facet-toggle { display: flex; gap: 0.25rem; }
+.toggle-btn { padding: 0.2rem 0.55rem; }
+.toggle-btn-active { background: var(--brass); color: var(--paper-raised); }
 .explorer-row {
   display: grid;
   grid-template-columns: 1fr 1.4fr auto;
@@ -358,6 +362,9 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   padding: 0.1rem 0;
 }
 .chip-unresolved { color: var(--crit); border-color: var(--crit); }
+.chip-clickable { cursor: pointer; }
+.chip-clickable:disabled { cursor: default; }
+.chip-clickable:not(:disabled):hover { border-color: var(--brass); color: var(--brass); }
 .gallery-card.add {
   align-items: center;
   justify-content: center;

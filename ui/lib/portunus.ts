@@ -24,6 +24,8 @@ export interface PortunusReference {
   injected_as: Record<string, string>;
   group: string;
   related: string[];
+  repo: string;
+  source_files: string[];
 }
 
 export interface AuditEntry {

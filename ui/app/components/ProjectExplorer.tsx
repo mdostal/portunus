@@ -59,16 +59,33 @@ interface TreeNode {
   children: Record<string, TreeNode>;
 }
 
+type TreeFacet = "group" | "repo";
+
+const TREE_FACET_KEY: Record<TreeFacet, (r: PortunusReference) => string> = {
+  group: (r) => r.group || "",
+  repo: (r) => r.repo || "",
+};
+
+const TREE_FACET_BUCKET_LABEL: Record<TreeFacet, string> = {
+  group: "(ungrouped)",
+  repo: "(no repo set)",
+};
+
 /** Same normalization rule as the Python CLI's portunus tree: trim, split
  * on "/", drop empty segments. Two independent implementations (Python,
  * TypeScript), no shared code -- but they must agree on this rule (design-
- * discussion §4 risk). A reference with no group is never dropped -- it's
- * the caller's job to bucket it under (ungrouped), same as the CLI. */
-function buildTree(refs: PortunusReference[]): { ungrouped: PortunusReference[]; root: TreeNode } {
+ * discussion §4 risk). A reference with no value for the active facet is
+ * never dropped -- it's the caller's job to bucket it under the facet's
+ * own label (ungrouped / no repo set), same as the CLI's --by. */
+function buildTree(
+  refs: PortunusReference[],
+  facet: TreeFacet = "group",
+): { ungrouped: PortunusReference[]; root: TreeNode } {
+  const keyFn = TREE_FACET_KEY[facet];
   const ungrouped: PortunusReference[] = [];
   const root: TreeNode = { refs: [], children: {} };
   for (const r of refs) {
-    const segments = (r.group || "").split("/").map((s) => s.trim()).filter(Boolean);
+    const segments = keyFn(r).split("/").map((s) => s.trim()).filter(Boolean);
     if (segments.length === 0) {
       ungrouped.push(r);
       continue;
@@ -157,6 +174,7 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [registered, setRegistered] = useState<PortunusReference[]>([]);
+  const [treeFacet, setTreeFacet] = useState<TreeFacet>("group");
   const [diff, setDiff] = useState<DiscoverDiff | null>(null);
   const [registerBusy, setRegisterBusy] = useState(false);
   const [conflictNote, setConflictNote] = useState<string | null>(null);
@@ -364,15 +382,33 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
 
       {registered.length > 0 && (
         <>
-          <span className="eyebrow">Registered</span>
+          <div className="explorer-list-head">
+            <span className="eyebrow">Registered</span>
+            <div className="facet-toggle" role="group" aria-label="Tree facet">
+              <button
+                type="button"
+                className={`btn quiet toggle-btn ${treeFacet === "group" ? "toggle-btn-active" : ""}`}
+                onClick={() => setTreeFacet("group")}
+              >
+                Group
+              </button>
+              <button
+                type="button"
+                className={`btn quiet toggle-btn ${treeFacet === "repo" ? "toggle-btn-active" : ""}`}
+                onClick={() => setTreeFacet("repo")}
+              >
+                Repo
+              </button>
+            </div>
+          </div>
           {(() => {
-            const { ungrouped, root } = buildTree(registered);
+            const { ungrouped, root } = buildTree(registered, treeFacet);
             const presentNames = new Set(registered.map((r) => r.name));
             return (
               <div className="explorer-list">
                 {ungrouped.length > 0 && (
                   <div className="tree-branch">
-                    <div className="tree-branch-label">(ungrouped)</div>
+                    <div className="tree-branch-label">{TREE_FACET_BUCKET_LABEL[treeFacet]}</div>
                     {ungrouped.map((r) => (
                       <TreeRefRow reference={r} presentNames={presentNames} onSelect={onSelect} key={r.name} />
                     ))}

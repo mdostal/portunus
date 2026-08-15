@@ -18,7 +18,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, NotInjectable
-from .cli import _build, _build_tree, _wif_configured
+from .cli import _build, _build_tree, _TREE_KEY_FNS, _wif_configured
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import AmbiguousMatch, NoMatch, Registry
@@ -69,17 +69,23 @@ def portunus_list(project: str) -> list:
 
 
 @mcp.tool()
-def portunus_tree(project: str = "") -> dict:
+def portunus_tree(project: str = "", by: str = "group") -> dict:
     """Render secrets by group hierarchy + related links -- metadata only,
     never a value. Same shape as `portunus tree --json`: {ungrouped, tree,
-    refs}. A reference with no group appears in `ungrouped`, never dropped."""
+    refs}. A reference with no value for the active facet appears in
+    `ungrouped`, never dropped. `by` is "group" (default, unchanged) or
+    "repo" -- same nesting logic, keyed on the structured repo field
+    instead of the free-text group path."""
+    if by not in _TREE_KEY_FNS:
+        return {"error": f"invalid by={by!r} -- want one of {sorted(_TREE_KEY_FNS)}"}
     registry = Registry()
     refs = list(registry)
     if project:
         refs = [r for r in refs if r.project == project]
+    key_fn, _bucket_label = _TREE_KEY_FNS[by]
     if not refs:
         return {"ungrouped": [], "tree": {}, "refs": {}}
-    ungrouped, tree, refs_meta = _build_tree(refs)
+    ungrouped, tree, refs_meta = _build_tree(refs, key_fn=key_fn)
     return {"ungrouped": sorted(ungrouped), "tree": tree, "refs": refs_meta}
 
 
@@ -314,6 +320,8 @@ def portunus_drop(
     group: str = "",
     related: Optional[list] = None,
     backend: str = "",
+    repo: str = "",
+    source_files: Optional[list] = None,
 ) -> dict:
     """Create a new LOCAL-VAULT secret -- the harness-side counterpart to
     `portunus drop`. Restricted to the local-encrypted backend only, same as
@@ -325,7 +333,10 @@ def portunus_drop(
     `related` is a plain list of reference names -- no CLI-style comma-
     separated string parsing. `backend` optionally overrides which backend
     THIS reference routes to later (e.g. "gcp") once you've dropped it here
-    locally -- empty means "use the project's default binding."
+    locally -- empty means "use the project's default binding." `repo` is
+    the git repo that consumes this secret (distinct from `project`, which
+    can be one cloud project shared by many repos); `source_files` is a
+    plain list of file paths in that repo, same posture as `related`.
 
     `value` is the one place in this tool's surface where a secret flows IN
     from your own context rather than out of Portunus -- that's inherent to
@@ -349,6 +360,7 @@ def portunus_drop(
         provider=provider, project=project, env=env, tags=tags,
         description=description, purpose=purpose, injected_as=injected_as,
         group=group, related=related, backend=backend,
+        repo=repo, source_files=source_files,
     )
     local_backend.store(ref.sm_name, value)
     del value
