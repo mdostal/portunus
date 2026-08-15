@@ -841,3 +841,49 @@ def test_portunus_suggest_metadata_never_returns_a_value_source_check():
         if isinstance(node, ast.Return) and node.value is not None:
             names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
             assert names <= {"fields", "ref", "exc", "SUGGESTIBLE_FIELDS", "name", "list", "str"}, ast.unparse(node.value)
+
+
+# --- portunus-metadata-crawl Slice 1: portunus_crawl_candidates ---------
+
+def test_portunus_crawl_candidates_lists_incomplete_references(home):
+    from portunus import Registry, mcp_server
+
+    Registry().add("x", "SHINDIG_API_KEY", org="firefly-events", project="shindig")
+    result = mcp_server.portunus_crawl_candidates()
+    assert len(result["candidates"]) == 1
+    assert result["candidates"][0]["name"] == "x"
+    assert result["candidates"][0]["sm_name"] == "SHINDIG_API_KEY"
+
+
+def test_portunus_crawl_candidates_excludes_complete_references(home):
+    from portunus import Registry, mcp_server
+
+    Registry().add(
+        "x", "sm-x", org="firefly-events", project="shindig",
+        description="a key", purpose="testing",
+    )
+    result = mcp_server.portunus_crawl_candidates()
+    assert result["candidates"] == []
+
+
+def test_portunus_crawl_candidates_scopes_by_project(home):
+    from portunus import Registry, mcp_server
+
+    Registry().add("a", "sm-a", project="shindig")
+    Registry().add("b", "sm-b", project="gig-tracker")
+    result = mcp_server.portunus_crawl_candidates(project="shindig")
+    assert [c["name"] for c in result["candidates"]] == ["a"]
+
+
+def test_portunus_crawl_candidates_never_touches_a_value_source_check():
+    """AST-level: crawl_candidates() itself has no .access( call, and this
+    tool's own body just wraps it -- structural, not just asserted."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_crawl_candidates))
+    tree = ast.parse(src)
+    code = ast.unparse(tree)
+    assert ".access(" not in code
