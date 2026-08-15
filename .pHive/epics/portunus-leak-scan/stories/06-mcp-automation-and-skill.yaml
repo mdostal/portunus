@@ -1,7 +1,7 @@
 id: 06-mcp-automation-and-skill
 epic: portunus-leak-scan
 title: expanded MCP automation surface (agent-triggerable scans) + Claude Code skill + cron/CI docs
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [04-mcp-leak-status-tool, 05-ui-leak-scan-settings]
