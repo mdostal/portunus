@@ -305,6 +305,26 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 }
 .tags-row { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
 
+.suggestion-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  border: 1px solid var(--warn);
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  background: var(--warn-bg);
+}
+.suggestion-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.76rem; }
+.suggestion-row .k {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--steel);
+}
+.suggestion-value { color: var(--ink); flex: 1; min-width: 8rem; }
+.suggestion-by { font-size: 0.68rem; color: var(--steel); font-style: italic; }
+
 .metadata-block { display: flex; flex-direction: column; gap: 0.25rem; }
 .metadata-line { font-size: 0.78rem; color: var(--ink-soft); margin: 0; }
 .metadata-line .k {

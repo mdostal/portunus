@@ -37,7 +37,7 @@ from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
-from .registry import AmbiguousMatch, NoMatch, Registry
+from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
 
 # Distinct exit codes so scripts can branch on the failure mode without
@@ -1375,6 +1375,63 @@ def cmd_roles_show(args) -> int:
     return 0
 
 
+def cmd_metadata_confirm(args) -> int:
+    """Accept an agent-suggested field -- applies it via the SAME retag()
+    a manual edit would use (no second write path to drift from), then
+    clears the sidecar entry. Never a value; description/purpose/tags/group
+    only (Registry.SUGGESTIBLE_FIELDS)."""
+    registry, audit, _, _ = _build()
+    try:
+        ref = registry.require(args.name)
+    except KeyError:
+        return _err(f"unknown reference: {args.name}")
+    suggestion = ref.suggested.get(args.field)
+    if suggestion is None:
+        return _err(f"no pending suggestion for {args.field!r} on {args.name}")
+    try:
+        registry.retag(args.name, **{args.field: suggestion["value"]})
+    except AmbiguousMatch as exc:
+        return _err(f"confirming {args.field!r} would collide with: {', '.join(exc.candidates)}")
+    registry.clear_suggestion(args.name, args.field)
+    audit.append("metadata_confirmed", ref.sm_name, f"{args.field} confirmed (suggested by {suggestion['by']})")
+    print(f"confirmed {args.field} for {{{{secret:{args.name}}}}}")
+    return 0
+
+
+def cmd_metadata_reject(args) -> int:
+    registry, audit, _, _ = _build()
+    try:
+        ref = registry.require(args.name)
+    except KeyError:
+        return _err(f"unknown reference: {args.name}")
+    if args.field not in ref.suggested:
+        return _err(f"no pending suggestion for {args.field!r} on {args.name}")
+    registry.clear_suggestion(args.name, args.field)
+    audit.append("metadata_rejected", ref.sm_name, f"{args.field} rejected")
+    print(f"rejected {args.field} suggestion for {{{{secret:{args.name}}}}}")
+    return 0
+
+
+def cmd_metadata_pending(args) -> int:
+    """List every reference with at least one pending suggestion --
+    metadata only, no values (suggestions are never secret values anyway)."""
+    registry, *_ = _build()
+    result = {}
+    for ref in registry:
+        if ref.suggested:
+            result[ref.name] = {k: v for k, v in ref.suggested.items()}
+    if args.json:
+        print(json.dumps(result))
+        return 0
+    if not result:
+        print("(no pending suggestions)")
+        return 0
+    for name, fields in result.items():
+        for field_name, info in fields.items():
+            print(f"  {{{{secret:{name}}}}}  {field_name}: {info['value']!r} (suggested by {info['by']})")
+    return 0
+
+
 def _build_tree(refs, key_fn=None):
     """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
 
@@ -1854,6 +1911,27 @@ def build_parser() -> argparse.ArgumentParser:
     rl_show.add_argument("--scope-value", default="")
     rl_show.add_argument("--json", action="store_true")
     rl_show.set_defaults(func=cmd_roles_show)
+
+    md = sub.add_parser(
+        "metadata",
+        help="confirm/reject agent-suggested description/purpose/tags/group "
+             "(portunus_suggest_metadata MCP tool's human-review counterpart)",
+    )
+    md_sub = md.add_subparsers(dest="action", required=True)
+
+    md_confirm = md_sub.add_parser("confirm", help="accept a pending suggestion -- applies it via retag()")
+    md_confirm.add_argument("name")
+    md_confirm.add_argument("field", choices=SUGGESTIBLE_FIELDS)
+    md_confirm.set_defaults(func=cmd_metadata_confirm)
+
+    md_reject = md_sub.add_parser("reject", help="discard a pending suggestion -- live field untouched")
+    md_reject.add_argument("name")
+    md_reject.add_argument("field", choices=SUGGESTIBLE_FIELDS)
+    md_reject.set_defaults(func=cmd_metadata_reject)
+
+    md_pending = md_sub.add_parser("pending", help="list every reference with a pending suggestion")
+    md_pending.add_argument("--json", action="store_true")
+    md_pending.set_defaults(func=cmd_metadata_pending)
 
     tr = sub.add_parser(
         "tree",

@@ -779,3 +779,65 @@ def test_portunus_sync_never_returns_a_value_source_check():
         if isinstance(node, ast.Return) and node.value is not None:
             names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
             assert names <= {"synced", "fresh", "failed"}, ast.unparse(node.value)
+
+
+# --- portunus-vault-trust-and-access Slice 6: portunus_suggest_metadata --
+
+def test_portunus_suggest_metadata_lands_only_in_the_sidecar(home):
+    from portunus import Registry, mcp_server
+
+    Registry().add("x", "sm-x")
+    result = mcp_server.portunus_suggest_metadata("x", description="a stripe key")
+    assert result == {"name": "x", "suggested_fields": ["description"]}
+
+    ref = Registry().require("x")
+    assert ref.description == ""  # live field untouched
+    assert ref.suggested["description"]["value"] == "a stripe key"
+
+
+def test_portunus_suggest_metadata_unknown_reference(home):
+    from portunus import mcp_server
+
+    result = mcp_server.portunus_suggest_metadata("nonexistent", description="x")
+    assert result == {"error": "unknown reference: nonexistent"}
+
+
+def test_portunus_suggest_metadata_rejects_routing_fields_via_tags_path(home):
+    """The tool's own parameter list structurally has no org/project/env/
+    repo/backend argument at all -- only description/purpose/group/tags are
+    even expressible. This test confirms the underlying Registry guardrail
+    still fires if a future edit ever tried to smuggle a routing field
+    through the `tags` dict path (tags is itself suggestible, but its
+    CONTENTS are just open key/value pairs, not routing fields)."""
+    from portunus import Registry, mcp_server
+
+    Registry().add("x", "sm-x")
+    # tags is suggestible; passing an arbitrary key inside it is fine --
+    # it's an open dict, not a routing field itself.
+    result = mcp_server.portunus_suggest_metadata("x", tags={"team": "platform"})
+    assert result["suggested_fields"] == ["tags"]
+
+
+def test_portunus_suggest_metadata_requires_at_least_one_field(home):
+    from portunus import Registry, mcp_server
+
+    Registry().add("x", "sm-x")
+    result = mcp_server.portunus_suggest_metadata("x")
+    assert "error" in result
+
+
+def test_portunus_suggest_metadata_never_returns_a_value_source_check():
+    """AST-level: no Return node references anything but the reference's
+    own name and the field-name list -- never a suggested value itself."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_suggest_metadata))
+    tree = ast.parse(src)
+    func = tree.body[0]
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return) and node.value is not None:
+            names = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+            assert names <= {"fields", "ref", "exc", "SUGGESTIBLE_FIELDS", "name", "list", "str"}, ast.unparse(node.value)

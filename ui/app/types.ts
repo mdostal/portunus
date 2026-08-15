@@ -20,6 +20,7 @@ export interface PortunusReference {
   related: string[];
   repo: string;
   source_files: string[];
+  suggested: Record<string, { value: unknown; by: string; at: string }>;
 }
 
 export interface PortunusView {
