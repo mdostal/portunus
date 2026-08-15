@@ -725,6 +725,57 @@ def cmd_drop_bulk(args) -> int:
     return 0
 
 
+def cmd_retag_bulk(args) -> int:
+    """Bulk counterpart to `retag` -- selects every reference whose `group`
+    starts with --group-prefix (a plain string prefix, no query language)
+    and applies the same Registry.retag() to each. One reference's
+    collision failure is reported under "failed" and does not abort the
+    rest of the batch, same precedent as drop_bulk. --dry-run reports what
+    WOULD change and makes zero writes -- required given this can touch
+    dozens of real references in one call."""
+    registry, _audit, broker, _resolver = _build()
+    try:
+        source_files = _parse_related(args.source_files) if args.source_files else None
+    except ValueError as exc:
+        return _err(str(exc))
+
+    kwargs = {}
+    if args.repo:
+        kwargs["repo"] = args.repo
+    if source_files is not None:
+        kwargs["source_files"] = source_files
+
+    matched = [ref.name for ref in registry if ref.group.startswith(args.group_prefix)]
+
+    if args.dry_run:
+        if args.json:
+            print(json.dumps({"would_update": matched}))
+        else:
+            for name in matched:
+                print(f"  would update  {name}")
+        return 0
+
+    updated: list = []
+    failed: list = []
+    for name in matched:
+        try:
+            registry.retag(name, **kwargs)
+            updated.append(name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": name, "error": f"would collide with: {', '.join(exc.candidates)}"})
+        except KeyError as exc:
+            failed.append({"name": name, "error": str(exc)})
+
+    if args.json:
+        print(json.dumps({"updated": updated, "failed": failed}))
+        return 0
+    for name in updated:
+        print(f"  updated  {name}")
+    for entry in failed:
+        print(f"  failed   {entry['name']}: {entry['error']}")
+    return 0
+
+
 def cmd_resolve(args) -> int:
     _, _, _, resolver = _build()
     try:
@@ -1281,6 +1332,21 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--source-files", default="",
                      help="comma-separated file paths in that repo, replaces the source_files list")
     rt.set_defaults(func=cmd_retag)
+
+    rtb = sub.add_parser(
+        "retag-bulk",
+        help="retag every reference whose group starts with a prefix -- backfilling repo/"
+             "source_files across many already-grouped references in one call",
+    )
+    rtb.add_argument("--group-prefix", required=True,
+                      help="plain string prefix matched against each reference's group")
+    rtb.add_argument("--repo", default="", help="the git repo that consumes these secrets")
+    rtb.add_argument("--source-files", default="",
+                      help="comma-separated file paths, replaces the source_files list")
+    rtb.add_argument("--dry-run", action="store_true",
+                      help="report what WOULD change; makes zero writes")
+    rtb.add_argument("--json", action="store_true", help="machine-readable output")
+    rtb.set_defaults(func=cmd_retag_bulk)
 
     ses = sub.add_parser("session", help="browser/login session storage (local-encrypted backend only)")
     ses_sub = ses.add_subparsers(dest="action", required=True)
