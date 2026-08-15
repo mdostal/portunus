@@ -67,6 +67,27 @@ a scan stays a human-triggered CLI/UI action, always. This mirrors the crawl epi
 its own" posture (design-discussion.md §5 of that epic), extended to an even more sensitive
 surface here.
 
+### §2 addendum — reversed by explicit user decision (Story 06)
+
+After Stories 01–05 shipped this boundary and it was live-verified working exactly as designed
+(a real fixture leak, detected, escalated, and cleared, entirely CLI/UI-triggered), the user
+asked directly: *"ensure full MCP and agent skills on all of these things so that we can
+automate and integrate the scans, logs etc."* Presented with the explicit tradeoff (an
+MCP-connected agent gaining the ability to trigger Portunus reading configured local files at
+its own initiative, vs. keeping that human-only), the user chose to widen it: **"Let an agent
+trigger scans via MCP."**
+
+This is recorded as a reversal, not a silent contradiction of the reasoning above — that
+reasoning was correct as far as it went (a scan-trigger genuinely is a different, more
+sensitive capability than a status query), and the tradeoff was surfaced and decided
+explicitly rather than assumed. What did NOT change: the actual safety boundary was always
+"only paths a human explicitly configured via `leak-scan config add-path`" (Story 03), never
+"whatever the agent feels like reading." Story 06 widens WHO can trigger a scan over that
+already-human-scoped path set; it does not widen WHAT can be scanned. `portunus_run_leak_scan()`
+still only ever returns `{ref_name, path, line_number}` per finding — never a value, never file
+content beyond the fact that a match occurred at that location — the value-never-leaks
+invariant (§1) is unchanged and still structurally verified.
+
 ## 3. Escalation thresholds — a real decision, not a placeholder
 
 - `warn`: 0–2 days since first detection.

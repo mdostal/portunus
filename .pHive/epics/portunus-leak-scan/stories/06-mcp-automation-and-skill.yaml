@@ -1,0 +1,92 @@
+id: 06-mcp-automation-and-skill
+epic: portunus-leak-scan
+title: expanded MCP automation surface (agent-triggerable scans) + Claude Code skill + cron/CI docs
+status: pending
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [04-mcp-leak-status-tool, 05-ui-leak-scan-settings]
+
+description: |
+  Explicit, informed scope revision requested by the user after Story 05 shipped: "ensure full
+  MCP and agent skills on all of these things so that we can automate and integrate the scans,
+  logs etc." This REVERSES Story 04's own deliberate design-discussion.md §2 decision that no
+  MCP tool would ever trigger a scan or read file content -- documented here, not silently
+  contradicted, per this session's own discipline of recording product-decision reversals with
+  their reasoning (matching how the roles.json/RBAC scope was explicitly narrowed earlier this
+  session, just in the opposite direction).
+
+  Adds a full MCP tool set mirroring the CLI 1:1: `portunus_run_leak_scan()` (the one genuinely
+  new trust-boundary widening -- an MCP-connected agent can now cause Portunus to read every
+  configured path's content and compare it against decrypted secret values, though the tool
+  still only ever returns {ref_name, path, line_number} per finding, never a value or file
+  content -- verified by the same value-never-leaks structural check every prior story used),
+  `portunus_leak_scan_config_add_path/remove_path/show()`, and `portunus_leak_mark_rotated()`.
+  Configured scan paths remain the actual safety control -- an agent can now trigger a scan, but
+  only over paths a human (or now, per this same story, an agent acting with the human's already
+  -granted MCP access) has explicitly added; it cannot read anything outside that configured set.
+
+  Also adds automation/integration surfaces beyond MCP: documented cron/launchd examples for
+  scheduled `portunus leak-scan` runs (the CLI's existing exit-code-1-on-new-findings behavior
+  is already CI/cron-ready, just undocumented until now), and a Claude Code skill (slash command)
+  wrapping crawl/report/leak-scan for convenient session-triggered use.
+
+acceptance_criteria:
+  - "Given portunus_run_leak_scan() is called, when new findings exist, then it returns them ({ref_name, path, line_number} only) and persists them exactly as `portunus leak-scan` does"
+  - "Given no scan paths are configured, when portunus_run_leak_scan() is called, then it reports that explicitly, matching the CLI's own honesty"
+  - "Given portunus_leak_scan_config_add_path/remove_path/show(), when called, then they round-trip exactly like the CLI equivalents"
+  - "Given portunus_leak_mark_rotated(name), when called, then it clears findings and invalidates watermarks exactly like `portunus leak mark-rotated`"
+  - "Given every new MCP tool's source, when AST-inspected, then none of them can return a value or file content -- structural proof, matching every prior MCP story"
+  - "Given the design-discussion.md, when read, then it documents this reversal explicitly -- the original §2 reasoning plus why/when it was revised, not silently overwritten"
+  - "Given a Claude Code skill for this epic, when invoked, then it correctly wraps crawl/report/leak-scan CLI commands"
+  - "Given README.md, when read, then it documents a cron/launchd example for scheduled leak-scan runs"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs-addendum
+    description: design-discussion.md addendum documenting the §2 reversal and its reasoning.
+    agent: developer
+  - id: test-spec
+    description: Failing tests for each new MCP tool + structural value-leak checks.
+    agent: tester
+    depends_on: [docs-addendum]
+  - id: implement
+    description: New MCP tools in mcp_server.py + Claude Code skill file + cron/CI README section.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_leak_status -- the read-only precedent this story's new tools sit alongside
+    - path: src/portunus/leakscan.py
+      purpose: run_scan()/add_scan_path()/remove_scan_path()/load_scan_paths()/mark_rotated() -- reused directly, no new logic
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: portunus_run_leak_scan, portunus_leak_scan_config_add_path/remove_path/show, portunus_leak_mark_rotated
+  - file: .pHive/epics/portunus-leak-scan/docs/design-discussion.md
+    change: §2 reversal addendum
+  - file: README.md
+    change: cron/CI leak-scan docs
+
+design_decisions:
+  - decision: an MCP-connected agent may now trigger a scan, but only over already-configured paths
+    rationale: "the human-set scan-path config remains the actual safety boundary -- widening WHO can trigger a scan does not widen WHAT gets read; explicit, informed user decision, documented not assumed"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Every new MCP tool reuses leakscan.py functions verbatim (no new logic) and is structurally verified to never return a value or file content -- the finding shape is unchanged from Story 01/03"
+
+risks:
+  - severity: medium
+    description: An MCP-connected agent can now cause Portunus to read potentially large local files at its own initiative
+    mitigation: "Scope is bounded by the human-configured scan-path set, which was already required to be explicit and non-default (Story 03); this story does not change what CAN be scanned, only who can trigger it"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan/docs/design-discussion.md
+    relevant_excerpt: "§2 (original), §2-addendum (reversal)"

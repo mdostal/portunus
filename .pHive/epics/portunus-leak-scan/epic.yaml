@@ -44,8 +44,13 @@ stories:
     complexity: medium
     depends_on: [03-scan-config-and-cli]
     status: shipped
-  - id: 06-closeout
+  - id: 06-mcp-automation-and-skill
+    title: expanded MCP automation surface (agent-triggerable scans) + Claude Code skill + cron/CI docs
+    complexity: medium
+    depends_on: [04-mcp-leak-status-tool, 05-ui-leak-scan-settings]
+    status: pending
+  - id: 07-closeout
     title: docs, version bump, end-to-end live proof
     complexity: low
-    depends_on: [04-mcp-leak-status-tool, 05-ui-leak-scan-settings]
+    depends_on: [06-mcp-automation-and-skill]
     status: pending

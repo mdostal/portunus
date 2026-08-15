@@ -1,10 +1,10 @@
-id: 06-closeout
+id: 07-closeout
 epic: portunus-leak-scan
 title: docs, version bump, end-to-end live proof
 status: pending
 complexity: low
 methodology: tdd-for-python-live-proof-for-ui
-depends_on: [04-mcp-leak-status-tool, 05-ui-leak-scan-settings]
+depends_on: [06-mcp-automation-and-skill]
 
 description: |
   README.md, docs/architecture.md, and .pHive/CONTEXT.md updated for leak-scan -- accurately
