@@ -592,6 +592,7 @@ claude mcp add --scope user portunus -- portunus mcp
 | `portunus_bindings_show(project="")` | Configured per-project vault bindings (backend/sync_mode/account/WIF audience) |
 | `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |
 | `portunus_suggest_metadata(name, description="", purpose="", group="", tags=None)` | Propose description/purpose/group/tags — lands in a pending sidecar, **never the live field**; a human confirms via `portunus metadata confirm` or the UI |
+| `portunus_crawl_candidates(org="", project="")` | Discovery bundle (sm_name/group/project/org/repo/vault-binding/rotation-binding) for every reference missing metadata — never a value, never a write; read it, then call `portunus_suggest_metadata` for whichever fields you have a real proposal for |
 | `portunus_resolve_to_tempfile(name="", tags=None)` | A `0600` temp file **path** holding the resolved value — never the value itself |
 | `portunus_resolve_exec(argv, name="", tags=None)` | `{stdout, stderr, returncode}` from running `argv` with a `{{secret}}` marker substituted — never the resolved command line |
 | `portunus_drop(name, sm_name, value, ..., backend="")` | Create a new **local-vault-only** secret — `{name, sm_name, state}`, never the value back |
@@ -696,6 +697,17 @@ actions}` policy records, and they genuinely persist (`portunus roles set/delete
 identically whether or not any policy exists. This is deliberate, staged groundwork for
 Petitio's future real access-level enforcement, always shown with an explicit "not yet
 enforced" label — never a control that looks live but silently does nothing.
+
+**Metadata crawl & deploy-docs report.** Settings' "Crawl & report" section lists references
+still missing description/purpose/org, and offers a "Fetch crawl bundle" button — the same
+discovery bundle `portunus crawl --json` returns (sm_name, group, project, org, repo, its
+project's vault binding, its provider's rotation binding), framed honestly as **context for an
+LLM session to read**, not an automatic filler; nothing in this feature calls an LLM or writes
+metadata itself. "Download report" renders `portunus report`'s Markdown output — an org →
+project structure plus an explicit gap section — useful immediately as a real "deploy docs"
+starting point, whether or not any crawl-sourced metadata has ever been confirmed. CLI:
+`portunus crawl [--org] [--project] [--json]`, `portunus report [--org] [--project] [--out
+path]`.
 
 ```bash
 cd ui

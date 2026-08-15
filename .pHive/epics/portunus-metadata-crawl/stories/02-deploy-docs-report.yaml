@@ -1,0 +1,69 @@
+id: 02-deploy-docs-report
+epic: portunus-metadata-crawl
+title: portunus report -- Markdown vault-state report generator
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  New `portunus report [--org X] [--project X] [--out path]` -- renders current vault state as
+  Markdown: an org -> project -> env structure (reusing the same grouping logic Vault Map's own
+  drill-down already established, ported to a text renderer), each reference's description/
+  purpose/provider/backend where present, rotation status if configured, and an explicit gap
+  section listing references still missing metadata. Read-only, matches `portunus tree`'s own
+  metadata-only posture. Useful today with zero crawl-inferred data (a real "deploy docs"
+  starting point per the user's own framing); gets richer as crawl-sourced suggestions get
+  confirmed over time -- not gated on story 01.
+
+acceptance_criteria:
+  - "Given a vault with references across multiple orgs/projects, when the report is generated, then it renders a correct org -> project -> env structure"
+  - "Given a reference with description/purpose set, when rendered, then both appear in the report"
+  - "Given a reference missing metadata, when rendered, then it appears in an explicit gap section, not silently omitted"
+  - "Given --org/--project filters, when passed, then the report is correctly scoped"
+  - "Given the generated report, when inspected, then it never contains a secret value -- only metadata already established as non-credential"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for report structure, gap section, and filtering.
+    agent: tester
+  - id: implement
+    description: New report generation function + CLI subcommand.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: _build_tree() -- the existing group/repo hierarchy-rendering logic this story's org/project/env renderer parallels
+    - path: ui/app/components/VaultMap.tsx
+      purpose: the org->project drill-down summarization logic this story's Markdown renderer mirrors in Python
+
+files_to_modify:
+  - file: src/portunus/crawl.py
+    change: report generation function (same module as story 01, or a sibling -- implement step decides)
+  - file: src/portunus/cli.py
+    change: report subcommand
+
+design_decisions:
+  - decision: report is independent of crawl, not gated on it
+    rationale: "design-discussion.md §4 -- a renderer over whatever the vault already knows, valuable immediately"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Report renders only registry metadata fields, never a value -- structural check confirms"
+
+risks:
+  - severity: low
+    description: A large vault's report could be unwieldy
+    mitigation: "--org/--project filters scope it down; no artificial size cap needed for a text report"
+
+references:
+  - path: .pHive/epics/portunus-metadata-crawl/docs/design-discussion.md
+    relevant_excerpt: "§4"

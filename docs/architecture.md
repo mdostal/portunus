@@ -325,6 +325,41 @@ step is literally disabled (`<fieldset disabled>`), a deliberately different tre
 Settings' editable-but-labeled stub, since a first-run flow isn't the place to risk someone
 getting lost configuring permissions before they have a vault at all.
 
+## 10. Metadata crawl + deploy-docs report (portunus-metadata-crawl)
+
+Follow-on to §9's suggest/confirm workflow — the "bulk-suggest" work that epic's own
+design-discussion.md explicitly deferred. Two independent, read-only tools, neither of which
+calls an LLM or writes a `Reference` field itself.
+
+**`crawl_candidates()` (`src/portunus/crawl.py`) is a discovery bundler, not a writer.** For
+every reference missing description/purpose/org, it bundles everything already known —
+`sm_name`, `group`, `project`, `org`, `repo`, `source_files`, its project's `VaultBinding`, its
+provider's `RotationBinding` — into one JSON object, for an LLM (Claude Code, another
+MCP-connected agent, or a human) to read and act on via the already-shipped
+`Registry.suggest_metadata()`/`portunus_suggest_metadata` (§9). Portunus has zero LLM-API-key
+infrastructure anywhere, deliberately — this design bundles context for an *external* caller
+rather than inventing one. Real vault data checked during planning (393 references) showed
+`repo` set on fewer than 1% of references — a repo-cloning crawler would have almost nothing
+to scan — while `sm_name` (often the literal env var name) and `group` (91% filled) are the
+strongest signals actually available today; real external-repo scanning stays out of scope
+until repo fill-rate rises. Exposed as `portunus crawl [--org] [--project] [--json]` and the
+`portunus_crawl_candidates` MCP tool.
+
+**`generate_report()` renders current vault state as Markdown** — an org → project structure,
+each reference's known metadata, and an explicit `## Gaps` section — independent of whether
+`crawl_candidates()` ever found or fixed anything. Useful immediately as a real "deploy docs"
+starting point (the user's own framing, for a company with no documentation of what's using
+which credential). Exposed as `portunus report [--org] [--project] [--out path]`.
+
+**The Settings UI surfaces both as thin shells, never an automatic filler.** `/api/crawl` and
+`/api/report` shell out to the same CLI commands every other route already uses
+(`runPortunus`) — no second implementation. The Settings page's "Crawl & report" section
+reuses `completeness.ts`'s existing derivation (§9) to count references missing metadata, adds
+a "Fetch crawl bundle" button (framed explicitly as context for an LLM session to read, not an
+auto-fill), and a "Download report" button. Confirming any metadata a human or LLM proposes
+from the bundle still goes through the existing `portunus metadata confirm` flow (§9) — this
+epic adds no new write path.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

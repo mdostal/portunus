@@ -1,0 +1,78 @@
+id: 01-crawl-candidate-bundle
+epic: portunus-metadata-crawl
+title: portunus crawl -- discovery/context-bundling for incomplete references
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  New `portunus crawl [--org X] [--project X] [--json]` (CLI) and `portunus_crawl_candidates`
+  (MCP tool) -- a discovery tool, not a writer. For each reference matching the filter that is
+  missing description, purpose, or org (reuses the same completeness notion Slice 2 of
+  portunus-vault-trust-and-access already established, ported to Python since this is a
+  backend-side query), bundles: name, sm_name, group, project, org, repo, source_files,
+  provider, the project's VaultBinding (backend/sync_mode/account/wif_audience) if configured,
+  and the provider's RotationBinding (status/account) if configured. Read-only, metadata-only --
+  never a value, never a mutation. The bundle is meant for an LLM (or a human) to read and call
+  the existing portunus_suggest_metadata against for each reference it has a proposal for -- no
+  new write path.
+
+acceptance_criteria:
+  - "Given a reference missing description/purpose/org, when crawl runs, then it appears in the candidate list with its full known context bundled"
+  - "Given a reference with description, purpose, AND org all set, when crawl runs, then it does NOT appear in the candidate list"
+  - "Given a candidate whose project has a configured VaultBinding, when bundled, then the binding's backend/sync_mode/account/wif_audience are included"
+  - "Given a candidate whose provider has a configured RotationBinding, when bundled, then its status/account are included"
+  - "Given the crawl output, when inspected structurally (AST-level), then no code path returns, prints, or logs a secret value -- only metadata fields already established as non-credential (matches the existing bindings-show precedent)"
+  - "Given --org/--project filters, when passed, then the candidate list is correctly scoped"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for candidate filtering, context bundling, and the value-leak structural check.
+    agent: tester
+  - id: implement
+    description: New crawl.py (or a function in registry.py/cli.py) + CLI subcommand + MCP tool.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Reference fields this reads (group/sm_name/project/org/repo/source_files) -- read-only, no schema change
+    - path: src/portunus/backend.py
+      purpose: load_vault_bindings() -- source of the VaultBinding context bundled per candidate
+    - path: src/portunus/rotation.py
+      purpose: load_rotation_bindings() -- source of the RotationBinding context bundled per candidate
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_suggest_metadata -- the existing write path this story's output feeds, unchanged
+
+files_to_modify:
+  - file: src/portunus/crawl.py
+    change: new module -- candidate discovery + context bundling
+  - file: src/portunus/cli.py
+    change: crawl subcommand
+  - file: src/portunus/mcp_server.py
+    change: portunus_crawl_candidates tool
+
+design_decisions:
+  - decision: crawl never calls an LLM or writes metadata itself
+    rationale: "design-discussion.md §2 -- Portunus has zero LLM-call infrastructure today; the existing MCP tool surface is the correct interface for an external LLM to act on this bundle"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Structural AST check confirms no Return node in crawl's own functions references anything but already-non-credential metadata fields"
+
+risks:
+  - severity: low
+    description: Bundling VaultBinding/RotationBinding data could be seen as a new exposure
+    mitigation: "Both are already returned in full by existing GET /api/bindings and /api/rotation-status routes -- same trust level, not new"
+
+references:
+  - path: .pHive/epics/portunus-metadata-crawl/docs/design-discussion.md
+    relevant_excerpt: "§2, §3"
