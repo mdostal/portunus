@@ -1153,14 +1153,19 @@ def cmd_sync(args) -> int:
     return 0
 
 
-def _build_tree(refs):
+def _build_tree(refs, key_fn=None):
     """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
 
-    A reference with no group lands in `ungrouped` -- never silently
-    dropped (Grill H1). `related` entries not present in `refs` (the
-    already-filtered result set) are marked unresolved, never dropped or
-    erroring -- metadata consistency is informational, not fail-closed.
+    `key_fn(ref) -> str` supplies the path to nest under -- defaults to
+    `ref.group` (unchanged behavior for every existing caller). A reference
+    whose key_fn returns "" lands in `ungrouped` -- never silently dropped
+    (Grill H1), same guarantee regardless of which facet is active.
+    `related` entries not present in `refs` (the already-filtered result
+    set) are marked unresolved, never dropped or erroring -- metadata
+    consistency is informational, not fail-closed.
     """
+    if key_fn is None:
+        key_fn = lambda r: r.group  # noqa: E731
     names = {r.name for r in refs}
     ungrouped = []
     tree: dict = {}
@@ -1173,7 +1178,8 @@ def _build_tree(refs):
                 {"name": rel, "unresolved": rel not in names} for rel in r.related
             ],
         }
-        segments = [s for s in r.group.split("/") if s] if r.group else []
+        path = key_fn(r) or ""
+        segments = [s for s in path.split("/") if s] if path else []
         if not segments:
             ungrouped.append(r.name)
             continue
@@ -1194,10 +1200,10 @@ def _related_suffix(name: str, refs_meta: dict) -> str:
     return "  related: " + ", ".join(parts)
 
 
-def _render_tree_text(ungrouped: list, tree: dict, refs_meta: dict) -> str:
+def _render_tree_text(ungrouped: list, tree: dict, refs_meta: dict, bucket_label="(ungrouped)") -> str:
     lines: list = []
     if ungrouped:
-        lines.append("(ungrouped)")
+        lines.append(bucket_label)
         for name in sorted(ungrouped):
             lines.append(f"  {name}{_related_suffix(name, refs_meta)}")
 
@@ -1212,25 +1218,35 @@ def _render_tree_text(ungrouped: list, tree: dict, refs_meta: dict) -> str:
     return "\n".join(lines)
 
 
+_TREE_KEY_FNS = {
+    "group": (lambda r: r.group, "(ungrouped)"),
+    "repo": (lambda r: r.repo, "(no repo set)"),
+}
+
+
 def cmd_tree(args) -> int:
     """LLM-facing relationship/hierarchy query -- metadata only, never a
-    value. Every reference with an empty group renders under an
-    (ungrouped) bucket rather than being silently dropped (Grill H1)."""
+    value. Every reference with an empty key for the active facet (--by)
+    renders under a bucket rather than being silently dropped (Grill H1).
+    --by group (the default, unchanged from before this flag existed) nests
+    by the free-text group path; --by repo nests by the structured repo
+    field instead -- same builder/renderer, different key."""
     registry = Registry()
     refs = list(registry)
     if args.project:
         refs = [r for r in refs if r.project == args.project]
+    key_fn, bucket_label = _TREE_KEY_FNS[args.by]
     if not refs:
         if args.json:
             print(json.dumps({"ungrouped": [], "tree": {}, "refs": {}}))
         else:
             print("no references to show")
         return 0
-    ungrouped, tree, refs_meta = _build_tree(refs)
+    ungrouped, tree, refs_meta = _build_tree(refs, key_fn=key_fn)
     if args.json:
         print(json.dumps({"ungrouped": sorted(ungrouped), "tree": tree, "refs": refs_meta}))
         return 0
-    print(_render_tree_text(ungrouped, tree, refs_meta))
+    print(_render_tree_text(ungrouped, tree, refs_meta, bucket_label=bucket_label))
     return 0
 
 
@@ -1539,6 +1555,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="render secrets by group hierarchy + related links (metadata only, never a value)",
     )
     tr.add_argument("--project", default="")
+    tr.add_argument("--by", choices=("group", "repo"), default="group",
+                     help="which field to nest by (default: group, unchanged from before this flag existed)")
     tr.add_argument("--json", action="store_true", help="machine-readable output (UI/LLM consumer)")
     tr.set_defaults(func=cmd_tree)
 
