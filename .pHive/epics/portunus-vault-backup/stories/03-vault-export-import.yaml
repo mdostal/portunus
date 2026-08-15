@@ -1,0 +1,98 @@
+id: 03-vault-export-import
+epic: portunus-vault-backup
+title: portunus vault export/import -- passphrase-locked portable archive
+status: pending
+complexity: high
+methodology: tdd
+depends_on: [02-vault-lock-and-coordinated-snapshot]
+
+description: |
+  `portunus vault export [--out path]` takes a coordinated snapshot (story 02's primitive) of
+  registry.json, master.key, vault.enc.json, vault-bindings.json, rotation-bindings.json (if
+  present), gcp-bindings.json (if present, legacy fallback), and audit.log, bundles them into a
+  single archive, and re-encrypts the whole bundle under an operator-supplied passphrase
+  (PBKDF2-derived key, `cryptography` library, no new dependency) -- the archive at rest carries
+  no usable key material, only ciphertext. `portunus vault import <archive> [--force]` reverses
+  this: prompts for (or reads via PORTUNUS_EXPORT_PASSPHRASE env var) the passphrase, decrypts,
+  and writes all bundled files into PORTUNUS_HOME -- refusing a non-empty target directory
+  without --force (full replace, not merge). Passphrase never accepted via an inline CLI flag
+  (matches `portunus drop`'s own boundary-only convention for sensitive input) -- only prompt or
+  env var. Wrong passphrase on import fails closed with a clear error, mirroring
+  LocalEncryptedBackend.access()'s existing InvalidToken handling. CLI-only for v1 -- no MCP tool,
+  no UI surface (design-discussion.md §6): an archive containing every secret in the vault should
+  never be triggerable or path-returnable to an LLM-facing tool without a human directly
+  initiating it.
+
+acceptance_criteria:
+  - "Given a real vault with all four critical files present, when `portunus vault export --out backup.pvault` runs with a passphrase, then the resulting archive contains a coordinated snapshot (via story 02's primitive) and is opaque -- no plaintext key material or values recoverable by inspecting the raw archive bytes without the passphrase"
+  - "Given a valid archive and the correct passphrase, when `portunus vault import backup.pvault` runs against an empty PORTUNUS_HOME, then every bundled file is restored byte-identical to what was exported, and `portunus verify`/`portunus list` work against the restored vault exactly as they did against the original"
+  - "Given a valid archive and the WRONG passphrase, when import runs, then it fails closed with a clear, specific error -- no partial write, no files touched in PORTUNUS_HOME"
+  - "Given a non-empty PORTUNUS_HOME, when `portunus vault import` runs WITHOUT --force, then it refuses and exits non-zero without touching any existing file"
+  - "Given PORTUNUS_EXPORT_PASSPHRASE set in the environment, when export or import runs, then the passphrase is read from there and never appears in argv/process listing/any log line"
+  - "Given a legacy vault with gcp-bindings.json but no vault-bindings.json, when export runs, then gcp-bindings.json is included and its absence on an already-migrated vault is not treated as an error"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for round-trip fidelity, wrong-passphrase fail-closed, non-empty-target refusal, env-var passphrase, and legacy-file handling.
+    agent: tester
+  - id: implement
+    description: Implement `portunus vault export`/`portunus vault import` CLI subcommands using story 02's snapshot primitive + PBKDF2-derived Fernet re-encryption of the bundle.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the passphrase never touches argv, a log line, or an exception message; confirm master.key is never present in the archive un-re-encrypted; confirm --force is required and explicit for any destructive import.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch; live-proof against real scratch PORTUNUS_HOME data (never the user's real vault for the destructive --force path).
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/localvault.py
+      purpose: Fernet usage precedent + InvalidToken handling pattern to mirror for wrong-passphrase-on-import
+    - path: src/portunus/cli.py
+      purpose: Where portunus drop's boundary-only passphrase/value convention (never inline flag) lives -- the pattern this story's export/import passphrase handling follows
+    - path: src/portunus/backup.py
+      purpose: story 02's coordinated snapshot primitive -- this story's foundation, not reimplemented
+    - path: src/portunus/paths.py
+      purpose: home() -- the import target directory
+
+files_to_modify:
+  - file: src/portunus/backup.py
+    change: Add export_archive()/import_archive() functions (PBKDF2 key derivation, Fernet re-encryption, bundle format) on top of story 02's snapshot primitive
+  - file: src/portunus/cli.py
+    change: New `vault export`/`vault import` subcommands, PORTUNUS_EXPORT_PASSPHRASE env var support, --force flag, --out flag
+  - file: tests/test_backup.py
+    change: Round-trip, wrong-passphrase, non-empty-target, env-var, and legacy-file tests
+
+design_decisions:
+  - decision: Passphrase-based re-encryption, not the vault's own Fernet key bundled as-is
+    rationale: "design-discussion.md §2 -- master.key alone is more sensitive than any individual secret; an archive leaving PORTUNUS_HOME must not carry a live decryption key un-re-encrypted"
+  - decision: CLI-only, no MCP tool, no UI surface for v1
+    rationale: "design-discussion.md §6 -- a full-vault archive should never be triggerable or path-returnable to an LLM-facing tool without direct human initiation"
+  - decision: import refuses non-empty PORTUNUS_HOME without --force; --force replaces, does not merge
+    rationale: "design-discussion.md §5 self-grill -- a real merge with collision detection is its own scope, explicitly deferred"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The single highest-risk story in the epic: the export archive necessarily contains every secret value (encrypted) and the registry naming them. Passphrase-based re-encryption is the mitigation; review step explicitly confirms no plaintext path exists and the passphrase itself never leaks via argv/logs/errors."
+  - concern: audit-chain-integrity
+    action: "audit.log is included in the export bundle read-only (via story 02's snapshot) -- export/import themselves should append their OWN audit entries (export/import performed, not the individual secret values) so the action is traceable, without ever writing the passphrase or any secret value into the audit chain."
+
+risks:
+  - severity: high
+    description: An export archive is, by construction, a single file containing the whole vault's blast radius -- any flaw in the re-encryption (weak KDF params, passphrase leak, wrong-passphrase not failing closed) is a full-vault-compromise-severity bug
+    mitigation: "Dedicated review step focused solely on this; explicit acceptance criteria for opacity, fail-closed wrong-passphrase, and passphrase-never-in-argv/logs; PBKDF2 with modern iteration counts, not a home-rolled KDF"
+  - severity: medium
+    description: --force import could destroy a real vault if run against the wrong PORTUNUS_HOME by mistake
+    mitigation: "Live-proof step explicitly uses scratch data, never the user's real vault, for the destructive path; --force required explicitly, never implied"
+
+references:
+  - path: .pHive/epics/portunus-vault-backup/docs/design-discussion.md
+    relevant_excerpt: "§1, §2, §5, §6 -- full shape, passphrase decision, self-grill, scale assessment"
+  - path: .pHive/epics/portunus-vault-backup/docs/research-brief.md
+    relevant_excerpt: "§2 -- the real backup surface"

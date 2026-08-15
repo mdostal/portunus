@@ -1,0 +1,83 @@
+id: 01-eager-sync-down-on-discover
+epic: portunus-vault-backup
+title: discover --register warms the local cache immediately for cached-mode projects
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  `discover --register` (CLI) / `portunus_discover(register=True)` (MCP) gain an eager
+  sync-down: for each newly-registered reference under a project whose VaultBinding.sync_mode
+  == "cached", immediately call the same backend-router `.access()` path a normal resolve would
+  use to warm the local encrypted cache -- reusing SyncingBackend entirely, no new sync
+  mechanism. Deliberately bypasses Broker.check_injectable for this one operation (design-
+  discussion.md §4b) -- the reference's state stays "requested" throughout; only the local
+  cache gets populated. The value itself is never captured, returned, printed, or logged --
+  same discipline cmd_sync's existing loop already uses (calls .access() for its side effect,
+  discards the return). A project with sync_mode != "cached" (the default) or backend != "gcp"
+  is unaffected -- nothing eager happens, same behavior as before this story.
+
+acceptance_criteria:
+  - "Given a project bound with sync_mode=cached, when `discover --register` registers a new reference, then the local encrypted vault has a cached entry for it immediately after, without any separate resolve/access call"
+  - "Given a project with no VaultBinding or sync_mode=direct (the default), when `discover --register` runs, then no eager sync-down is attempted -- behavior is byte-identical to before this story"
+  - "Given the eager sync-down for one reference fails (network/auth error), when register runs, then registration itself still succeeds (the reference exists, state=requested) and the failure is reported per-reference, not raised as a fatal error aborting the rest of the batch"
+  - "Given AST-level source inspection of the new eager-sync code path, when checked, then no branch returns, prints, or logs the resolved value on any path including the failure path"
+  - "Given a reference warmed by eager sync-down, when its state is still 'requested', then `portunus resolve`/`inject`/`ask`/every MCP resolve tool still refuses it exactly as before -- warming the cache never makes anything injectable"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for eager sync-down firing only on cached-mode projects, never leaking a value, never affecting injectability, and per-reference failure isolation.
+    agent: tester
+  - id: implement
+    description: Wire the eager sync-down into register_discovered()/cmd_discover/portunus_discover, reusing the existing backend router.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: AST-inspect the new code path for a value-leak the same way portunus_resolve_exec's own review did (per this epic's own acceptance criterion 4) -- do not skip this given it deliberately bypasses check_injectable.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/discover.py
+      purpose: register_discovered() -- the function this story extends; currently structurally cannot touch a backend at all (no import), so the eager-sync call must come from the CLI/MCP caller layer, not discover.py itself, to preserve that read-only guarantee
+    - path: src/portunus/cli.py
+      purpose: cmd_sync -- the exact call .access()-for-its-side-effect-only pattern to mirror; cmd_discover -- where --register is currently handled
+    - path: src/portunus/backend.py
+      purpose: SyncingBackend.access(), _make_backend_router -- the existing pull-cache mechanism this story reuses, not reimplements
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: cmd_discover -- after register_discovered(), eager-sync each newly-registered reference under a cached-mode project
+  - file: src/portunus/mcp_server.py
+    change: portunus_discover -- same eager-sync wiring
+  - file: tests/test_discover.py
+    change: New tests for eager sync-down
+
+design_decisions:
+  - decision: Bypass check_injectable for this one operation, not for anything else
+    rationale: "design-discussion.md §4b -- cmd_sync's existing loop skips state=requested references entirely, which would make eager-sync silently do nothing for exactly the references it exists to help. The fail-closed guarantee is unaffected: check_injectable still gates every real resolve/inject path unconditionally."
+  - decision: Failure is per-reference and non-fatal
+    rationale: "Matches drop_bulk/retag-bulk's own established precedent this session -- one bad entry never aborts a batch operation"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The core risk this story introduces: a new code path that calls backend.access() outside the normal check_injectable-gated flow. Mitigated by AST-level source inspection (acceptance criterion 4) confirming the resolved value is never captured into a variable that escapes the function, matching the same discipline portunus_resolve_exec's own review used."
+  - concern: audit-chain-integrity
+    action: "The eager sync-down still goes through the same backend.access() call SyncingBackend/cmd_sync already use -- no new audit-bypass introduced. Whether this specific access should append its own distinct audit action (vs. reusing 'resolve') is a design call the implement step should make explicitly, not leave ambiguous."
+
+risks:
+  - severity: high
+    description: A bug here could leak a value from an operation that was never meant to expose one, or accidentally make a requested-state reference resolvable
+    mitigation: "Explicit acceptance criteria 4-5 require both a value-leak check and an injectability-unaffected check -- this is the highest-risk story in the epic and gets the most explicit verification requirements accordingly"
+
+references:
+  - path: .pHive/epics/portunus-vault-backup/docs/design-discussion.md
+    relevant_excerpt: "§4, §4a, §4b -- the full reasoning for this story"

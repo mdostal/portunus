@@ -4,6 +4,40 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-14
+
+### Added
+
+- **`discover --register` eagerly warms the local cache** (CLI + MCP) for a project bound
+  `sync_mode=cached` — collapses "add a key to GCP Secret Manager" from a multi-step dance
+  (register, then wait on the first real resolve to trigger the cache pull) down to one step.
+  The reference's `state` still lands at `requested`: it's cached sooner, not injectable sooner
+  — `check_injectable` still gates every real resolve/inject/ask/MCP path exactly as before.
+  Per-reference, best-effort: a cache-warm failure never fails registration itself.
+- **`portunus vault export`/`portunus vault import`** — a coordinated, passphrase-locked
+  portable snapshot of the vault's critical-state surface (reference registry, master key,
+  encrypted values, vault bindings, legacy bindings if present, audit log + its sequence
+  counter). Re-encrypted under an operator passphrase (PBKDF2-SHA256, 600k iterations) — the
+  archive never carries the vault's own live decryption key. `import` fails closed on a wrong
+  passphrase and refuses to touch an existing non-empty vault without `--force` (a full
+  replace, never a merge). CLI-only: no MCP tool, no UI surface — an archive containing every
+  secret in the vault should never be triggerable by an LLM-facing tool without a human
+  directly running the command.
+
+### Fixed
+
+- **`vault-bindings.json` had no lock at all** — the only critical-state file without one,
+  unlike the registry/audit-log/local-vault (each already fixed for a real concurrency bug
+  earlier this cycle). `save_vault_bindings()` now serializes its write through a dedicated
+  flock, and the new coordinated multi-file snapshot primitive backing `vault export` acquires
+  every relevant lock (registry, vault, vault-bindings, audit) in one fixed order before
+  reading, so an export is never caught mid-mutation.
+- **Audit chain restore hazard, caught by the export/import round-trip tests themselves**:
+  `.clock` (the append() sequence counter) wasn't included in what a snapshot captured —
+  restoring `audit.log` without it would silently reset the counter, letting the next real
+  append re-mint a `seq` that already exists in the restored chain and break the hash-chain
+  invariant `verify()` checks. `.clock` now travels with `audit.log` under the same lock.
+
 ## [0.17.0] - 2026-08-15
 
 ### Added

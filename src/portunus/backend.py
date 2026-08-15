@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Dict, Optional, Protocol, runtime_checkable
 
 from .auth import AuditChain, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
+from .filelock import flock_path
 from .paths import home
 
 
@@ -100,6 +101,10 @@ def _legacy_gcp_bindings_path() -> Path:
     return home() / "gcp-bindings.json"
 
 
+def _vault_bindings_lock_path(path: Optional[Path] = None) -> Path:
+    return _vault_bindings_path(path).with_suffix(".lock")
+
+
 def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
     """Load PORTUNUS_HOME/vault-bindings.json (project -> VaultBinding).
 
@@ -147,7 +152,17 @@ def save_vault_bindings(
     bindings: Dict[str, VaultBinding], path: Optional[Path] = None
 ) -> None:
     """Persist project bindings, 0600 on disk (grill H1). Always writes the
-    new vault-bindings.json -- never touches a legacy gcp-bindings.json."""
+    new vault-bindings.json -- never touches a legacy gcp-bindings.json.
+    Serialized via its own flock (portunus-vault-backup story 02) -- unlike
+    registry.json/audit.log/vault.enc.json, this file previously had no
+    lock file at all. This closes the write-time gap (two concurrent saves
+    can no longer interleave their temp-file rename) and gives the
+    coordinated snapshot primitive (backup.py) something to hold during a
+    consistent read. NOTE: the full load-mutate-save cycle callers like
+    `cmd_bindings_set` perform is not yet fully atomic across the *read* --
+    that would need the same reload-inside-lock restructuring
+    Registry._locked() already does, which is a bigger change than this
+    story's scope (a dedicated lock file + the coordinated snapshot)."""
     bindings_path = _vault_bindings_path(path)
     bindings_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
@@ -157,11 +172,12 @@ def save_vault_bindings(
         }
         for proj, b in bindings.items()
     }
-    tmp = bindings_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(raw, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, bindings_path)
-    os.chmod(bindings_path, 0o600)
+    with flock_path(_vault_bindings_lock_path(path)):
+        tmp = bindings_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(raw, indent=2))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, bindings_path)
+        os.chmod(bindings_path, 0o600)
 
 
 class GcloudBackend:
