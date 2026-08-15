@@ -1,7 +1,9 @@
 id: 02-backend-router
 epic: portunus-vault-routing
 title: Per-reference backend router (Slice B)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.13.0"
 complexity: high
 methodology: tdd
 depends_on: [01-vault-binding-model]

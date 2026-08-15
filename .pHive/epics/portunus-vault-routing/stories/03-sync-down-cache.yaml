@@ -1,7 +1,9 @@
 id: 03-sync-down-cache
 epic: portunus-vault-routing
 title: Recency-aware sync-down cache (Slice C)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.13.0"
 complexity: high
 methodology: tdd
 depends_on: [02-backend-router]

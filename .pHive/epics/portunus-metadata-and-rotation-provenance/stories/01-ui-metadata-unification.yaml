@@ -1,7 +1,9 @@
 id: 01-ui-metadata-unification
 epic: portunus-metadata-and-rotation-provenance
 title: Unify AddSecretForm/DetailDrawer metadata fields + cmd_drop --backend flag
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.15.0"
 complexity: medium
 methodology: tdd
 depends_on: []

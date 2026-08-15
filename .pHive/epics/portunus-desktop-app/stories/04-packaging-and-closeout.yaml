@@ -1,7 +1,9 @@
 id: 04-packaging-and-closeout
 epic: portunus-desktop-app
 title: release-desktop.yml CI workflow, install docs, version bump, live proof
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.16.0"
 complexity: medium
 methodology: classic
 depends_on: [02-tray-single-instance, 03-self-update]

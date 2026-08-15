@@ -1,7 +1,9 @@
 id: 04-ui-two-zone-backend-picker
 epic: portunus-swappable-trio
 title: UI two-zone backend picker + GitHub adapter-request template (Slice ARCA-3)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.14.0"
 complexity: medium
 methodology: classic
 depends_on: [01-arca-honest-stubs]

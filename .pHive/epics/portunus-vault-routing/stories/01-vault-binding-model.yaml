@@ -1,7 +1,9 @@
 id: 01-vault-binding-model
 epic: portunus-vault-routing
 title: VaultBinding model + migration-safe config (Slice A)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.13.0"
 complexity: high
 methodology: tdd
 depends_on: []

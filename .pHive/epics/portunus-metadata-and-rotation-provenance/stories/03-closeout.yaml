@@ -1,7 +1,9 @@
 id: 03-closeout
 epic: portunus-metadata-and-rotation-provenance
 title: Docs, version bump, live proof
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.15.0"
 complexity: low
 methodology: classic
 depends_on: [01-ui-metadata-unification, 02-rotation-provenance]
