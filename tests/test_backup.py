@@ -30,8 +30,23 @@ def test_snapshot_omits_absent_optional_files_without_erroring(home):
     # never created in this test -- must be omitted, not an error
     assert "master.key" not in result
     assert "vault.enc.json" not in result
+    # .clock isn't touched until the first AuditChain.append() -- absent here
+    assert ".clock" not in result
     assert "gcp-bindings.json" not in result
     assert "rotation-bindings.json" not in result
+
+
+def test_snapshot_includes_clock_alongside_audit_log_once_present(home):
+    """.clock (append()'s seq counter) must travel WITH audit.log, not just
+    alongside it -- see backup.py's own LOCKED_FILES comment for why an
+    import that restores audit.log without .clock would break the chain."""
+    a = AuditChain()
+    a.append("resolve", "sm-x", "ok")
+
+    result = snapshot(home)
+
+    assert ".clock" in result
+    assert result[".clock"] == (home / ".clock").read_bytes()
 
 
 def test_snapshot_includes_a_present_legacy_file_unlocked(home):

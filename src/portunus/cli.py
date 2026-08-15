@@ -8,6 +8,7 @@ temp file and prints its *path*.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import shutil
@@ -26,6 +27,7 @@ from .backend import (
     GcloudBackend, InfisicalBackend, MockBackend, OnePasswordConnectBackend, SyncingBackend,
     VaultBinding, VaultServerBackend, load_vault_bindings, save_vault_bindings,
 )
+from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
@@ -1190,6 +1192,76 @@ def cmd_sync(args) -> int:
     return 0
 
 
+_EXPORT_PASSPHRASE_ENV = "PORTUNUS_EXPORT_PASSPHRASE"
+
+
+def _resolve_passphrase(prompt: str, confirm: bool = False) -> str:
+    """Never accepted via an inline CLI flag -- matches `portunus drop`'s
+    own boundary-only convention for sensitive input. Only
+    PORTUNUS_EXPORT_PASSPHRASE (for scripted/automated backup jobs) or an
+    interactive getpass prompt; either way it never touches argv."""
+    env_val = os.environ.get(_EXPORT_PASSPHRASE_ENV)
+    if env_val:
+        return env_val
+    value = getpass.getpass(prompt)
+    if confirm:
+        again = getpass.getpass("confirm passphrase: ")
+        if value != again:
+            raise ValueError("passphrases did not match")
+    return value
+
+
+def cmd_vault_export(args) -> int:
+    """Coordinated, passphrase-locked snapshot of the vault's critical-state
+    surface (registry.json, master.key, vault.enc.json, vault-bindings.json,
+    rotation-bindings.json/gcp-bindings.json if present, audit.log) -- see
+    backup.py. CLI-only: no MCP tool, no UI surface (design-discussion.md
+    §6) -- an archive containing every secret in the vault should never be
+    triggerable by an LLM-facing tool without a human directly initiating
+    it."""
+    try:
+        passphrase = _resolve_passphrase("export passphrase: ", confirm=True)
+    except ValueError as exc:
+        return _err(str(exc))
+    out_path = Path(args.out) if args.out else Path.cwd() / "portunus-vault-export.pvault"
+    try:
+        path = export_archive(out_path, passphrase)
+    except ExportError as exc:
+        return _err(str(exc))
+    # Recorded AFTER the archive is written -- the snapshot inside
+    # export_archive() already captured audit.log's prior state, so this
+    # entry becomes the vault's next real append, not part of what got
+    # archived. Never the passphrase, never a secret value -- only the
+    # archive path (informational, matches every other audit entry's
+    # metadata-only discipline).
+    _, audit, _, _ = _build()
+    audit.append("vault_export", "-", f"exported -> {path}")
+    print(f"exported vault -> {path}")
+    return 0
+
+
+def cmd_vault_import(args) -> int:
+    """Reverse of `vault export` -- see backup.py::import_archive(). Fails
+    closed on a wrong passphrase; refuses a target that already has vault
+    state present unless --force (full replace, never a merge)."""
+    try:
+        passphrase = _resolve_passphrase("import passphrase: ")
+    except ValueError as exc:
+        return _err(str(exc))
+    try:
+        written = import_archive(Path(args.archive), passphrase, force=args.force)
+    except ExportError as exc:
+        return _err(str(exc))
+    # Recorded AFTER the restore, against the now-restored audit.log/.clock
+    # -- continues that chain forward as its next real append, the same way
+    # `vault_export` continues the source vault's chain rather than being
+    # folded into what was archived.
+    _, audit, _, _ = _build()
+    audit.append("vault_import", "-", f"imported {len(written)} file(s) from {args.archive}")
+    print(f"imported {len(written)} file(s): {', '.join(written)}")
+    return 0
+
+
 def _build_tree(refs, key_fn=None):
     """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
 
@@ -1586,6 +1658,28 @@ def build_parser() -> argparse.ArgumentParser:
     sy.add_argument("project")
     sy.add_argument("--json", action="store_true")
     sy.set_defaults(func=cmd_sync)
+
+    vault = sub.add_parser(
+        "vault", help="portable, passphrase-locked vault backup (export/import)",
+    )
+    vault_sub = vault.add_subparsers(dest="action", required=True)
+
+    vault_export = vault_sub.add_parser(
+        "export",
+        help="export a coordinated, passphrase-locked snapshot of the vault's critical state",
+    )
+    vault_export.add_argument(
+        "--out", help="output archive path (default: ./portunus-vault-export.pvault)",
+    )
+    vault_export.set_defaults(func=cmd_vault_export)
+
+    vault_import = vault_sub.add_parser("import", help="restore a vault export archive")
+    vault_import.add_argument("archive")
+    vault_import.add_argument(
+        "--force", action="store_true",
+        help="replace existing vault state in PORTUNUS_HOME (full replace, not merge)",
+    )
+    vault_import.set_defaults(func=cmd_vault_import)
 
     tr = sub.add_parser(
         "tree",
