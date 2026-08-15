@@ -43,7 +43,7 @@ stories:
     title: Settings UI -- Leak scan section
     complexity: medium
     depends_on: [03-scan-config-and-cli]
-    status: pending
+    status: shipped
   - id: 06-closeout
     title: docs, version bump, end-to-end live proof
     complexity: low

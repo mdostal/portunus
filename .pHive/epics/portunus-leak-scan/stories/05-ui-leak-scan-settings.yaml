@@ -1,7 +1,7 @@
 id: 05-ui-leak-scan-settings
 epic: portunus-leak-scan
 title: Settings UI -- Leak scan section
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [03-scan-config-and-cli]
