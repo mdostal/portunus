@@ -203,6 +203,29 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   Markdown (org → project structure, each reference's known metadata, an explicit `## Gaps`
   section). Independent of `crawl_candidates()` — a real "deploy docs" starting point whether
   or not any crawl-sourced metadata has ever been confirmed.
+- **`leakscan.py` / `portunus leak-scan` / leak detection** — detects whether a managed
+  secret's actual decrypted value shows up somewhere it shouldn't (logs, `.claude`
+  conversation transcripts, shell history, or any human-configured local path). The strictest
+  secret-boundary-invariant instance in the codebase: it MUST call `Backend.access()` to get
+  values to search FOR, then guarantees those values never escape beyond an in-memory per-line
+  comparison — `Finding(ref_name, path, line_number, byte_offset)` structurally cannot hold a
+  value. Line-based, incremental (per-file `Watermark`: byte offset + `(size, mtime)`
+  fingerprint + consumed line count) — real scale data (3.4 GB / 4,421 files under one
+  `~/.claude`) ruled out naive full-rescan-every-run. Three separate locked JSON stores
+  (`leak-scan-config.json`, `leak-status.json`, `leak-scan-watermarks.json`), deliberately not
+  one, split by write frequency. Severity (`warn`/`urgent`/`critical`) is DERIVED at read time
+  from elapsed days since a reference's earliest finding (0–2/3–6/7+), never stored
+  redundantly. Advisory only — proven, not asserted, that `check_injectable()`/`resolve()`
+  behave byte-identically regardless of leak status, mirroring the `roles.json` stub precedent.
+  `portunus leak mark-rotated <name>` is a documented human assertion Portunus can't verify;
+  it also invalidates the watermark for every file where that reference had a finding, so a
+  premature mark-rotated still gets caught by the next scan (a real gap the epic's own
+  live-proof pass caught and fixed before shipping). MCP surface has full CLI parity
+  (`portunus_run_leak_scan`, config tools, `portunus_leak_mark_rotated`) by explicit user
+  decision reversing the epic's own initial "status-query only" boundary — recorded in
+  `.pHive/epics/portunus-leak-scan/docs/design-discussion.md` §2's addendum, not silently
+  overwritten; widening WHO can trigger a scan never widened WHAT can be scanned (still only
+  human-configured paths).
 
 ## Key paths
 

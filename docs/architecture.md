@@ -360,6 +360,67 @@ auto-fill), and a "Download report" button. Confirming any metadata a human or L
 from the bundle still goes through the existing `portunus metadata confirm` flow (§9) — this
 epic adds no new write path.
 
+## 11. Leak detection across logs/.claude/local files (portunus-leak-scan)
+
+Detects whether a managed secret's actual decrypted value shows up somewhere it shouldn't --
+logs, `.claude` conversation transcripts, shell history, or any other explicitly-configured
+local path. Advisory only: proven, not just asserted, that `check_injectable()`/`resolve()`
+behave byte-identically whether or not a reference has active leak findings, mirroring §3's
+roles.json precedent.
+
+**The strictest instance of the secret-boundary-invariant in the codebase.** Every other module
+that touches a decrypted value either hands it only to a boundary sink (`resolver.py`) or never
+calls `Backend.access()` at all (`crawl.py`, §10). `leakscan.py` is a new third shape: it MUST
+call `.access()` to get values to search FOR, then guarantee those values never escape beyond an
+in-memory per-line comparison. Values live only in a local dict inside the scan function's own
+stack frame; `Finding(ref_name, path, line_number, byte_offset)` has no field capable of holding
+a value; a forced mid-scan exception's message is verified never to contain the searched value.
+
+**Line-based, incremental scanning.** Every configured file is scanned line-by-line (free line
+numbers, no chunk-boundary-match bugs) with a per-file `Watermark` (byte offset + a
+`(size, mtime)` fingerprint + consumed line count) so a re-scan only reads newly-appended bytes.
+A shrunk/replaced file is rescanned from byte 0. Values shorter than
+`MIN_SEARCHABLE_VALUE_LENGTH` (8) are never fetched into the search set — a trivial-length value
+would false-positive-match constantly. A single compiled multi-pattern alternation does one
+linear pass per file, not one pass per secret — real scale data checked during planning
+(3.4 GB / 4,421 files under one `~/.claude` alone) ruled out anything less.
+
+**Three separate locked JSON stores**, deliberately not one: `leak-scan-config.json` (scan-path
+globs, empty by default — never auto-populated), `leak-status.json` (findings + escalation
+state, rewritten on new findings/rotations), `leak-scan-watermarks.json` (rewritten on every
+scan, the highest-churn of the three). Sharing one lock across all three would serialize a
+frequent cheap watermark update behind a lock a rare config-edit also wants, for no benefit.
+
+**Escalation is derived, not stored.** Severity (`warn`/`urgent`/`critical`) is computed at read
+time from elapsed time since the EARLIEST `first_detected_at` across a reference's findings
+(0–2d / 3–6d / 7+d) — never persisted redundantly. `portunus leak mark-rotated <name>` is an
+explicit, documented human assertion Portunus cannot independently verify; it also invalidates
+the watermark for every file where that reference had a finding, so a genuinely premature
+mark-rotated gets caught by the next scan rather than silently protected by a watermark that
+already scanned past the still-leaked bytes — a real gap the epic's own live-proof pass against
+the actual Settings page caught and fixed before shipping.
+
+**MCP surface: full parity with the CLI, by explicit user decision.** `portunus_leak_status`
+exposes only already-computed severity/finding-count/timestamps and still never triggers a
+scan. `portunus_run_leak_scan`, `portunus_leak_scan_config_show/add_path/remove_path`, and
+`portunus_leak_mark_rotated` mirror the CLI 1:1, and were added AFTER the epic initially shipped
+`portunus_leak_status` as the only MCP surface, deliberately keeping scan-triggering CLI/UI-only
+(an agent triggering reads of a user's own conversation history at its own initiative was judged
+a materially different trust boundary than reading metadata the vault already had). The user
+explicitly revisited that tradeoff and chose to widen it — recorded, not silently reversed, in
+`.pHive/epics/portunus-leak-scan/docs/design-discussion.md` §2's addendum. What did NOT change:
+the human-configured scan-path set is still the only thing an agent can ever cause Portunus to
+read — `portunus_run_leak_scan` takes no path argument, so widening WHO can trigger a scan never
+widened WHAT can be scanned. Every new tool is structurally verified to never decode file
+content, call `.access(`, or open a file directly — they only ever call the same
+`leakscan.py` functions the CLI itself uses.
+
+**A detective control, not a preventive one**, said explicitly in every surface's own copy
+(CLI help text, Settings section, README). This finds secrets that already leaked; it does
+nothing to stop the next paste into a chat window. The standing project policy (never act on a
+credential pasted in chat; flag it and ask the user to rotate) remains the actual first line of
+defense — this epic is a safety net under it, not a replacement.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

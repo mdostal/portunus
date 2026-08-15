@@ -33,6 +33,15 @@ from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bin
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .roles import PolicyError, VALID_SCOPE_TYPES, delete_policy, load_policies, set_policy
 from .crawl import crawl_candidates, generate_report
+from .leakscan import (
+    add_scan_path,
+    load_leak_status,
+    load_scan_paths,
+    mark_rotated,
+    remove_scan_path,
+    run_scan,
+    summarize,
+)
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -1426,6 +1435,104 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_leak_scan(args) -> int:
+    """Scan configured local paths for occurrences of managed secret
+    values -- advisory only, never blocks check_injectable/resolve, never
+    auto-rotates. Exits non-zero when new findings are found (useful for a
+    CI/cron invocation)."""
+    registry, audit, broker, resolver = _build()
+    result = run_scan(registry, broker, resolver.backend, backend_for=resolver.backend_for)
+
+    if not result.configured_paths:
+        if args.json:
+            print(json.dumps({"configured": False, "findings": []}))
+        else:
+            print("(no scan paths configured -- `portunus leak-scan config add-path <glob>` first)")
+        return 0
+
+    audit.append("leak-scan", "*", f"{len(result.findings)}-new-findings")
+    for finding in result.findings:
+        audit.append("leak-scan-finding", finding.ref_name, finding.path)
+
+    if args.json:
+        print(json.dumps([
+            {"ref_name": f.ref_name, "path": f.path, "line_number": f.line_number}
+            for f in result.findings
+        ]))
+    elif not result.findings:
+        print("no new findings")
+    else:
+        for f in result.findings:
+            print(f"  LEAK  {{{{secret:{f.ref_name}}}}}  {f.path}:{f.line_number}")
+    return 1 if result.findings else 0
+
+
+def cmd_leak_scan_config_add_path(args) -> int:
+    add_scan_path(args.glob)
+    print(f"added -> {args.glob}")
+    return 0
+
+
+def cmd_leak_scan_config_remove_path(args) -> int:
+    remove_scan_path(args.glob)
+    print(f"removed -> {args.glob}")
+    return 0
+
+
+def cmd_leak_scan_config_show(args) -> int:
+    paths = load_scan_paths()
+    if args.json:
+        print(json.dumps(paths))
+        return 0
+    if not paths:
+        print("(no scan paths configured)")
+        return 0
+    for p in paths:
+        print(f"  {p}")
+    return 0
+
+
+def cmd_leak_status(args) -> int:
+    statuses = load_leak_status()
+    if args.name:
+        status = statuses.get(args.name)
+        summary = summarize(status) if status else {
+            "ref_name": args.name, "severity": None, "finding_count": 0,
+            "first_detected_at": None, "last_detected_at": None,
+        }
+        if args.json:
+            print(json.dumps(summary))
+            return 0
+        if summary["severity"] is None:
+            print(f"{args.name}: no active findings")
+        else:
+            print(f"{args.name}: {summary['severity']} ({summary['finding_count']} finding(s))")
+        return 0
+
+    active = {name: s for name, s in statuses.items() if s.findings}
+    if args.json:
+        print(json.dumps([summarize(s) for s in active.values()]))
+        return 0
+    if not active:
+        print("(no references with active leak findings)")
+        return 0
+    for name in sorted(active):
+        summary = summarize(active[name])
+        print(f"  {name}: {summary['severity']} ({summary['finding_count']} finding(s))")
+    return 0
+
+
+def cmd_leak_mark_rotated(args) -> int:
+    """A human's own assertion that `name` has been rotated at its
+    provider -- Portunus cannot verify this independently. Clears active
+    findings and resets the escalation clock."""
+    _, audit, _, _ = _build()
+    mark_rotated(args.name)
+    audit.append("leak-mark-rotated", args.name, "ok")
+    print(f"marked rotated -> {args.name}")
+    return 0
+
+
 def cmd_metadata_confirm(args) -> int:
     """Accept an agent-suggested field -- applies it via the SAME retag()
     a manual edit would use (no second write path to drift from), then
@@ -1986,6 +2093,45 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--project", default="")
     rp.add_argument("--out", default="")
     rp.set_defaults(func=cmd_report)
+
+    ls = sub.add_parser(
+        "leak-scan",
+        help="scan configured local paths for occurrences of managed secret values -- "
+             "advisory only, never automatic, never blocks check_injectable/resolve",
+    )
+    ls.add_argument("--json", action="store_true")
+    ls.set_defaults(func=cmd_leak_scan)
+    ls_sub = ls.add_subparsers(dest="leak_scan_action")
+
+    ls_config = ls_sub.add_parser("config", help="manage configured scan paths")
+    ls_config_sub = ls_config.add_subparsers(dest="config_action", required=True)
+
+    ls_config_add = ls_config_sub.add_parser("add-path", help="add a scan-path glob")
+    ls_config_add.add_argument("glob")
+    ls_config_add.set_defaults(func=cmd_leak_scan_config_add_path)
+
+    ls_config_remove = ls_config_sub.add_parser("remove-path", help="remove a scan-path glob")
+    ls_config_remove.add_argument("glob")
+    ls_config_remove.set_defaults(func=cmd_leak_scan_config_remove_path)
+
+    ls_config_show = ls_config_sub.add_parser("show", help="show configured scan paths")
+    ls_config_show.add_argument("--json", action="store_true")
+    ls_config_show.set_defaults(func=cmd_leak_scan_config_show)
+
+    lk = sub.add_parser("leak", help="query/manage leak-scan findings for a reference")
+    lk_sub = lk.add_subparsers(dest="action", required=True)
+
+    lk_status = lk_sub.add_parser("status", help="show current leak severity + finding counts")
+    lk_status.add_argument("name", nargs="?", default="")
+    lk_status.add_argument("--json", action="store_true")
+    lk_status.set_defaults(func=cmd_leak_status)
+
+    lk_rotated = lk_sub.add_parser(
+        "mark-rotated",
+        help="mark a reference's leak findings as resolved -- a human assertion, not verified",
+    )
+    lk_rotated.add_argument("name")
+    lk_rotated.set_defaults(func=cmd_leak_mark_rotated)
 
     md = sub.add_parser(
         "metadata",

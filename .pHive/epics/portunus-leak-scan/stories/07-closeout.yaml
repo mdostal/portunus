@@ -1,0 +1,90 @@
+id: 07-closeout
+epic: portunus-leak-scan
+title: docs, version bump, end-to-end live proof
+status: shipped
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [06-mcp-automation-and-skill]
+
+description: |
+  README.md, docs/architecture.md, and .pHive/CONTEXT.md updated for leak-scan -- accurately
+  described as advisory-only, configured-paths-only, a detective not preventive control, never
+  auto-enforcing or auto-rotating. Version bump (minor per epic.yaml), CHANGELOG entry, full
+  pytest suite + npm run build, one real end-to-end live proof: a fixture vault with a real
+  secret, a fixture file containing that secret's literal value, `portunus leak-scan` finds it,
+  severity escalates correctly across a simulated time boundary (freezing/advancing
+  first_detected_at in the fixture rather than sleeping the test), `mark-rotated` clears it --
+  all cross-checked via CLI and UI.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it is fully green with zero regressions"
+  - "Given `cd ui && npm run build`, when run, then it completes with zero TypeScript errors"
+  - "Given a real live-proof pass, when each step is checked, then scan/status/mark-rotated all behave exactly as designed and never leak a value at any layer (engine, store, CLI, MCP, UI)"
+  - "Given README.md/docs/architecture.md/.pHive/CONTEXT.md, when read, then they accurately describe this as a detective, advisory-only control over explicitly configured paths"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs
+    description: README.md, docs/architecture.md, .pHive/CONTEXT.md updates.
+    agent: developer
+  - id: version-bump
+    description: Lockstep version bump across all 5 sources; real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Full pytest suite + npm run build + end-to-end live proof.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, PR into dev, merge, promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: terminology glossary, updated with leak-scan vocabulary
+    - path: CHANGELOG.md
+      purpose: release notes
+
+files_to_modify:
+  - file: README.md
+    change: leak-scan documentation
+  - file: docs/architecture.md
+    change: new section for this epic
+  - file: .pHive/CONTEXT.md
+    change: new terminology entries
+  - file: pyproject.toml
+    change: version bump
+  - file: src/portunus/__init__.py
+    change: version bump
+  - file: manifest.json
+    change: version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: version bump
+  - file: CHANGELOG.md
+    change: new entry
+
+design_decisions:
+  - decision: real cargo build + real pip install -e after every version-string edit
+    rationale: "established this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Live-proof uses scratch/fixture data throughout, never the user's real vault or real ~/.claude directory"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list, matching every prior release this session"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan/epic.yaml
+    relevant_excerpt: "version_bump: minor"
