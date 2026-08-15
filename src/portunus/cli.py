@@ -160,7 +160,8 @@ def cmd_reg(args) -> int:
         ref = registry.add(args.name, args.sm_name, scope=args.scope,
                            kind=args.kind, project=args.project or "",
                            description=args.description or "", purpose=args.purpose or "",
-                           injected_as=injected_as, group=args.group or "", related=related)
+                           injected_as=injected_as, group=args.group or "", related=related,
+                           repo=args.repo or "")
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
         return 0
     if args.action == "rm":
@@ -448,6 +449,7 @@ def cmd_retag(args) -> int:
         tags = _parse_tags(args.tags) if args.tags else None
         injected_as = _parse_tags(args.injected_as) if args.injected_as else None
         related = _parse_related(args.related) if args.related else None
+        source_files = _parse_related(args.source_files) if args.source_files else None
     except ValueError as exc:
         return _err(str(exc))
 
@@ -470,6 +472,10 @@ def cmd_retag(args) -> int:
         kwargs["group"] = args.group
     if related is not None:
         kwargs["related"] = related
+    if args.repo:
+        kwargs["repo"] = args.repo
+    if source_files is not None:
+        kwargs["source_files"] = source_files
 
     try:
         ref = registry.retag(args.name, **kwargs)
@@ -653,7 +659,7 @@ def cmd_drop(args) -> int:
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
         provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related, backend=args.backend,
+        group=args.group, related=related, backend=args.backend, repo=args.repo,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -1212,6 +1218,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     a.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     a.add_argument("--related", default="", help="comma-separated reference names")
+    a.add_argument("--repo", default="", help="the git repo that consumes this secret")
     rm = rs.add_parser("rm", help="remove a reference")
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
@@ -1270,6 +1277,9 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated env=target pairs, replaces the injected_as dict")
     rt.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     rt.add_argument("--related", default="", help="comma-separated reference names, replaces the related list")
+    rt.add_argument("--repo", default="", help="the git repo that consumes this secret")
+    rt.add_argument("--source-files", default="",
+                     help="comma-separated file paths in that repo, replaces the source_files list")
     rt.set_defaults(func=cmd_retag)
 
     ses = sub.add_parser("session", help="browser/login session storage (local-encrypted backend only)")
@@ -1324,6 +1334,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     dr.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     dr.add_argument("--related", default="", help="comma-separated reference names")
+    dr.add_argument("--repo", default="", help="the git repo that consumes this secret")
     dr.add_argument(
         "--backend",
         choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),

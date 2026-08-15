@@ -314,6 +314,8 @@ def portunus_drop(
     group: str = "",
     related: Optional[list] = None,
     backend: str = "",
+    repo: str = "",
+    source_files: Optional[list] = None,
 ) -> dict:
     """Create a new LOCAL-VAULT secret -- the harness-side counterpart to
     `portunus drop`. Restricted to the local-encrypted backend only, same as
@@ -325,7 +327,10 @@ def portunus_drop(
     `related` is a plain list of reference names -- no CLI-style comma-
     separated string parsing. `backend` optionally overrides which backend
     THIS reference routes to later (e.g. "gcp") once you've dropped it here
-    locally -- empty means "use the project's default binding."
+    locally -- empty means "use the project's default binding." `repo` is
+    the git repo that consumes this secret (distinct from `project`, which
+    can be one cloud project shared by many repos); `source_files` is a
+    plain list of file paths in that repo, same posture as `related`.
 
     `value` is the one place in this tool's surface where a secret flows IN
     from your own context rather than out of Portunus -- that's inherent to
@@ -349,6 +354,7 @@ def portunus_drop(
         provider=provider, project=project, env=env, tags=tags,
         description=description, purpose=purpose, injected_as=injected_as,
         group=group, related=related, backend=backend,
+        repo=repo, source_files=source_files,
     )
     local_backend.store(ref.sm_name, value)
     del value

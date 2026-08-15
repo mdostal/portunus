@@ -254,3 +254,112 @@ def test_registry_retag_backend_never_triggers_collision_check(home):
     reg.add("b", "sm-b")
     ref = reg.retag("b", backend="local")
     assert ref.backend == "local"
+
+
+# --- story 01 (portunus-provenance-graph): repo (structured) + source_files (list) ---
+
+def test_reference_repo_and_source_files_default_empty():
+    ref = Reference(name="x", sm_name="dostal-x")
+    d = ref.to_dict()
+    assert d["repo"] == ""
+    assert d["source_files"] == []
+
+
+def test_repo_is_a_structured_tag_field():
+    assert "repo" in _STRUCTURED_TAG_FIELDS
+
+
+def test_source_files_is_not_a_structured_tag_field():
+    assert "source_files" not in _STRUCTURED_TAG_FIELDS
+
+
+def test_registry_add_accepts_repo_and_source_files(home):
+    reg = Registry()
+    ref = reg.add("x", "sm-x", repo="event-api", source_files=["docker-compose.yml", "ci.yml"])
+    assert ref.repo == "event-api"
+    assert ref.source_files == ["docker-compose.yml", "ci.yml"]
+
+
+def test_registry_retag_updates_repo_and_source_files(home):
+    reg = Registry()
+    reg.add("x", "sm-x", provider="vercel")
+    ref = reg.retag("x", repo="event-api", source_files=["a.yml"])
+    assert ref.repo == "event-api"
+    assert ref.source_files == ["a.yml"]
+    assert ref.provider == "vercel"
+
+
+def test_find_by_tags_repo(home):
+    reg = Registry()
+    reg.add("x", "sm-x", repo="event-api")
+    ref = reg.resolve_by_tags(repo="event-api")
+    assert ref.name == "x"
+
+
+def test_source_files_never_triggers_collision_check(home):
+    reg = Registry()
+    reg.add("a", "sm-a", source_files=["shared.yml"])
+    reg.add("b", "sm-b")
+    ref = reg.retag("b", source_files=["shared.yml"])
+    assert ref.source_files == ["shared.yml"]
+
+
+def test_two_references_differing_only_by_repo_do_not_collide(home):
+    """repo IS a structured tag field -- two references identical on every
+    other structured field but different repo must be distinguishable, not
+    ambiguous, proving repo genuinely participates in the collision-check
+    identity tuple the same way provider/project/env/scope/kind do."""
+    reg = Registry()
+    reg.add("a", "sm-a", provider="gcp", project="ffe-cicd", repo="event-api")
+    reg.add("b", "sm-b", provider="gcp", project="ffe-cicd", repo="social-engine")
+    ref_a = reg.resolve_by_tags(provider="gcp", project="ffe-cicd", repo="event-api")
+    ref_b = reg.resolve_by_tags(provider="gcp", project="ffe-cicd", repo="social-engine")
+    assert ref_a.name == "a"
+    assert ref_b.name == "b"
+
+
+def test_legacy_registry_file_without_repo_source_files_keys_still_loads(home):
+    reg = Registry()
+    legacy_raw = {
+        "x": {
+            "name": "x", "sm_name": "dostal-x", "scope": "", "kind": "",
+            "state": "enabled", "approval": "", "sm_path": "",
+            "provider": "", "project": "", "env": "", "tags": {},
+            "description": "", "purpose": "", "injected_as": {},
+            "group": "", "related": [], "backend": "",
+        }
+    }
+    reg.path.parent.mkdir(parents=True, exist_ok=True)
+    reg.path.write_text(json.dumps(legacy_raw))
+    reg2 = Registry()
+    ref = reg2.require("x")
+    assert ref.repo == ""
+    assert ref.source_files == []
+
+
+def test_cli_reg_add_accepts_repo(home):
+    rc = main(["reg", "add", "x", "sm-x", "--repo", "event-api"])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.repo == "event-api"
+
+
+def test_cli_drop_accepts_repo(home):
+    value_file = home / "value.txt"
+    value_file.write_text("s3kr3t\n")
+    rc = main([
+        "drop", "x", "sm-x", "--repo", "event-api", "--value-file", str(value_file),
+    ])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.repo == "event-api"
+
+
+def test_cli_retag_repo_and_source_files(home):
+    reg = Registry()
+    reg.add("x", "sm-x")
+    rc = main(["retag", "x", "--repo", "event-api", "--source-files", "a.yml,b.yml"])
+    assert rc == 0
+    ref = Registry().require("x")
+    assert ref.repo == "event-api"
+    assert ref.source_files == ["a.yml", "b.yml"]
