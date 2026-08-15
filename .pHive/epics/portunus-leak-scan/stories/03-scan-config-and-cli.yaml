@@ -1,7 +1,7 @@
 id: 03-scan-config-and-cli
 epic: portunus-leak-scan
 title: scan-path config store + full CLI surface
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [01-scan-engine-core, 02-leak-status-and-escalation]

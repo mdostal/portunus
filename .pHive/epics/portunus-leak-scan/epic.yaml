@@ -33,7 +33,7 @@ stories:
     title: scan-path config store + full CLI surface
     complexity: medium
     depends_on: [01-scan-engine-core, 02-leak-status-and-escalation]
-    status: pending
+    status: shipped
   - id: 04-mcp-leak-status-tool
     title: portunus_leak_status MCP tool -- read-only, never a value or scan trigger
     complexity: low
