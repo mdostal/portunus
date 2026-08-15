@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PortunusReference } from "../types";
 import StatePill from "./StatePill";
 
@@ -181,6 +181,17 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
   const [binding, setBinding] = useState<VaultBindingInfo | null>(null);
   const [bindingBusy, setBindingBusy] = useState(false);
   const [stubModal, setStubModal] = useState<{ value: string; label: string } | null>(null);
+  // account/wif_audience are free-text, explicit-save fields (design-
+  // discussion.md §6) -- drafts track in-progress edits separately from
+  // `binding`'s own last-saved values, resynced whenever a fresh binding
+  // loads (project switch, or after a successful save).
+  const [accountDraft, setAccountDraft] = useState("");
+  const [wifAudienceDraft, setWifAudienceDraft] = useState("");
+
+  useEffect(() => {
+    setAccountDraft(binding?.account ?? "");
+    setWifAudienceDraft(binding?.wif_audience ?? "");
+  }, [binding]);
 
   async function load(p: string) {
     if (!p) return;
@@ -225,13 +236,16 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
   // Thin shell-out via /api/bindings -- same gating boundary as every other
   // mutation in this UI. Local/GCP route to real backends; AWS is visibly
   // marked not-yet-implemented, matching the CLI's own stub restraint.
-  async function updateBinding(field: "backend" | "sync_mode", value: string) {
+  // Accepts a partial update so a single call can carry one field (the
+  // backend/sync-mode buttons' click-to-set pattern) or several at once
+  // (account + wif_audience, saved together via one explicit button).
+  async function updateBinding(fields: Partial<VaultBindingInfo>) {
     setBindingBusy(true);
     try {
       const res = await fetch("/api/bindings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project, [field]: value }),
+        body: JSON.stringify({ project, ...fields }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -320,7 +334,7 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
                   type="button"
                   className={`btn ${binding.backend === b.value ? "solid" : "quiet"}`}
                   disabled={bindingBusy}
-                  onClick={() => updateBinding("backend", b.value)}
+                  onClick={() => updateBinding({ backend: b.value })}
                 >
                   {b.label}
                 </button>
@@ -346,12 +360,48 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
               className="field"
               value={binding.sync_mode}
               disabled={bindingBusy}
-              onChange={(e) => updateBinding("sync_mode", e.target.value)}
+              onChange={(e) => updateBinding({ sync_mode: e.target.value })}
             >
               <option value="direct">Direct</option>
               <option value="cached">Cached</option>
             </select>
           </label>
+          <div className="backend-picker">
+            <span className="eyebrow">Identity</span>
+            <label className="form-field">
+              <span>Account</span>
+              <input
+                className="field"
+                type="text"
+                placeholder="user@example.com -- a local gcloud identity, not a credential"
+                value={accountDraft}
+                disabled={bindingBusy}
+                onChange={(e) => setAccountDraft(e.target.value)}
+              />
+            </label>
+            <label className="form-field">
+              <span>WIF audience</span>
+              <input
+                className="field"
+                type="text"
+                placeholder="//iam.googleapis.com/projects/.../workloadIdentityPools/.../providers/..."
+                value={wifAudienceDraft}
+                disabled={bindingBusy}
+                onChange={(e) => setWifAudienceDraft(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn quiet"
+              disabled={
+                bindingBusy ||
+                (accountDraft === (binding.account ?? "") && wifAudienceDraft === (binding.wif_audience ?? ""))
+              }
+              onClick={() => updateBinding({ account: accountDraft, wif_audience: wifAudienceDraft })}
+            >
+              Save identity settings
+            </button>
+          </div>
         </>
       )}
 

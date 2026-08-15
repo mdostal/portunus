@@ -77,6 +77,18 @@ graph TD
 through the single `MockBackend` regardless of any configured binding, a safety rail for tests
 and dry runs.
 
+**Configuring this tree from the UI, not just the CLI** (portunus-bindings-settings-ui): the
+Standalone UI's Project Explorer edits a `VaultBinding`'s full field set inline —
+`backend`/`sync_mode` (already live before this epic) and, as of this epic, `account`/
+`wif_audience` too, via `POST /api/bindings`. Both new fields are identity-selector/topology
+strings, not credentials, so no new UI trust boundary is introduced — the write path simply
+catches up to what `GET /api/bindings` already returned. A `RotationBinding`'s `account` (free-
+text rotation context, e.g. a Vercel team slug) is likewise editable inline, in a reference's
+detail view next to the Auto-rotate button (`POST /api/rotation-status`, new). Its `status`
+(`stub`/`real`) stays derived from the real adapter registry and is structurally unreachable
+from the UI — the handler never reads a `status` field off the request body at all, so a UI
+control can never make a stub provider look real.
+
 ## 3. Petitio: today vs. the designed future
 
 `Identity` and `check_injectable`'s `requester` parameter exist today as a deliberately inert

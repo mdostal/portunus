@@ -4,6 +4,29 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-14
+
+### Added
+
+- **Vault-binding `account`/`wif_audience` editable in Project Explorer.** Backend/sync-mode
+  were already live in the UI's binding panel; `account` (a local gcloud identity) and
+  `wif_audience` (the WIF provider resource name) are now too, via a new `POST /api/bindings`
+  write path. Neither is a credential — account is an identity *selector* (the identity itself
+  must already be authenticated locally), wif_audience is infrastructure topology — so neither
+  is masked in the UI, matching the CLI flags they mirror.
+- **Rotation-binding `account` hint editable in a reference's detail view**, next to the
+  Auto-rotate button — a new `POST /api/rotation-status` (was GET-only). `status` (`stub`/`real`)
+  stays derived from the real adapter registry and is structurally unreachable from the UI: the
+  handler never reads a `status` field off the request body at all, so a stub provider can never
+  be made to look real through the browser.
+
+### Fixed
+
+- **A stale, factually-wrong comment** in `ui/app/api/bindings/route.ts` claiming the WIF
+  audience value is "never returned by `bindings show`" — verified false by direct CLI test
+  (`bindings show --json` already returns the real value). Corrected while adding the new write
+  path for the same field.
+
 ## [0.18.0] - 2026-08-14
 
 ### Added
