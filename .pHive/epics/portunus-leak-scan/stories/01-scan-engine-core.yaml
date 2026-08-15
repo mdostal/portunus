@@ -1,7 +1,7 @@
 id: 01-scan-engine-core
 epic: portunus-leak-scan
 title: leak-scan engine -- incremental, line-based, value-never-leaks matching
-status: pending
+status: shipped
 complexity: high
 methodology: tdd
 depends_on: []

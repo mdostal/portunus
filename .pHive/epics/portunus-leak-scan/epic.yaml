@@ -23,7 +23,7 @@ stories:
     title: leak-scan engine -- incremental, line-based, value-never-leaks matching
     complexity: high
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-leak-status-and-escalation
     title: leak-status store, severity derivation, mark-rotated
     complexity: medium
