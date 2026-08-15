@@ -1,7 +1,9 @@
 id: 05-ui-vault-menu
 epic: portunus-vault-routing
 title: UI per-project vault menu + rotate-key stub (Slice E)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.13.0"
 complexity: medium
 methodology: classic
 depends_on: [04-cli-mcp-surface]

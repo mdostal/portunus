@@ -1,7 +1,9 @@
 id: 05-resolve-exec-tool
 epic: portunus-mcp-server
 title: portunus_resolve_exec MCP tool -- the highest-scrutiny story
-status: pending
+status: shipped
+shipped_at: "2026-08-13T00:00:00Z"
+release_id: "v0.11.0"
 complexity: high
 methodology: tdd
 depends_on: [01-mcp-scaffold]

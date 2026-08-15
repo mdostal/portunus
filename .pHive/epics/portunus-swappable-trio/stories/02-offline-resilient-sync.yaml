@@ -1,7 +1,9 @@
 id: 02-offline-resilient-sync
 epic: portunus-swappable-trio
 title: SyncingBackend falls back to cached value on connectivity failure (Slice ARCA-2)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.14.0"
 complexity: medium
 methodology: tdd
 depends_on: []
