@@ -22,6 +22,12 @@ export interface PortunusReference {
   source_files: string[];
 }
 
+export interface PortunusView {
+  name: string;
+  description: string;
+  ref_names: string[];
+}
+
 export interface AuditEntry {
   seq: number;
   actor: string;

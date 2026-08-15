@@ -30,6 +30,7 @@ from .backend import (
 from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
+from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -1268,6 +1269,66 @@ def cmd_vault_import(args) -> int:
     return 0
 
 
+def _view_to_dict(view) -> dict:
+    return {"name": view.name, "description": view.description, "ref_names": view.ref_names}
+
+
+def cmd_views_create(args) -> int:
+    try:
+        view = create_view(args.name, description=args.description or "")
+    except ViewError as exc:
+        return _err(str(exc))
+    print(f"created view {view.name!r}")
+    return 0
+
+
+def cmd_views_add(args) -> int:
+    try:
+        view = add_to_view(args.name, args.ref_name)
+    except ViewError as exc:
+        return _err(str(exc))
+    print(f"{args.ref_name} -> {view.name} ({len(view.ref_names)} reference(s))")
+    return 0
+
+
+def cmd_views_remove(args) -> int:
+    try:
+        view = remove_from_view(args.name, args.ref_name)
+    except ViewError as exc:
+        return _err(str(exc))
+    print(f"{args.ref_name} removed from {view.name} ({len(view.ref_names)} reference(s))")
+    return 0
+
+
+def cmd_views_delete(args) -> int:
+    print("deleted" if delete_view(args.name) else "no such view")
+    return 0
+
+
+def cmd_views_show(args) -> int:
+    views = load_views()
+    if args.name:
+        view = views.get(args.name)
+        if view is None:
+            if args.json:
+                print(json.dumps({}))
+            else:
+                print(f"no such view: {args.name}")
+            return 0
+        views = {args.name: view}
+    if args.json:
+        print(json.dumps({name: _view_to_dict(v) for name, v in views.items()}))
+        return 0
+    if not views:
+        print("(no views configured)")
+        return 0
+    for name, v in views.items():
+        print(f"  {name}  ({v.description or 'no description'})  -- {len(v.ref_names)} reference(s)")
+        for ref_name in v.ref_names:
+            print(f"      {{{{secret:{ref_name}}}}}")
+    return 0
+
+
 def _build_tree(refs, key_fn=None):
     """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
 
@@ -1692,6 +1753,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace existing vault state in PORTUNUS_HOME (full replace, not merge)",
     )
     vault_import.set_defaults(func=cmd_vault_import)
+
+    vw = sub.add_parser(
+        "views", help="named, human-curated reference collections for ad-hoc task clustering",
+    )
+    vw_sub = vw.add_subparsers(dest="action", required=True)
+
+    vw_create = vw_sub.add_parser("create", help="create a new, empty view")
+    vw_create.add_argument("name")
+    vw_create.add_argument("--description", default="")
+    vw_create.set_defaults(func=cmd_views_create)
+
+    vw_add = vw_sub.add_parser("add", help="add a reference to a view (idempotent)")
+    vw_add.add_argument("name")
+    vw_add.add_argument("ref_name")
+    vw_add.set_defaults(func=cmd_views_add)
+
+    vw_remove = vw_sub.add_parser("remove", help="remove a reference from a view (idempotent)")
+    vw_remove.add_argument("name")
+    vw_remove.add_argument("ref_name")
+    vw_remove.set_defaults(func=cmd_views_remove)
+
+    vw_delete = vw_sub.add_parser("delete", help="delete a view entirely")
+    vw_delete.add_argument("name")
+    vw_delete.set_defaults(func=cmd_views_delete)
+
+    vw_show = vw_sub.add_parser("show", help="show one or all views")
+    vw_show.add_argument("name", nargs="?", default="")
+    vw_show.add_argument("--json", action="store_true")
+    vw_show.set_defaults(func=cmd_views_show)
 
     tr = sub.add_parser(
         "tree",

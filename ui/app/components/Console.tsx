@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { PortunusReference } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import type { PortunusReference, PortunusView } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
@@ -17,6 +17,47 @@ export default function Console({
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<string | null>(null);
   const [completenessFilter, setCompletenessFilter] = useState<"complete" | "missing" | null>(null);
+
+  // Custom views (portunus-vault-trust-and-access Slice 4) -- task-shaped
+  // clustering ("everything for the Shindig deploy"), orthogonal to the
+  // structural provider/state/metadata facets above. Fetched once here
+  // (not per-row) since a view filter applies to the whole list, same as
+  // every other facet.
+  const [views, setViews] = useState<Record<string, PortunusView>>({});
+  const [viewFilter, setViewFilter] = useState<string | null>(null);
+  const [newViewName, setNewViewName] = useState("");
+  const [viewsBusy, setViewsBusy] = useState(false);
+
+  function refreshViews() {
+    fetch("/api/views")
+      .then((r) => r.json())
+      .then((data) => setViews(data && typeof data === "object" ? data : {}))
+      .catch(() => setViews({}));
+  }
+
+  useEffect(() => {
+    refreshViews();
+  }, []);
+
+  async function createView(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newViewName.trim();
+    if (!name) return;
+    setViewsBusy(true);
+    try {
+      const res = await fetch("/api/views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", name }),
+      });
+      if (res.ok) {
+        setNewViewName("");
+        refreshViews();
+      }
+    } finally {
+      setViewsBusy(false);
+    }
+  }
 
   const providers = useMemo(() => {
     const counts = new Map<string, number>();
@@ -48,11 +89,14 @@ export default function Console({
     return completenessFilter === "complete" ? isComplete : !isComplete;
   }
 
+  const activeViewRefNames = viewFilter ? new Set(views[viewFilter]?.ref_names || []) : null;
+
   const filtered = refs.filter(
     (r) =>
       (!providerFilter || (r.provider || "(none)") === providerFilter) &&
       (!stateFilter || r.state === stateFilter) &&
-      matchesCompletenessFilter(r),
+      matchesCompletenessFilter(r) &&
+      (!activeViewRefNames || activeViewRefNames.has(r.name)),
   );
 
   return (
@@ -103,6 +147,32 @@ export default function Console({
             </button>
           </div>
         )}
+        <div className="rail-group">
+          <span className="k">My views</span>
+          {Object.values(views).map((v) => (
+            <button
+              key={v.name}
+              className={`rail-facet ${viewFilter === v.name ? "active" : ""}`}
+              onClick={() => setViewFilter(viewFilter === v.name ? null : v.name)}
+              title={v.description}
+            >
+              <span>{v.name}</span>
+              <span>{v.ref_names.length}</span>
+            </button>
+          ))}
+          <form className="view-create-form" onSubmit={createView}>
+            <input
+              className="field"
+              placeholder="new view name"
+              value={newViewName}
+              disabled={viewsBusy}
+              onChange={(e) => setNewViewName(e.target.value)}
+            />
+            <button className="btn quiet" type="submit" disabled={viewsBusy || !newViewName.trim()}>
+              + create
+            </button>
+          </form>
+        </div>
       </aside>
 
       <div className="console-main">

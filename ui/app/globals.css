@@ -202,6 +202,9 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   text-align: left;
 }
 .rail-facet.active { color: var(--brass); }
+.view-create-form { display: flex; gap: 0.3rem; margin-top: 0.4rem; }
+.view-create-form .field { font-size: 0.7rem; padding: 0.2rem 0.4rem; flex: 1; min-width: 0; }
+.view-create-form .btn { font-size: 0.68rem; padding: 0.2rem 0.4rem; }
 .console-main { flex: 1; padding: 0.8rem; overflow-x: auto; }
 .console-table-head {
   display: grid;

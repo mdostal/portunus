@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AuditEntry, PortunusReference } from "../types";
+import type { AuditEntry, PortunusReference, PortunusView } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
@@ -56,6 +56,49 @@ export default function DetailDrawer({
   // explicit-save pattern as ProjectExplorer's account/wif_audience fields.
   const [rotationAccountDraft, setRotationAccountDraft] = useState("");
   const [rotationAccountBusy, setRotationAccountBusy] = useState(false);
+  const [views, setViews] = useState<Record<string, PortunusView>>({});
+  const [viewsBusy, setViewsBusy] = useState(false);
+  const [viewToAdd, setViewToAdd] = useState("");
+
+  function refreshViews() {
+    fetch("/api/views")
+      .then((r) => r.json())
+      .then((data) => setViews(data && typeof data === "object" ? data : {}))
+      .catch(() => setViews({}));
+  }
+
+  useEffect(() => {
+    refreshViews();
+  }, []);
+
+  async function addToView(viewName: string) {
+    if (!viewName) return;
+    setViewsBusy(true);
+    try {
+      const res = await fetch("/api/views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", name: viewName, ref_name: reference.name }),
+      });
+      if (res.ok) refreshViews();
+    } finally {
+      setViewsBusy(false);
+    }
+  }
+
+  async function removeFromView(viewName: string) {
+    setViewsBusy(true);
+    try {
+      const res = await fetch("/api/views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", name: viewName, ref_name: reference.name }),
+      });
+      if (res.ok) refreshViews();
+    } finally {
+      setViewsBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -173,6 +216,45 @@ export default function DetailDrawer({
             {k}={v}
           </span>
         ))}
+      </div>
+
+      {/* Custom views (Slice 4) -- curate task-shaped clustering right
+          from the reference you're looking at, the natural place this
+          happens ("as I prep them for a project"). */}
+      <div className="tags-row">
+        {Object.values(views)
+          .filter((v) => v.ref_names.includes(reference.name))
+          .map((v) => (
+            <button
+              key={v.name}
+              className="chip chip-clickable"
+              disabled={viewsBusy}
+              onClick={() => removeFromView(v.name)}
+              title={`in view "${v.name}" -- click to remove`}
+            >
+              ✓ {v.name}
+            </button>
+          ))}
+        {Object.values(views).some((v) => !v.ref_names.includes(reference.name)) && (
+          <select
+            className="field"
+            value={viewToAdd}
+            disabled={viewsBusy}
+            onChange={(e) => {
+              addToView(e.target.value);
+              setViewToAdd("");
+            }}
+          >
+            <option value="">+ add to view…</option>
+            {Object.values(views)
+              .filter((v) => !v.ref_names.includes(reference.name))
+              .map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.name}
+                </option>
+              ))}
+          </select>
+        )}
       </div>
 
       {(reference.description || reference.purpose || Object.keys(reference.injected_as || {}).length > 0
