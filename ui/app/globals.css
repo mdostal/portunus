@@ -543,6 +543,9 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-note { font-size: 0.78rem; color: var(--ink-soft); margin: 0; }
+.wizard-modal { width: min(32rem, 100%); }
+.wizard-explain-list { display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.78rem; color: var(--ink-soft); margin: 0; padding-left: 1.1rem; }
+.wizard-roles-preview { display: flex; flex-direction: column; gap: 0.5rem; border: none; padding: 0; opacity: 0.55; }
 .form-field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: var(--steel); }
 .form-row { display: flex; gap: 0.5rem; }
 .form-row .form-field { flex: 1; }

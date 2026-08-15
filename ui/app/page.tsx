@@ -9,6 +9,7 @@ import DetailDrawer from "./components/DetailDrawer";
 import AddSecretForm from "./components/AddSecretForm";
 import ProjectExplorer from "./components/ProjectExplorer";
 import SettingsPage from "./components/SettingsPage";
+import SetupWizard from "./components/SetupWizard";
 
 type Tab = "console" | "map" | "project" | "settings";
 
@@ -21,6 +22,19 @@ export default function Home() {
   const [selected, setSelected] = useState<PortunusReference | null>(null);
   const [addDraftProvider, setAddDraftProvider] = useState<string | null>(null);
   const [rotateDraft, setRotateDraft] = useState<PortunusReference | null>(null);
+  // First-run setup wizard (Slice 8) -- null while unknown (avoids a flash
+  // of the wizard OR the main app before we actually know), then true/false
+  // from `portunus vault status`. Checked once per load; the wizard's own
+  // Finish button just flips this to false rather than re-checking, since
+  // by then a binding/reference genuinely exists.
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/vault-status")
+      .then((r) => r.json())
+      .then((data) => setNeedsSetup(data.initialized === false))
+      .catch(() => setNeedsSetup(false));
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -42,6 +56,19 @@ export default function Home() {
   }, [refresh]);
 
   const addOpen = addDraftProvider !== null || rotateDraft !== null;
+
+  if (needsSetup) {
+    return (
+      <div className="shell">
+        <SetupWizard
+          onDone={() => {
+            setNeedsSetup(false);
+            refresh();
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="shell">

@@ -1219,6 +1219,24 @@ def _resolve_passphrase(prompt: str, confirm: bool = False) -> str:
     return value
 
 
+def cmd_vault_status(args) -> int:
+    """Report whether this PORTUNUS_HOME has ever been initialized --
+    absence of BOTH registry.json and vault-bindings.json (design-
+    discussion.md §5, portunus-vault-trust-and-access). A vault with
+    either file present has been used before (even a single `portunus
+    drop`/`bindings set` creates one) and must never be treated as
+    uninitialized again, regardless of how empty it looks. Drives the
+    Standalone UI's first-run setup wizard -- checked here, in Python,
+    rather than duplicated as filesystem logic in TypeScript."""
+    base = home()
+    initialized = (base / "registry.json").exists() or (base / "vault-bindings.json").exists()
+    if args.json:
+        print(json.dumps({"initialized": initialized}))
+        return 0
+    print("initialized" if initialized else "not yet initialized (first run)")
+    return 0
+
+
 def cmd_vault_export(args) -> int:
     """Coordinated, passphrase-locked snapshot of the vault's critical-state
     surface (registry.json, master.key, vault.enc.json, vault-bindings.json,
@@ -1839,6 +1857,12 @@ def build_parser() -> argparse.ArgumentParser:
         "vault", help="portable, passphrase-locked vault backup (export/import)",
     )
     vault_sub = vault.add_subparsers(dest="action", required=True)
+
+    vault_status = vault_sub.add_parser(
+        "status", help="has this PORTUNUS_HOME ever been initialized -- drives the UI's first-run wizard",
+    )
+    vault_status.add_argument("--json", action="store_true")
+    vault_status.set_defaults(func=cmd_vault_status)
 
     vault_export = vault_sub.add_parser(
         "export",
