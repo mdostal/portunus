@@ -1,0 +1,86 @@
+id: 06-llm-suggest-human-confirm-metadata
+epic: portunus-vault-trust-and-access
+title: LLM-suggests / human-confirms metadata workflow
+status: shipped
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [02-metadata-completeness-signal]
+
+description: |
+  Reference gains a suggested{} sidecar. New Registry methods: suggest_metadata() writes ONLY
+  the sidecar, restricted to SUGGESTIBLE_FIELDS (description/purpose/tags/group) -- routing
+  fields are structurally rejected. clear_suggestion() drops one pending entry. Confirm is the
+  existing retag() applying the value, then clear_suggestion(); reject is just
+  clear_suggestion() with the live field untouched. New MCP tool portunus_suggest_metadata. CLI:
+  portunus metadata confirm/reject/pending. UI: DetailDrawer shows a confirm/reject block per
+  pending field (new /api/metadata route).
+
+acceptance_criteria:
+  - "Given portunus_suggest_metadata proposes a field, when checked, then the live field is untouched and the sidecar holds {value, by, at}"
+  - "Given a routing field (org/project/env/repo/backend), when suggested, then it's rejected with a clear error -- never silently dropped"
+  - "Given confirm, when applied, then the live field changes via the SAME retag() a manual edit would use, and the sidecar entry clears"
+  - "Given reject, when applied, then the live field is untouched and the sidecar entry clears"
+  - "Given the DetailDrawer UI, when a suggestion is confirmed/rejected through the browser, then it's confirmed independently via `portunus reg json`"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: Reference.suggested + Registry.suggest_metadata()/clear_suggestion() + MCP tool + CLI + UI.
+    agent: developer
+  - id: test
+    description: pytest (registry-level, CLI-level, MCP-level including AST value-leak checks).
+    agent: tester
+    depends_on: [implement]
+  - id: live-verify
+    description: Playwright pass with a real seeded suggestion, confirming one field and rejecting another.
+    agent: tester
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: suggested sidecar + suggest_metadata()/clear_suggestion()
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_suggest_metadata tool
+    - path: ui/app/api/metadata/route.ts
+      purpose: confirm/reject shell-out
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: the confirm/reject UI block
+
+files_to_modify:
+  - file: src/portunus/registry.py
+    change: suggested field, SUGGESTIBLE_FIELDS, suggest_metadata(), clear_suggestion()
+  - file: src/portunus/mcp_server.py
+    change: portunus_suggest_metadata tool
+  - file: src/portunus/cli.py
+    change: metadata confirm/reject/pending subcommands
+  - file: ui/app/api/metadata/route.ts
+    change: new route
+  - file: ui/app/components/DetailDrawer.tsx
+    change: suggestion-block UI
+
+design_decisions:
+  - decision: confirm is not a new mutation path
+    rationale: "design-discussion.md §4 -- retag() stays the ONLY code path that ever writes description/purpose/tags/group, whether a human typed it or confirmed an agent's proposal"
+  - decision: sidecar overwrite semantics (last-suggested-wins for the proposal, never the live field)
+    rationale: "design-discussion.md §3"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "AST-level checks confirm portunus_suggest_metadata's Return nodes never reference a value, only field names"
+  - concern: audit-chain-integrity
+    action: "metadata_suggested/metadata_confirmed/metadata_rejected audit entries added"
+
+risks:
+  - severity: low
+    description: An agent could suggest low-quality or misleading metadata
+    mitigation: "Human confirm is mandatory before anything applies; the suggestion is always visibly attributed to who proposed it"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/design-discussion.md
+    relevant_excerpt: "§2, §3, §4"

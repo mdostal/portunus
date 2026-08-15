@@ -4,6 +4,36 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-15
+
+### Added
+
+- **LLM-suggests, human-confirms metadata.** New `portunus_suggest_metadata` MCP tool proposes
+  description/purpose/tags/group -- lands in a pending sidecar, **never the live field**. A new
+  `DetailDrawer` block shows "suggested by \<agent\>: '...' [Confirm] [Reject]" per pending
+  field; confirm applies via the exact same `retag()` a manual edit would use, reject discards
+  without ever touching the live field. `portunus metadata confirm/reject/pending`. Routing
+  fields (org/provider/project/env/repo/backend) are never agent-suggestible.
+- **Role/policy schema -- STUB ONLY.** `portunus roles set/delete/show` and a new Settings page
+  let you record `{scope: org|project|env, role, actions}` policy records, and they genuinely
+  persist -- but nothing enforces them yet. `check_injectable()`/`retag()` are byte-identical
+  whether or not any policy exists (proven directly, not just asserted). Deliberate, staged
+  groundwork for Petitio's future access-level engine.
+- **Settings page** -- org/project hierarchy overview + the roles config above, always visibly
+  labeled "not yet enforced."
+- **Expanded first-run setup wizard** -- shown automatically the first time the UI opens against
+  an uninitialized vault (never again once anything's configured). Explains Portunus's three
+  parts, walks through choosing your first vault's backend (including the stub adapters,
+  explicitly framed as "your first vault, not your only one"), an in-UI trigger for
+  `gcloud auth login` if GCP is chosen, a (literally disabled) preview of the coming-soon roles
+  step, and a first `discover` pass.
+- **In-app About/Help page** -- what Portunus is, the component model, how to organize a large
+  vault, how the suggest/confirm workflow works, best practices, and an honest disclosure that
+  roles aren't enforced yet.
+
+This completes the `portunus-vault-trust-and-access` epic (10 of 10 stories) -- the second and
+final checkpoint after v0.20.0's metadata-quality/org-hierarchy half.
+
 ## [0.20.0] - 2026-08-15
 
 ### Added

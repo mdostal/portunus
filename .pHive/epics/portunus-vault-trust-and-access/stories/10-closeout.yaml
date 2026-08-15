@@ -1,0 +1,89 @@
+id: 10-closeout
+epic: portunus-vault-trust-and-access
+title: docs, version bump, full end-to-end live proof
+status: shipped
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [09-about-help-page]
+
+description: |
+  CONTEXT.md updated with the new org/views/suggested/roles vocabulary. README.md and
+  docs/architecture.md updated for Chain C's additions (roles stub, suggest/confirm workflow,
+  Settings, wizard, About). Full pytest + npm run build green. Version bump, CHANGELOG entry,
+  ship: PR into dev, merge, promote to main, cut release. One final live end-to-end proof tying
+  Chain A and Chain C together in a single real flow.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it is fully green with zero regressions"
+  - "Given `cd ui && npm run build`, when run, then it completes with zero TypeScript errors"
+  - "Given a real end-to-end live proof (fresh vault -> wizard -> add a reference -> agent suggests metadata -> human confirms -> completeness badge clears -> a policy is configured but confirmed inert), when each step is checked, then it behaves exactly as designed"
+  - "Given CONTEXT.md, README.md, and docs/architecture.md, when read, then they accurately describe the shipped state of both Chain A and Chain C -- nothing documented as more built than it is"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs
+    description: CONTEXT.md, README.md, docs/architecture.md updates for Chain C.
+    agent: developer
+  - id: version-bump
+    description: Lockstep version bump across all 5 sources; real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Full pytest suite + npm run build + end-to-end Playwright proof tying Chain A and Chain C together.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, PR into dev, merge, promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: terminology glossary, updated with this epic's new vocabulary
+    - path: CHANGELOG.md
+      purpose: release notes
+
+files_to_modify:
+  - file: .pHive/CONTEXT.md
+    change: new terminology entries
+  - file: README.md
+    change: Chain C documentation
+  - file: docs/architecture.md
+    change: §9 extended for Chain C
+  - file: pyproject.toml
+    change: version bump
+  - file: src/portunus/__init__.py
+    change: version bump
+  - file: manifest.json
+    change: version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: version bump
+  - file: CHANGELOG.md
+    change: new entry
+
+design_decisions:
+  - decision: real cargo build + real pip install -e after every version-string edit
+    rationale: "Established this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "End-to-end live proof uses scratch data throughout, never the user's real vault"
+  - concern: audit-chain-integrity
+    action: "Confirm audit entries for retag/metadata_suggested/metadata_confirmed/roles_config_changed all appear correctly in the end-to-end proof"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list, matching every prior release this session"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/epic.yaml
+    relevant_excerpt: "version_bump: minor"

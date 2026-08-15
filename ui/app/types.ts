@@ -20,12 +20,22 @@ export interface PortunusReference {
   related: string[];
   repo: string;
   source_files: string[];
+  suggested: Record<string, { value: unknown; by: string; at: string }>;
 }
 
 export interface PortunusView {
   name: string;
   description: string;
   ref_names: string[];
+}
+
+// STUB ONLY -- see roles.py. Persisted for real, but not enforced by
+// check_injectable/retag yet (Petitio's future access-level engine).
+export interface PortunusPolicy {
+  scope_type: "org" | "project" | "env";
+  scope_value: string;
+  role: string;
+  actions: string[];
 }
 
 export interface AuditEntry {

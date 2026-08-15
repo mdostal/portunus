@@ -31,12 +31,13 @@ from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
+from .roles import PolicyError, VALID_SCOPE_TYPES, delete_policy, load_policies, set_policy
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
-from .registry import AmbiguousMatch, NoMatch, Registry
+from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
 
 # Distinct exit codes so scripts can branch on the failure mode without
@@ -1218,6 +1219,24 @@ def _resolve_passphrase(prompt: str, confirm: bool = False) -> str:
     return value
 
 
+def cmd_vault_status(args) -> int:
+    """Report whether this PORTUNUS_HOME has ever been initialized --
+    absence of BOTH registry.json and vault-bindings.json (design-
+    discussion.md §5, portunus-vault-trust-and-access). A vault with
+    either file present has been used before (even a single `portunus
+    drop`/`bindings set` creates one) and must never be treated as
+    uninitialized again, regardless of how empty it looks. Drives the
+    Standalone UI's first-run setup wizard -- checked here, in Python,
+    rather than duplicated as filesystem logic in TypeScript."""
+    base = home()
+    initialized = (base / "registry.json").exists() or (base / "vault-bindings.json").exists()
+    if args.json:
+        print(json.dumps({"initialized": initialized}))
+        return 0
+    print("initialized" if initialized else "not yet initialized (first run)")
+    return 0
+
+
 def cmd_vault_export(args) -> int:
     """Coordinated, passphrase-locked snapshot of the vault's critical-state
     surface (registry.json, master.key, vault.enc.json, vault-bindings.json,
@@ -1326,6 +1345,108 @@ def cmd_views_show(args) -> int:
         print(f"  {name}  ({v.description or 'no description'})  -- {len(v.ref_names)} reference(s)")
         for ref_name in v.ref_names:
             print(f"      {{{{secret:{ref_name}}}}}")
+    return 0
+
+
+def _policy_to_dict(p) -> dict:
+    return {"scope_type": p.scope_type, "scope_value": p.scope_value, "role": p.role, "actions": p.actions}
+
+
+def cmd_roles_set(args) -> int:
+    """STUB ONLY -- writes genuinely persist to roles.json, but nothing
+    reads them for enforcement. See roles.py's own module docstring."""
+    actions = [a.strip() for a in args.actions.split(",") if a.strip()] if args.actions else []
+    try:
+        record = set_policy(args.scope_type, args.scope_value, args.role, actions)
+    except PolicyError as exc:
+        return _err(str(exc))
+    _, audit, _, _ = _build()
+    audit.append("roles_config_changed", "-", f"set {record.key}")
+    print(f"set policy {record.key}: actions={record.actions}")
+    return 0
+
+
+def cmd_roles_delete(args) -> int:
+    existed = delete_policy(args.scope_type, args.scope_value, args.role)
+    if existed:
+        _, audit, _, _ = _build()
+        audit.append("roles_config_changed", "-", f"deleted {args.scope_type}:{args.scope_value}:{args.role}")
+    print("deleted" if existed else "no such policy")
+    return 0
+
+
+def cmd_roles_show(args) -> int:
+    policies = load_policies()
+    if args.scope_type:
+        policies = {k: p for k, p in policies.items() if p.scope_type == args.scope_type}
+    if args.scope_value:
+        policies = {k: p for k, p in policies.items() if p.scope_value == args.scope_value}
+    if args.json:
+        print(json.dumps({k: _policy_to_dict(p) for k, p in policies.items()}))
+        return 0
+    if not policies:
+        print("(no policies configured -- roles are not enforced yet, this is a stub)")
+        return 0
+    print("NOTE: roles are STUB ONLY -- not enforced by check_injectable/retag yet.")
+    for k, p in policies.items():
+        print(f"  {k}  actions={p.actions}")
+    return 0
+
+
+def cmd_metadata_confirm(args) -> int:
+    """Accept an agent-suggested field -- applies it via the SAME retag()
+    a manual edit would use (no second write path to drift from), then
+    clears the sidecar entry. Never a value; description/purpose/tags/group
+    only (Registry.SUGGESTIBLE_FIELDS)."""
+    registry, audit, _, _ = _build()
+    try:
+        ref = registry.require(args.name)
+    except KeyError:
+        return _err(f"unknown reference: {args.name}")
+    suggestion = ref.suggested.get(args.field)
+    if suggestion is None:
+        return _err(f"no pending suggestion for {args.field!r} on {args.name}")
+    try:
+        registry.retag(args.name, **{args.field: suggestion["value"]})
+    except AmbiguousMatch as exc:
+        return _err(f"confirming {args.field!r} would collide with: {', '.join(exc.candidates)}")
+    registry.clear_suggestion(args.name, args.field)
+    audit.append("metadata_confirmed", ref.sm_name, f"{args.field} confirmed (suggested by {suggestion['by']})")
+    print(f"confirmed {args.field} for {{{{secret:{args.name}}}}}")
+    return 0
+
+
+def cmd_metadata_reject(args) -> int:
+    registry, audit, _, _ = _build()
+    try:
+        ref = registry.require(args.name)
+    except KeyError:
+        return _err(f"unknown reference: {args.name}")
+    if args.field not in ref.suggested:
+        return _err(f"no pending suggestion for {args.field!r} on {args.name}")
+    registry.clear_suggestion(args.name, args.field)
+    audit.append("metadata_rejected", ref.sm_name, f"{args.field} rejected")
+    print(f"rejected {args.field} suggestion for {{{{secret:{args.name}}}}}")
+    return 0
+
+
+def cmd_metadata_pending(args) -> int:
+    """List every reference with at least one pending suggestion --
+    metadata only, no values (suggestions are never secret values anyway)."""
+    registry, *_ = _build()
+    result = {}
+    for ref in registry:
+        if ref.suggested:
+            result[ref.name] = {k: v for k, v in ref.suggested.items()}
+    if args.json:
+        print(json.dumps(result))
+        return 0
+    if not result:
+        print("(no pending suggestions)")
+        return 0
+    for name, fields in result.items():
+        for field_name, info in fields.items():
+            print(f"  {{{{secret:{name}}}}}  {field_name}: {info['value']!r} (suggested by {info['by']})")
     return 0
 
 
@@ -1737,6 +1858,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vault_sub = vault.add_subparsers(dest="action", required=True)
 
+    vault_status = vault_sub.add_parser(
+        "status", help="has this PORTUNUS_HOME ever been initialized -- drives the UI's first-run wizard",
+    )
+    vault_status.add_argument("--json", action="store_true")
+    vault_status.set_defaults(func=cmd_vault_status)
+
     vault_export = vault_sub.add_parser(
         "export",
         help="export a coordinated, passphrase-locked snapshot of the vault's critical state",
@@ -1782,6 +1909,53 @@ def build_parser() -> argparse.ArgumentParser:
     vw_show.add_argument("name", nargs="?", default="")
     vw_show.add_argument("--json", action="store_true")
     vw_show.set_defaults(func=cmd_views_show)
+
+    rl = sub.add_parser(
+        "roles",
+        help="STUB ONLY -- role/policy config surface, not enforced by check_injectable/retag "
+             "yet (Petitio's future access-level engine, portunus-vault-trust-and-access)",
+    )
+    rl_sub = rl.add_subparsers(dest="action", required=True)
+
+    rl_set = rl_sub.add_parser("set", help="create/update a policy record (writes persist; not enforced)")
+    rl_set.add_argument("--scope-type", required=True, choices=VALID_SCOPE_TYPES)
+    rl_set.add_argument("--scope-value", required=True)
+    rl_set.add_argument("--role", required=True)
+    rl_set.add_argument("--actions", default="", help="comma-separated, e.g. read,test,prod-release")
+    rl_set.set_defaults(func=cmd_roles_set)
+
+    rl_delete = rl_sub.add_parser("delete", help="delete a policy record")
+    rl_delete.add_argument("--scope-type", required=True, choices=VALID_SCOPE_TYPES)
+    rl_delete.add_argument("--scope-value", required=True)
+    rl_delete.add_argument("--role", required=True)
+    rl_delete.set_defaults(func=cmd_roles_delete)
+
+    rl_show = rl_sub.add_parser("show", help="show policy records (optionally filtered)")
+    rl_show.add_argument("--scope-type", choices=VALID_SCOPE_TYPES, default="")
+    rl_show.add_argument("--scope-value", default="")
+    rl_show.add_argument("--json", action="store_true")
+    rl_show.set_defaults(func=cmd_roles_show)
+
+    md = sub.add_parser(
+        "metadata",
+        help="confirm/reject agent-suggested description/purpose/tags/group "
+             "(portunus_suggest_metadata MCP tool's human-review counterpart)",
+    )
+    md_sub = md.add_subparsers(dest="action", required=True)
+
+    md_confirm = md_sub.add_parser("confirm", help="accept a pending suggestion -- applies it via retag()")
+    md_confirm.add_argument("name")
+    md_confirm.add_argument("field", choices=SUGGESTIBLE_FIELDS)
+    md_confirm.set_defaults(func=cmd_metadata_confirm)
+
+    md_reject = md_sub.add_parser("reject", help="discard a pending suggestion -- live field untouched")
+    md_reject.add_argument("name")
+    md_reject.add_argument("field", choices=SUGGESTIBLE_FIELDS)
+    md_reject.set_defaults(func=cmd_metadata_reject)
+
+    md_pending = md_sub.add_parser("pending", help="list every reference with a pending suggestion")
+    md_pending.add_argument("--json", action="store_true")
+    md_pending.set_defaults(func=cmd_metadata_pending)
 
     tr = sub.add_parser(
         "tree",

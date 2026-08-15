@@ -591,6 +591,7 @@ claude mcp add --scope user portunus -- portunus mcp
 | `portunus_ask_preview(request)` | What a plain-language fetch request would resolve to — metadata only, previews, never injects |
 | `portunus_bindings_show(project="")` | Configured per-project vault bindings (backend/sync_mode/account/WIF audience) |
 | `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |
+| `portunus_suggest_metadata(name, description="", purpose="", group="", tags=None)` | Propose description/purpose/group/tags — lands in a pending sidecar, **never the live field**; a human confirms via `portunus metadata confirm` or the UI |
 | `portunus_resolve_to_tempfile(name="", tags=None)` | A `0600` temp file **path** holding the resolved value — never the value itself |
 | `portunus_resolve_exec(argv, name="", tags=None)` | `{stdout, stderr, returncode}` from running `argv` with a `{{secret}}` marker substituted — never the resolved command line |
 | `portunus_drop(name, sm_name, value, ..., backend="")` | Create a new **local-vault-only** secret — `{name, sm_name, state}`, never the value back |
@@ -652,8 +653,14 @@ card, and the view scopes to just that slice, each level showing its own referen
 completeness summary; a real fix for what becomes an unmanageable flat card wall once a vault
 spans 30+ repos), Project Explorer (third tab — a GCP-project-scoped view: what's already
 registered, what's discoverable via `portunus discover` with a one-click "register all", and
-whether that project has a WIF binding configured), and an Ask Bar (persistent side panel
-across all three, backed by `portunus ask`). No gating logic is duplicated in TypeScript: every
+whether that project has a WIF binding configured), Settings (org/project hierarchy overview +
+role/policy management — see "Roles & permissions" below), About (in-app documentation of all
+of this), and an Ask Bar (persistent side panel across all four main tabs, backed by `portunus
+ask`). A **first-run setup wizard** appears automatically the very first time you open the UI
+against a fresh `PORTUNUS_HOME` (never again once anything's configured) — walks through what
+Portunus's three parts do, picking your first vault's backend (including a real in-UI trigger
+for `gcloud auth login` if you choose GCP), and a first `discover` pass. No gating logic is
+duplicated in TypeScript: every
 API route under `ui/app/api/` shells out to the same `portunus` console script the CLI uses, so
 `Broker.check_injectable` stays the single, only implementation of the gate. The add-secret
 form is the one deliberate human-plaintext-entry point (mirroring `portunus drop --stdin`) — a
@@ -673,6 +680,22 @@ that doesn't map onto org/project/env — "everything for the Shindig deploy," a
 wherever those references actually live. Create one from Console's "My views" panel; add/remove
 a reference to any view straight from its own detail drawer. CLI: `portunus views create/add/
 remove/delete/show`.
+
+**LLM suggests, human confirms.** An agent can propose `description`/`purpose`/`tags`/`group`
+for a reference via the `portunus_suggest_metadata` MCP tool — it lands in a pending sidecar,
+**never the live field**. `DetailDrawer` shows "suggested by \<agent\>: '...' [Confirm]
+[Reject]" for each pending field; Confirm applies it through the exact same `portunus retag`
+path a manual edit would use, Reject discards it, neither touches the live field except via
+your own explicit click. Routing fields (`org`/`provider`/`project`/`env`/`repo`/`backend`) are
+never agent-suggestible — those affect which backend a resolve actually uses. CLI:
+`portunus metadata confirm/reject/pending`.
+
+**Roles & permissions — STUB ONLY.** Settings lets you record `{scope: org/project/env, role,
+actions}` policy records, and they genuinely persist (`portunus roles set/delete/show`,
+`PORTUNUS_HOME/roles.json`) — but nothing reads them yet. `check_injectable()`/`retag()` behave
+identically whether or not any policy exists. This is deliberate, staged groundwork for
+Petitio's future real access-level enforcement, always shown with an explicit "not yet
+enforced" label — never a control that looks live but silently does nothing.
 
 ```bash
 cd ui

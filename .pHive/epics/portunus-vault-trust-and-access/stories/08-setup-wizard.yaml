@@ -1,0 +1,84 @@
+id: 08-setup-wizard
+epic: portunus-vault-trust-and-access
+title: expanded first-run setup wizard
+status: shipped
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [07-settings-page]
+
+description: |
+  New `portunus vault status --json` drives first-run detection (absence of BOTH registry.json
+  and vault-bindings.json). New /api/vault-status, /api/auth-login (triggers real
+  `gcloud auth login` from a UI button), /api/auth-status routes. SetupWizard: 5 steps -- explain
+  Portunus's three parts -> first vault setup (backend choice, two-zone real/stub picker,
+  explicitly framed as "your first vault, not your only one") -> GCP auth capture in-UI (only
+  if GCP chosen) -> roles (literally disabled, "coming soon") -> discover/sort, landing in the
+  normal app.
+
+acceptance_criteria:
+  - "Given a genuinely fresh, uninitialized PORTUNUS_HOME, when the UI loads, then the wizard shows"
+  - "Given an already-initialized vault (any prior binding or reference), when the UI loads, then the wizard never shows, however empty the vault looks"
+  - "Given the backend step, when local is chosen, then the GCP auth step is skipped entirely"
+  - "Given the wizard completes, when the binding is checked via `portunus bindings show --json`, then it matches what was entered in the UI"
+  - "Given the roles step, when rendered, then every control is genuinely disabled (fieldset disabled), not just visually dimmed"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: portunus vault status CLI command + 3 new API routes + SetupWizard.tsx + page.tsx gating.
+    agent: developer
+  - id: test
+    description: pytest for vault status detection logic.
+    agent: tester
+    depends_on: [implement]
+  - id: live-verify
+    description: Playwright pass against a fresh scratch vault (full walkthrough) and a reload of the same now-initialized vault (wizard must not reappear).
+    agent: tester
+    depends_on: [test]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_vault_status
+    - path: ui/app/components/SetupWizard.tsx
+      purpose: the 5-step wizard
+    - path: ui/app/page.tsx
+      purpose: gates the whole app behind needsSetup
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: vault status subcommand
+  - file: ui/app/api/vault-status/route.ts
+    change: new route
+  - file: ui/app/api/auth-login/route.ts
+    change: new route
+  - file: ui/app/api/auth-status/route.ts
+    change: new route
+  - file: ui/app/components/SetupWizard.tsx
+    change: new component
+  - file: ui/app/page.tsx
+    change: first-run gating
+
+design_decisions:
+  - decision: first-run detection lives in Python, not duplicated in TypeScript
+    rationale: "design-discussion.md §5 -- one implementation of the detection rule, consistent with every other gating decision in this codebase"
+  - decision: roles step is literally disabled here, unlike Settings' own editable stub
+    rationale: "A first-run flow isn't the place to let someone get lost configuring permissions before they even have a vault"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "GCP auth capture triggers gcloud's own real OAuth flow unmodified -- Portunus never handles or stores a credential itself"
+
+risks:
+  - severity: medium
+    description: A detection bug could show the wizard to an existing, real vault (destructive-feeling UX) or never show it to a genuinely fresh one
+    mitigation: "Explicit live-proof against both a fresh scratch vault and the same vault reloaded after initialization"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/horizontal-plan.md
+    relevant_excerpt: "§3 Setup wizard -- expanded scope"

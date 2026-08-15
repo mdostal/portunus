@@ -43,29 +43,29 @@ stories:
     title: role/policy schema -- stub only, no enforcement
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 06-llm-suggest-human-confirm-metadata
     title: LLM-suggests / human-confirms metadata workflow
     complexity: medium
     depends_on: [02-metadata-completeness-signal]
-    status: pending
+    status: shipped
   - id: 07-settings-page
-    title: Settings page (bindings + hierarchy config + greyed roles stub)
+    title: Settings page (org hierarchy overview + roles stub)
     complexity: medium
     depends_on: [05-role-policy-schema-stub]
-    status: pending
+    status: shipped
   - id: 08-setup-wizard
     title: expanded first-run setup wizard
     complexity: medium
     depends_on: [07-settings-page]
-    status: pending
+    status: shipped
   - id: 09-about-help-page
     title: in-app About/Help page
     complexity: low
     depends_on: [06-llm-suggest-human-confirm-metadata, 08-setup-wizard]
-    status: pending
+    status: shipped
   - id: 10-closeout
     title: docs, version bump, full end-to-end live proof
     complexity: low
     depends_on: [09-about-help-page]
-    status: pending
+    status: shipped

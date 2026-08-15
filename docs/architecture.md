@@ -292,12 +292,38 @@ race in the first place, proven with a real multi-process concurrent-write test.
 over fields the UI already fetches — no new stored field, nothing to drift out of sync with
 what it's computed from.
 
-**Explicitly not built here:** any RBAC enforcement. `roles.json` (a future story) will define
-a `{scope_type: org|project|env, scope_value, role, actions[]}` policy shape building on
-`Identity`/`check_injectable`'s already-inert `requester` seam (§3) — schema and a config
-surface only, never wired into `retag()`/`check_injectable`. A visibly greyed-out "coming soon"
-treatment in any UI surface that shows it, never a control that looks live but silently does
-nothing.
+**Role/policy schema — built as a stub, deliberately not enforced.** `roles.py` persists
+`PolicyRecord(scope_type: org|project|env, scope_value, role, actions[])` to `PORTUNUS_HOME/
+roles.json` for real — `portunus roles set/delete/show` and the Settings page both genuinely
+read and write it — but `check_injectable()`/`retag()` never consume it.
+`tests/test_roles.py::test_check_injectable_and_retag_are_byte_identical_with_or_without_
+roles_configured` is the defining test: byte-identical behavior with or without policies
+configured, not just "defaults to permissive" (a materially weaker guarantee a future edit
+could silently erode). Building on `Identity`/`check_injectable`'s already-inert `requester`
+seam (§3) in SHAPE, extended to hierarchy-scoped actions — the evaluation function itself
+(most-specific-scope-wins? explicit deny beats allow?) is real, unresolved future work.
+
+**LLM-suggests, human-confirms metadata.** `Reference.suggested` is a sidecar dict
+(`{field_name: {value, by, at}}`), written only by `Registry.suggest_metadata()` (and the MCP
+tool of the same name) — restricted to `SUGGESTIBLE_FIELDS` (`description`/`purpose`/`tags`/
+`group`). Routing fields are structurally rejected: `suggest_metadata()` raises rather than
+silently ignoring them, so a caller never mistakes "was rejected" for "was suggested but not
+shown yet." Confirming a suggestion is NOT a new mutation path — it's the existing `retag()`
+applying the suggested value, then `clear_suggestion()` drops the sidecar entry; rejecting is
+just `clear_suggestion()` with the live field never touched. This keeps `retag()` as the ONLY
+code path that ever writes the four suggestible fields, whether a human typed the value or
+confirmed an agent's proposal.
+
+**Settings, the setup wizard, and About are UI-only additions** with no new backend concepts
+beyond what's already described above: Settings surfaces the org/project hierarchy (read-only
+summary) and roles.json (genuinely editable, always visibly labeled "not yet enforced");
+`SetupWizard` is a first-run-only flow (`portunus vault status` detects an uninitialized
+`PORTUNUS_HOME` — absence of BOTH `registry.json` and `vault-bindings.json`) that walks through
+backend choice and an in-UI trigger for `gcloud auth login` (the real, unmodified gcloud OAuth
+flow — the wizard doesn't reimplement or intercept it, just gives it a button); its own Roles
+step is literally disabled (`<fieldset disabled>`), a deliberately different treatment from
+Settings' editable-but-labeled stub, since a first-run flow isn't the place to risk someone
+getting lost configuring permissions before they have a vault at all.
 
 ## See also
 
