@@ -402,6 +402,10 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
+.about-page { display: flex; flex-direction: column; gap: 1.4rem; max-width: 42rem; }
+.about-p { font-size: 0.82rem; color: var(--ink-soft); line-height: 1.55; margin: 0; }
+.about-page a { color: var(--brass); }
+
 .settings-page { display: flex; flex-direction: column; gap: 1.4rem; max-width: 40rem; }
 .settings-section { display: flex; flex-direction: column; gap: 0.6rem; }
 .settings-section h2 { font-size: 0.9rem; margin: 0; }
