@@ -1,7 +1,7 @@
 id: 04-mcp-leak-status-tool
 epic: portunus-leak-scan
 title: portunus_leak_status MCP tool -- read-only, never a value or scan trigger
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [03-scan-config-and-cli]

@@ -38,7 +38,7 @@ stories:
     title: portunus_leak_status MCP tool -- read-only, never a value or scan trigger
     complexity: low
     depends_on: [03-scan-config-and-cli]
-    status: pending
+    status: shipped
   - id: 05-ui-leak-scan-settings
     title: Settings UI -- Leak scan section
     complexity: medium
