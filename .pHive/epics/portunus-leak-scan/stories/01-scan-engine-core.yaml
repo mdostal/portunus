@@ -1,0 +1,82 @@
+id: 01-scan-engine-core
+epic: portunus-leak-scan
+title: leak-scan engine -- incremental, line-based, value-never-leaks matching
+status: pending
+complexity: high
+methodology: tdd
+depends_on: []
+
+description: |
+  New `src/portunus/leakscan.py`. Given a registry and a list of scan-path globs, gets each
+  resolvable reference's decrypted value transiently via the existing Backend.access() path
+  (resolver.backend_for(ref) + backend.access(...), the same mechanism cmd_resolve/
+  _eager_sync_down already use -- no new backend method), searches configured files
+  line-by-line for literal occurrences, and returns findings as plain
+  {ref_name, path, line_number, byte_offset} data -- never the matched value, never a context
+  excerpt. Incremental: tracks a per-file (byte offset, size+mtime fingerprint) watermark so a
+  re-scan only reads newly-appended bytes; a shrunk/replaced file rescans from 0. Values shorter
+  than MIN_SEARCHABLE_VALUE_LENGTH (8) are skipped from search entirely (design-discussion.md
+  §5). This slice has no persisted store and no CLI yet -- pure function(s) over
+  registry + paths -> findings, everything downstream builds on this.
+
+acceptance_criteria:
+  - "Given a scan path containing a reference's literal decrypted value, when scanned, then a finding is returned with the correct ref_name/path/line_number/byte_offset"
+  - "Given a scan path containing no managed secret value, when scanned, then no findings are returned"
+  - "Given a file already scanned once, when scanned again with no new content, then no duplicate findings are returned (watermark honored)"
+  - "Given a file already scanned once, when new lines are appended and scanned again, then only the newly-appended lines are searched, and a new match in them is found"
+  - "Given a file that shrank or was replaced since its last watermark, when scanned, then it is rescanned from byte 0"
+  - "Given a resolvable value shorter than MIN_SEARCHABLE_VALUE_LENGTH, when scanning, then it is never searched for"
+  - "Given a reference whose state is dropped/requested (not injectable), when scanning, then its value is never fetched or searched for"
+  - "Given the search function encounters an internal error mid-scan, when the resulting exception is inspected, then it never contains the matched value or the raw line content -- structural + behavioral check"
+  - "Given a large (multi-MB) fixture file, when scanned, then scan time stays roughly linear in file size, not quadratic in (file size x reference count) beyond one linear pass per file"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for matching, incremental watermarks, shrink/replace handling, min-length skip, value-never-leaks structural + behavioral checks, and a perf sanity check.
+    agent: tester
+  - id: implement
+    description: leakscan.py -- get_values(), scan_paths(), watermark tracking.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: Backend.access(sm_name, project) -- the existing decrypted-value fetch this story reuses, never reimplements
+    - path: src/portunus/cli.py
+      purpose: "_eager_sync_down() (around line 975) -- the established pattern for resolver.backend_for(ref) + backend.access() with the value never escaping the function"
+    - path: src/portunus/crawl.py
+      purpose: the closest precedent for a broad-reading, report-only tool and its AST-level value-leak structural test, adapted here for a stricter invariant (this module DOES call .access(), crawl.py never does)
+    - path: src/portunus/broker.py
+      purpose: Broker.check_injectable() -- used to filter to only resolvable references before fetching a value to search for
+
+files_to_modify:
+  - file: src/portunus/leakscan.py
+    change: new module -- scan engine core
+
+design_decisions:
+  - decision: line-based scanning, not chunked with manual overlap handling
+    rationale: "design-discussion.md §0 -- free line numbers, no chunk-boundary-match edge case, matches the line-oriented shape of every real target path (JSONL transcripts, shell history, most logs)"
+  - decision: MIN_SEARCHABLE_VALUE_LENGTH = 8, short values never searched
+    rationale: "design-discussion.md §5 -- a trivial-length value would false-positive-match constantly, producing noise instead of signal"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The single strictest instance of this invariant in the codebase to date -- this module calls .access() and must prove the result never escapes beyond an in-memory line comparison. Structural AST check + a behavioral test that forces a mid-scan exception and asserts the value is absent from it."
+
+risks:
+  - severity: medium
+    description: A naive per-secret-per-file search loop could be effectively quadratic against real scan targets (393 refs x multi-hundred-MB files)
+    mitigation: "Single compiled multi-pattern pass per file (design-discussion.md §0/§5); perf sanity check in the test suite catches an accidentally-quadratic implementation before it ships"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan/docs/design-discussion.md
+    relevant_excerpt: "§0, §1, §5"
+  - path: .pHive/epics/portunus-leak-scan/docs/research-brief.md
+    relevant_excerpt: "§3 -- real scale data"

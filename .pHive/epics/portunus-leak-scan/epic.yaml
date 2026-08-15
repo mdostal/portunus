@@ -1,0 +1,51 @@
+name: portunus-leak-scan
+title: leak detection for managed secrets across logs, .claude transcripts, and other local files
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd-for-python-live-proof-for-ui
+version_bump: minor
+
+description: |
+  Detects whether a managed secret's actual decrypted value shows up somewhere it shouldn't --
+  log files, `.claude` conversation transcripts, shell history, or any other human-configured
+  local path -- and escalates a visible warning over time until a human marks it rotated.
+  Explicitly deferred mid-stream during portunus-vault-trust-and-access until that epic and its
+  follow-on (portunus-metadata-crawl) fully shipped. Planned with the heavier horizontal/
+  vertical process (see docs/) because it raises four genuinely non-trivial design questions --
+  keeping the value-never-leaks invariant intact in a NEW code path that must call
+  Backend.access(), real scale (a live check found 3.4 GB / 4,421 files under one user's
+  ~/.claude alone), an actual escalation state machine, and safe non-default scan-path scoping
+  -- not because the ask itself was multi-threaded the way portunus-vault-trust-and-access's
+  was. Advisory only in v1: proven, not just asserted, that check_injectable()/resolve() behave
+  identically regardless of leak status, matching the roles.json stub precedent.
+
+stories:
+  - id: 01-scan-engine-core
+    title: leak-scan engine -- incremental, line-based, value-never-leaks matching
+    complexity: high
+    depends_on: []
+    status: pending
+  - id: 02-leak-status-and-escalation
+    title: leak-status store, severity derivation, mark-rotated
+    complexity: medium
+    depends_on: [01-scan-engine-core]
+    status: pending
+  - id: 03-scan-config-and-cli
+    title: scan-path config store + full CLI surface
+    complexity: medium
+    depends_on: [01-scan-engine-core, 02-leak-status-and-escalation]
+    status: pending
+  - id: 04-mcp-leak-status-tool
+    title: portunus_leak_status MCP tool -- read-only, never a value or scan trigger
+    complexity: low
+    depends_on: [03-scan-config-and-cli]
+    status: pending
+  - id: 05-ui-leak-scan-settings
+    title: Settings UI -- Leak scan section
+    complexity: medium
+    depends_on: [03-scan-config-and-cli]
+    status: pending
+  - id: 06-closeout
+    title: docs, version bump, end-to-end live proof
+    complexity: low
+    depends_on: [04-mcp-leak-status-tool, 05-ui-leak-scan-settings]
+    status: pending

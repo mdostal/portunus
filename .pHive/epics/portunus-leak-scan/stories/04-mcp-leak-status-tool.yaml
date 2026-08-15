@@ -1,0 +1,63 @@
+id: 04-mcp-leak-status-tool
+epic: portunus-leak-scan
+title: portunus_leak_status MCP tool -- read-only, never a value or scan trigger
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [03-scan-config-and-cli]
+
+description: |
+  New `portunus_leak_status(name="")` MCP tool -- returns already-computed severity, finding
+  count, first/last-detected timestamps for one reference or all references with active
+  findings. Read-only over story 02's store; never triggers a scan, never reads file content,
+  never returns a value or match excerpt (design-discussion.md §2 -- the deliberate boundary
+  between "already-known, already human-scoped status" which is fine to expose, and "cause
+  Portunus to read arbitrary configured file content" which is NOT exposed to any MCP tool in
+  this epic).
+
+acceptance_criteria:
+  - "Given a reference with active leak findings, when portunus_leak_status(name) is called, then it returns severity/finding_count/first_detected_at/last_detected_at -- never a value or file content"
+  - "Given no name argument, when portunus_leak_status() is called, then it returns status for every reference with active findings"
+  - "Given a reference with no findings, when queried, then it returns a clean 'no findings' result, not an error"
+  - "Given the tool's source, when AST-inspected, then it never calls Backend.access() or leakscan's scan-triggering function -- structural proof this tool cannot cause a scan"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the tool's read shape, no-findings case, and the AST-level no-scan-trigger structural check.
+    agent: tester
+  - id: implement
+    description: portunus_leak_status MCP tool in mcp_server.py.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_crawl_candidates -- the immediate precedent for a read-only, metadata-only MCP tool over an existing store
+
+files_to_modify:
+  - file: src/portunus/mcp_server.py
+    change: new portunus_leak_status tool
+
+design_decisions:
+  - decision: no MCP tool triggers a scan or reads file content, in this or any story
+    rationale: "design-discussion.md §2 -- a materially different trust boundary than exposing already-computed, already-human-scoped status"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "AST-level structural check confirms this tool cannot reach Backend.access() or the scan engine at all, not just that it doesn't currently return a value"
+
+risks:
+  - severity: low
+    description: A future edit could accidentally wire a scan-trigger path through this tool
+    mitigation: "The structural AST check in this story's test suite fails the build if that ever happens, not just a docstring warning"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan/docs/design-discussion.md
+    relevant_excerpt: "§2"

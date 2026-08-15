@@ -1,0 +1,70 @@
+id: 05-ui-leak-scan-settings
+epic: portunus-leak-scan
+title: Settings UI -- Leak scan section
+status: pending
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [03-scan-config-and-cli]
+
+description: |
+  New "Leak scan" section in Settings: configured scan paths (add/remove), last-scan timestamp,
+  a findings table (reference, severity badge, file, line, "Mark rotated" button), and a
+  "Run scan now" button. `/api/leak-scan` and `/api/leak-status` (and path-config routes) are
+  thin shells over the CLI, matching every existing route's runPortunus pattern. Copy is
+  explicit about exactly what gets scanned (only the configured paths, nothing else happens
+  automatically) and that this is a detective, not preventive, control (design-discussion.md
+  §6) -- same honesty requirement portunus-metadata-crawl's own Settings section established
+  for "this is not automatic."
+
+acceptance_criteria:
+  - "Given the Settings page, when the Leak scan section renders, then it shows configured paths, last-scan time, and current findings"
+  - "Given 'Run scan now' is clicked, when the scan completes, then new findings appear and match the CLI's own `portunus leak-scan --json` output, cross-checked independently"
+  - "Given a finding's 'Mark rotated' button is clicked, when confirmed, then the finding disappears from the UI and `portunus leak status` confirms it cleared"
+  - "Given the section's own copy, when read, then it accurately states this is a detective control over configured paths only, never implying automatic protection or blocking"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: /api/leak-scan, /api/leak-status, /api/leak-scan-config routes + Settings page Leak scan section.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass against a fixture vault + fixture "leaked" file -- run scan, verify findings, mark rotated, cross-check against the CLI.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/SettingsPage.tsx
+      purpose: existing Settings page this story adds a new section to, following the Crawl & report section's own just-shipped pattern
+    - path: ui/lib/portunus.ts
+      purpose: runPortunus() -- the shared shell-out primitive every API route uses, no second implementation
+
+files_to_modify:
+  - file: ui/app/api/leak-scan/route.ts
+    change: new route
+  - file: ui/app/api/leak-status/route.ts
+    change: new route
+  - file: ui/app/components/SettingsPage.tsx
+    change: Leak scan section
+
+design_decisions:
+  - decision: no live LLM/automatic-anything from the UI, mirroring the crawl epic's own UI honesty
+    rationale: "design-discussion.md §6 -- explicit about being a detective control so users don't treat it as a reason to paste secrets more casually"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Routes are thin shells over CLI commands already proven value-never-leaks in stories 01-03; the UI itself never has a code path that could receive a value from these routes"
+
+risks:
+  - severity: low
+    description: Users might expect this to actively block/prevent leaks rather than just detect and report them
+    mitigation: "Explicit UI copy sets expectations correctly (acceptance criterion 4)"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan/docs/design-discussion.md
+    relevant_excerpt: "§6"
