@@ -1,7 +1,7 @@
 id: 01-eager-sync-down-on-discover
 epic: portunus-vault-backup
 title: discover --register warms the local cache immediately for cached-mode projects
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []

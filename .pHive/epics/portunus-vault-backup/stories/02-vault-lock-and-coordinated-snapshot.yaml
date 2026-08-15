@@ -1,7 +1,7 @@
 id: 02-vault-lock-and-coordinated-snapshot
 epic: portunus-vault-backup
 title: A fourth lock (vault-bindings.json) + a coordinated multi-file snapshot primitive
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []
