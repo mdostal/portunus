@@ -193,6 +193,16 @@ check, which shells out to the user's own already-authenticated `gh` CLI rather 
 a credential in the shipped app — the same "never hold a credential you don't have to"
 posture this whole system already enforces everywhere else.
 
+## 7. Provenance metadata: repo/source_files are OSTIARIUS-layer, not a new store
+
+`repo` and `source_files` (`registry.py`) answer *which git repo, and which file in it, actually
+consumes a secret* — a real gap found by inspecting the real ffe-cicd data: 342 references, one
+shared GCP project spanning many repos, and nothing distinguishing which repo owned which
+secret. This is registry metadata, the same layer `group`/`related`/`description` already live
+on — it doesn't add a new component, doesn't change ARCA's backend-selection precedence (§2),
+and doesn't touch how a value is resolved. `portunus tree --by repo` is the same tree-rendering
+path as `--by group` (§1's `Resolver` node is unaffected), keyed on a different field.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

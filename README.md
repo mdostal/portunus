@@ -329,6 +329,48 @@ entry naming a reference outside the current result set is marked `(unresolved)`
 silently dropped. The Project Explorer UI tab renders the identical tree client-side from
 the same data.
 
+### `repo`/`source_files` — which git repo (and file) actually consumes a secret
+
+A real gap, found by looking at the real data: `group` already captures a rough service/env
+hierarchy (`ffe-cicd/event-api/prod`), but nothing distinguished *which git repo* consumes a
+secret from *which cloud project* it lives in — one shared GCP project (`ffe-cicd`) can span
+many repos/services. `repo` is a new structured field (`find --tags repo=event-api` works
+immediately, same as `provider`/`project`/`env`); `source_files` is a list of file paths in that
+repo that reference the secret (a `docker-compose.yml`, a CI workflow) — same optional,
+human-filled posture as `related`, not auto-discovered:
+
+```bash
+portunus reg add stripe-prod dostal-stripe-live --repo billing-service
+portunus retag stripe-prod --source-files docker-compose.prod.yml,.github/workflows/deploy.yml
+portunus find --tags repo=billing-service
+```
+
+**Backfilling many references at once** — the real unlock for hundreds of already-grouped
+secrets, not a one-at-a-time `retag` per reference:
+
+```bash
+# Preview first -- makes zero writes, reports exactly what would change:
+portunus retag-bulk --group-prefix ffe-cicd/event-api --repo event-api --dry-run
+
+# Then actually apply it:
+portunus retag-bulk --group-prefix ffe-cicd/event-api --repo event-api
+```
+
+Selects every reference whose `group` starts with `--group-prefix` (a plain string prefix, no
+query language) and retags each — one reference's collision failure is reported under `failed`
+and never aborts the rest of the batch, same precedent `drop-bulk` already set.
+
+**`portunus tree --by repo`** re-renders the identical tree, keyed on `repo` instead of `group`
+— same command, same shape, a second facet on the same underlying data:
+
+```bash
+portunus tree --project ffe-cicd --by repo   # --by group is the default, unchanged
+```
+
+A reference with no `repo` set renders under a `(no repo set)` bucket, same non-dropping
+guarantee `(ungrouped)` already has for `group`. The Project Explorer UI tab has a matching
+Group/Repo toggle above its tree view.
+
 ### "What secrets exist for this project?" — an LLM-facing metadata query
 
 An agent can ask what's available without ever seeing a value — metadata only, zero-to-many,

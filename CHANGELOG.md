@@ -4,6 +4,35 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-15
+
+### Added
+
+- **`repo` + `source_files` reference metadata.** Found by inspecting the real data first: all
+  342 `ffe-cicd` references share one GCP project across many repos/services, with nothing
+  distinguishing *which git repo* actually consumes a secret. `repo` is a new structured field
+  (`find --tags repo=...` works immediately, same as provider/project/env); `source_files` is a
+  list of file paths in that repo, same optional posture as `related`.
+- **`portunus retag-bulk --group-prefix <p> [--repo ...] [--source-files ...] [--dry-run]`** —
+  backfills every reference whose `group` starts with a prefix in one command instead of one
+  `retag` per reference. `--dry-run` previews with zero writes; one reference's collision
+  failure never aborts the rest of the batch (same precedent `drop-bulk` set).
+- **`portunus tree --by {group,repo}`** (CLI + MCP) — the same tree render, keyed on the
+  structured `repo` field instead of the free-text `group` path. A reference with no `repo`
+  lands under a `(no repo set)` bucket, same non-dropping guarantee `(ungrouped)` already has.
+  Project Explorer's UI tab gets a matching Group/Repo toggle.
+- **`related` renders as clickable chips** in the UI's detail view instead of plain text —
+  clicking one switches straight to that reference. A relationship-graph *visualization* was
+  explicitly considered and deferred: `related` has 2 real data points in the whole vault today,
+  not yet a substrate worth a graph renderer.
+
+Live-verified against the real `ffe-cicd` data (384 references in the vault at the time): `retag-bulk
+--group-prefix ffe-cicd/event-api --repo event-api --dry-run` correctly identified 91
+references with zero collisions and made zero writes. The actual backfill against real
+production data is an explicit follow-up for whoever owns that vault to confirm, not something
+this release does unsupervised — the real data's repo naming is a judgment call, not something
+to guess at automatically.
+
 ## [0.16.3] - 2026-08-15
 
 ### Fixed
