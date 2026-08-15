@@ -1,7 +1,7 @@
 id: 04-closeout
 epic: portunus-vault-backup
 title: docs, version bump, live proof
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [01-eager-sync-down-on-discover, 03-vault-export-import]
