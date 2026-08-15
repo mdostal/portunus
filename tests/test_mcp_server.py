@@ -887,3 +887,52 @@ def test_portunus_crawl_candidates_never_touches_a_value_source_check():
     tree = ast.parse(src)
     code = ast.unparse(tree)
     assert ".access(" not in code
+
+
+def test_portunus_leak_status_returns_summary_for_named_reference(home):
+    from portunus import mcp_server
+    from portunus.leakscan import Finding, record_findings
+
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=0.0)
+    result = mcp_server.portunus_leak_status(name="x")
+    assert result["ref_name"] == "x"
+    assert result["finding_count"] == 1
+    assert result["severity"] in ("warn", "urgent", "critical")
+
+
+def test_portunus_leak_status_unknown_reference_returns_clean_no_findings(home):
+    from portunus import mcp_server
+
+    result = mcp_server.portunus_leak_status(name="never-scanned")
+    assert result == {
+        "ref_name": "never-scanned", "severity": None, "finding_count": 0,
+        "first_detected_at": None, "last_detected_at": None,
+    }
+
+
+def test_portunus_leak_status_with_no_name_lists_all_active(home):
+    from portunus import mcp_server
+    from portunus.leakscan import Finding, record_findings
+
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=0.0)
+    record_findings([Finding("y", "/var/log/b.log", 1, 0)], now=0.0)
+    result = mcp_server.portunus_leak_status()
+    ref_names = sorted(s["ref_name"] for s in result["statuses"])
+    assert ref_names == ["x", "y"]
+
+
+def test_portunus_leak_status_never_calls_backend_access_or_scan_source_check():
+    """AST-level: this tool must never be able to reach Backend.access()
+    or the scan-triggering function -- a structural proof it cannot cause
+    a scan or read file content, not just that it doesn't currently."""
+    import ast
+    import inspect
+    import textwrap
+    from portunus import mcp_server
+
+    src = textwrap.dedent(inspect.getsource(mcp_server.portunus_leak_status))
+    tree = ast.parse(src)
+    code = ast.unparse(tree)
+    assert ".access(" not in code
+    assert "run_scan(" not in code
+    assert "scan_paths(" not in code

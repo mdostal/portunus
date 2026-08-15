@@ -20,6 +20,7 @@ from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotInjectable
 from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
 from .crawl import crawl_candidates
+from .leakscan import load_leak_status, summarize
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
@@ -203,6 +204,26 @@ def portunus_crawl_candidates(org: str = "", project: str = "") -> dict:
     have a real proposal for -- this tool never writes anything itself."""
     registry, *_ = _build()
     return {"candidates": crawl_candidates(registry, org=org, project=project)}
+
+
+@mcp.tool()
+def portunus_leak_status(name: str = "") -> dict:
+    """Read-only leak-scan status: severity (warn/urgent/critical),
+    finding count, and first/last-detected timestamps for one reference
+    (name set) or every reference with active findings (name omitted).
+    NEVER a file path's content, NEVER a value, NEVER a match excerpt --
+    only already-computed status a human's own `portunus leak-scan` run
+    already produced. This tool never triggers a scan and never reads any
+    file on disk -- running a scan stays a human-triggered CLI/UI action
+    (design-discussion.md §2)."""
+    statuses = load_leak_status()
+    if name:
+        status = statuses.get(name)
+        if status is None:
+            return {"ref_name": name, "severity": None, "finding_count": 0,
+                     "first_detected_at": None, "last_detected_at": None}
+        return summarize(status)
+    return {"statuses": [summarize(s) for s in statuses.values() if s.findings]}
 
 
 @mcp.tool()
