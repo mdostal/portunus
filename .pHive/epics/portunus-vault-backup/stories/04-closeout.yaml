@@ -1,0 +1,95 @@
+id: 04-closeout
+epic: portunus-vault-backup
+title: docs, version bump, live proof
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [01-eager-sync-down-on-discover, 03-vault-export-import]
+
+description: |
+  Standard epic closeout, matching every prior epic this session: update docs/architecture.md
+  and any relevant CLI help/README sections for the new eager-sync-down behavior and the new
+  `portunus vault export`/`portunus vault import` commands, apply the epic's version_bump: minor
+  across all lockstep version sources (pyproject.toml, src/portunus/__init__.py,
+  ui/src-tauri/tauri.conf.json, ui/src-tauri/Cargo.toml + a real `cargo build` to refresh
+  Cargo.lock + a real `pip install -e ".[test]"` to refresh dist-info -- both gaps this session
+  hit and fixed properly earlier today, must not repeat), write the CHANGELOG.md entry, and run
+  one real live-proof pass against actual scratch data exercising both new features end to end.
+
+acceptance_criteria:
+  - "Given the full test suite, when run after all four stories land, then it is fully green with zero skipped/xfail additions introduced by this epic"
+  - "Given a scratch PORTUNUS_HOME with a live GCP test project bound sync_mode=cached, when `discover --register` runs, then the live proof confirms the local encrypted cache is warmed immediately (not just via unit test) -- a real end-to-end demonstration, not simulated"
+  - "Given a scratch PORTUNUS_HOME with real registered references, when `portunus vault export` then `portunus vault import --force` round-trips against a second scratch PORTUNUS_HOME, then `portunus verify`/`portunus list` on the restored vault matches the original exactly"
+  - "Given the version bump, when checked, then all lockstep version sources agree, Cargo.lock is regenerated via a real `cargo build`, and dist-info is refreshed via a real `pip install -e \".[test]\"`"
+  - "Given CHANGELOG.md, when checked, then it has a correctly-ordered new entry (newest first) describing both shipped features in user-facing terms"
+
+methodology: tdd
+steps:
+  - id: docs
+    description: Update docs/architecture.md and CLI help text for eager sync-down and vault export/import.
+    agent: developer
+  - id: version-bump
+    description: Apply minor version bump across all lockstep sources; real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: Write the CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Run the full pytest suite; exercise both features end to end against real scratch data.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, open PR into dev, merge (local verification sufficient per standing authorization), promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: docs/architecture.md
+      purpose: Architecture doc requiring updates for the new backup.py module and eager-sync-down behavior
+    - path: pyproject.toml
+      purpose: One of the lockstep version sources
+    - path: src/portunus/__init__.py
+      purpose: One of the lockstep version sources
+    - path: ui/src-tauri/tauri.conf.json
+      purpose: One of the lockstep version sources
+    - path: ui/src-tauri/Cargo.toml
+      purpose: One of the lockstep version sources -- requires a real `cargo build` afterward to refresh Cargo.lock, not just a sed edit
+    - path: CHANGELOG.md
+      purpose: Release notes, strict descending version order
+
+files_to_modify:
+  - file: docs/architecture.md
+    change: Document eager sync-down and vault export/import
+  - file: pyproject.toml
+    change: Version bump 0.17.0 -> 0.18.0
+  - file: src/portunus/__init__.py
+    change: Version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: Version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: Version bump
+  - file: CHANGELOG.md
+    change: New entry
+
+design_decisions:
+  - decision: Real cargo build + real pip install -e after every version-string edit
+    rationale: "Hit and fixed twice earlier this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Live-proof step must use scratch/test data for anything destructive (--force import) -- never the user's real ~/.portunus vault"
+  - concern: audit-chain-integrity
+    action: "Confirm the live-proof's audit.log entries for export/import/eager-sync are present and well-formed, not just that the commands exit 0"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list in acceptance criteria 4, matching the checklist used for every prior release this session"
+
+references:
+  - path: .pHive/epics/portunus-vault-backup/epic.yaml
+    relevant_excerpt: "version_bump: minor"
