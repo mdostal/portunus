@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "portunus"
-version = "0.16.2"
+version = "0.16.3"
 description = "Secret broker for the Dostal harness: reference registry + boundary-only resolver so plaintext secrets never enter an LLM/agent context."
 readme = "README.md"
 requires-python = ">=3.9"
