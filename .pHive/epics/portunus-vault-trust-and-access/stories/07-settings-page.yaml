@@ -1,0 +1,66 @@
+id: 07-settings-page
+epic: portunus-vault-trust-and-access
+title: Settings page (org hierarchy overview + roles stub)
+status: shipped
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [05-role-policy-schema-stub]
+
+description: |
+  New Settings tab. Vault-binding management deliberately stays in Project Explorer (that
+  epic's own scope call). This page owns an org/project hierarchy overview (reference counts
+  per org) and role/policy management -- genuinely functional (writes persist, delete works)
+  via a new /api/roles route, always visibly labeled "STUB ONLY" with an explicit banner.
+
+acceptance_criteria:
+  - "Given the Settings page, when rendered, then it shows an accurate org hierarchy summary derived from already-fetched reference data"
+  - "Given the Roles section, when a policy is added through the form, then it's confirmed independently via `portunus roles show --json`"
+  - "Given a policy record, when Remove is clicked, then it's deleted and confirmed independently via the CLI"
+  - "Given the Roles section, when rendered, then it always shows an explicit 'not yet enforced' banner -- never silently omitted"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: /api/roles route + SettingsPage.tsx + Settings tab wiring.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass -- add and remove a policy through the browser.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/api/roles/route.ts
+      purpose: roles CRUD shell-out, mirrors /api/bindings's shape
+    - path: ui/app/components/SettingsPage.tsx
+      purpose: the new page
+
+files_to_modify:
+  - file: ui/app/api/roles/route.ts
+    change: new route
+  - file: ui/app/components/SettingsPage.tsx
+    change: new component
+  - file: ui/app/page.tsx
+    change: Settings tab wiring
+
+design_decisions:
+  - decision: Settings' roles section is editable-but-labeled-stub, not disabled
+    rationale: "horizontal-plan.md -- a persistent config surface should let writes genuinely persist, unlike the wizard's own literally-disabled roles step, which is a different context (first-run, not yet a real vault)"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "No value ever touches this page -- org counts and policy config only"
+
+risks:
+  - severity: low
+    description: None material
+    mitigation: "npm run build clean; live Playwright add/remove round-trip"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/vertical-plan.md
+    relevant_excerpt: "Slice 7"
