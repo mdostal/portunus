@@ -1,7 +1,7 @@
 id: 03-ui-crawl-and-report-surface
 epic: portunus-metadata-crawl
 title: Settings UI surface for crawl bundle + report download
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [01-crawl-candidate-bundle, 02-deploy-docs-report]

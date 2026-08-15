@@ -35,9 +35,9 @@ stories:
     title: Settings UI surface for crawl bundle + report download
     complexity: medium
     depends_on: [01-crawl-candidate-bundle, 02-deploy-docs-report]
-    status: pending
+    status: shipped
   - id: 04-closeout
     title: docs, version bump, live proof
     complexity: low
     depends_on: [03-ui-crawl-and-report-surface]
-    status: pending
+    status: shipped

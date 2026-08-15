@@ -189,6 +189,20 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   resolution rather than duplicated as filesystem logic in TypeScript. Drives the Standalone
   UI's first-run `SetupWizard` — an already-used vault, however empty it looks, never sees it
   again.
+- **`crawl_candidates()` / `portunus crawl`** (`crawl.py`, `portunus_crawl_candidates` MCP
+  tool) — a discovery bundler, NOT a writer and NOT an LLM caller. For every reference missing
+  description/purpose/org, bundles everything already known (`sm_name`, `group`, `project`,
+  `org`, `repo`, `source_files`, its project's `VaultBinding`, its provider's
+  `RotationBinding`) into one JSON object, for an external LLM/agent/human to read and act on
+  via the already-shipped `portunus_suggest_metadata`. Portunus has zero LLM-API-key
+  infrastructure anywhere — this bundles context rather than inventing that. Real vault data
+  (393 references, checked during planning) showed `repo` filled on <1% of references —
+  `sm_name`/`group` are the strongest signals actually available today; real repo-cloning stays
+  deferred until that fill rate rises.
+- **`generate_report()` / `portunus report`** (`crawl.py`) — renders current vault state as
+  Markdown (org → project structure, each reference's known metadata, an explicit `## Gaps`
+  section). Independent of `crawl_candidates()` — a real "deploy docs" starting point whether
+  or not any crawl-sourced metadata has ever been confirmed.
 
 ## Key paths
 
