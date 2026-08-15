@@ -3,6 +3,8 @@ land on disk, in the key file, or survive decryption with the wrong key."""
 import json
 import os
 import stat
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -104,6 +106,81 @@ def test_remove_deletes_entry(home):
     assert backend.remove("dostal-shared-anthropic") is False
     with pytest.raises(BackendError):
         backend.access("dostal-shared-anthropic")
+
+
+def test_concurrent_store_from_separate_processes_never_loses_a_write(home):
+    """Real regression, found live: a different agent session reported
+    Portunus resolving a "broken" value for a key this session was
+    concurrently re-syncing via SyncingBackend (which calls store() on
+    every cache refresh). Reproduced directly before this fix: 20
+    concurrent store() calls (separate OS processes, matching the actual
+    multi-session usage pattern, not threads) lost 14 of 20 writes
+    entirely, plus real crashes from two processes both using the same
+    non-unique .tmp filename. Root cause: store()'s load-mutate-flush was
+    unlocked, same class of bug already fixed in AuditChain.append()."""
+    script = (
+        "import sys\n"
+        "from portunus.localvault import LocalEncryptedBackend\n"
+        "LocalEncryptedBackend().store(sys.argv[1], sys.argv[2])\n"
+    )
+    n = 20
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, f"key-{i}", f"value-{i}"],
+            env=os.environ.copy(),
+        )
+        for i in range(n)
+    ]
+    for p in procs:
+        assert p.wait() == 0
+
+    backend = LocalEncryptedBackend()
+    for i in range(n):
+        assert backend.access(f"key-{i}") == f"value-{i}"
+
+
+def test_concurrent_store_and_remove_from_separate_processes_stay_consistent(home):
+    """Same race, exercised against remove() too -- store N keys serially
+    first (so remove has something to race against), then remove half of
+    them concurrently with fresh stores of the other half, and confirm the
+    final on-disk state matches exactly what should have happened, not a
+    lost-write artifact of the two operations racing on the same file."""
+    backend = LocalEncryptedBackend()
+    for i in range(10):
+        backend.store(f"keep-{i}", f"value-{i}")
+        backend.store(f"drop-{i}", f"value-{i}")
+
+    store_script = (
+        "import sys\n"
+        "from portunus.localvault import LocalEncryptedBackend\n"
+        "LocalEncryptedBackend().store(sys.argv[1], sys.argv[2])\n"
+    )
+    remove_script = (
+        "import sys\n"
+        "from portunus.localvault import LocalEncryptedBackend\n"
+        "LocalEncryptedBackend().remove(sys.argv[1])\n"
+    )
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", store_script, f"new-{i}", f"value-{i}"],
+            env=os.environ.copy(),
+        )
+        for i in range(10)
+    ] + [
+        subprocess.Popen(
+            [sys.executable, "-c", remove_script, f"drop-{i}"],
+            env=os.environ.copy(),
+        )
+        for i in range(10)
+    ]
+    for p in procs:
+        assert p.wait() == 0
+
+    for i in range(10):
+        assert backend.access(f"keep-{i}") == f"value-{i}"
+        assert backend.access(f"new-{i}") == f"value-{i}"
+        with pytest.raises(BackendError):
+            backend.access(f"drop-{i}")
 
 
 def test_store_session_encrypts_state_under_site_account_namespace(home):
