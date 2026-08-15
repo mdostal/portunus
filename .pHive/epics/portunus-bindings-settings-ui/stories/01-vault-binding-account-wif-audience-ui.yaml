@@ -1,7 +1,7 @@
 id: 01-vault-binding-account-wif-audience-ui
 epic: portunus-bindings-settings-ui
 title: account + wif_audience editable in Project Explorer's binding panel
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []

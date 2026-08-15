@@ -1,7 +1,7 @@
 id: 03-closeout
 epic: portunus-bindings-settings-ui
 title: docs, version bump, live browser proof
-status: pending
+status: shipped
 complexity: low
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [01-vault-binding-account-wif-audience-ui, 02-rotation-binding-account-ui]
