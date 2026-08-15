@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { PortunusPolicy, PortunusReference } from "../types";
+import { checkMetadataCompleteness } from "../completeness";
+import type { CrawlCandidate, PortunusPolicy, PortunusReference } from "../types";
 
 const SCOPE_TYPES: PortunusPolicy["scope_type"][] = ["org", "project", "env"];
 
@@ -75,6 +76,60 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
     return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [refs]);
 
+  const incompleteRefs = useMemo(
+    () => refs.filter((r) => !checkMetadataCompleteness(r).isComplete),
+    [refs],
+  );
+
+  const [crawlBundle, setCrawlBundle] = useState<CrawlCandidate[] | null>(null);
+  const [crawlBusy, setCrawlBusy] = useState(false);
+  const [crawlError, setCrawlError] = useState<string | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  async function fetchCrawlBundle() {
+    setCrawlBusy(true);
+    setCrawlError(null);
+    try {
+      const res = await fetch("/api/crawl");
+      const data = await res.json();
+      if (!res.ok) {
+        setCrawlError(data.error || "crawl failed");
+        return;
+      }
+      setCrawlBundle(data.candidates || []);
+    } finally {
+      setCrawlBusy(false);
+    }
+  }
+
+  async function copyCrawlBundle() {
+    if (!crawlBundle) return;
+    await navigator.clipboard.writeText(JSON.stringify(crawlBundle, null, 2));
+  }
+
+  async function downloadReport() {
+    setReportBusy(true);
+    setReportError(null);
+    try {
+      const res = await fetch("/api/report");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setReportError(data.error || "report failed");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "portunus-report.md";
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
   return (
     <div className="settings-page">
       <section className="settings-section">
@@ -91,6 +146,53 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>Crawl &amp; report</h2>
+        <p className="inline-status">
+          {incompleteRefs.length} reference{incompleteRefs.length === 1 ? "" : "s"} still missing
+          description/purpose/org.
+        </p>
+        <p className="stub-banner">
+          The crawl bundle is context for an LLM session (Claude Code, another MCP-connected
+          agent, or you) to read and propose metadata from -- it does not fill anything in
+          automatically. Nothing here writes to the vault; confirming a suggestion still goes
+          through the existing metadata confirm flow.
+        </p>
+
+        {crawlError && <p className="inline-status error">✗ {crawlError}</p>}
+        {reportError && <p className="inline-status error">✗ {reportError}</p>}
+
+        <div className="settings-actions">
+          <button className="btn quiet" disabled={crawlBusy || incompleteRefs.length === 0} onClick={fetchCrawlBundle}>
+            {crawlBusy ? "Fetching…" : "Fetch crawl bundle"}
+          </button>
+          {crawlBundle && crawlBundle.length > 0 && (
+            <button className="btn quiet" onClick={copyCrawlBundle}>
+              Copy bundle JSON
+            </button>
+          )}
+          <button className="btn quiet" disabled={reportBusy} onClick={downloadReport}>
+            {reportBusy ? "Generating…" : "Download report"}
+          </button>
+        </div>
+
+        {crawlBundle && (
+          <div className="settings-hierarchy-list">
+            {crawlBundle.length === 0 ? (
+              <p className="inline-status">(no candidates -- every matching reference already has description/purpose/org)</p>
+            ) : (
+              crawlBundle.map((c) => (
+                <div className="settings-hierarchy-row" key={c.name}>
+                  <span>{c.name}</span>
+                  <span>sm_name={c.sm_name}</span>
+                  <span>group={c.group || "-"}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </section>
 
       <section className="settings-section settings-stub">
