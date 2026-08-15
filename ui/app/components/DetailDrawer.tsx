@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { AuditEntry, PortunusReference } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
+import CompletenessBadge from "./CompletenessBadge";
 import InjectControls from "./InjectControls";
 
 /** {a: "1", b: "2"} -> "a=1,b=2" -- the same k=v,k2=v2 convention tags/
@@ -160,6 +161,7 @@ export default function DetailDrawer({
       </div>
       <StatePill state={reference.state} />
       <RotationBadge reference={reference} prominent />
+      <CompletenessBadge reference={reference} prominent />
       <div className="tags-row">
         {reference.org && <span className="chip">org={reference.org}</span>}
         {reference.provider && <span className="chip">provider={reference.provider}</span>}

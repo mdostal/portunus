@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import type { PortunusReference } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
+import CompletenessBadge from "./CompletenessBadge";
+import { checkMetadataCompleteness } from "../completeness";
 
 export default function Console({
   refs,
@@ -14,6 +16,7 @@ export default function Console({
 }) {
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<string | null>(null);
+  const [completenessFilter, setCompletenessFilter] = useState<"complete" | "missing" | null>(null);
 
   const providers = useMemo(() => {
     const counts = new Map<string, number>();
@@ -30,10 +33,26 @@ export default function Console({
     return [...counts.entries()];
   }, [refs]);
 
+  // Sorting/facet answer to "a warning if we don't have extra metadata and
+  // some project tags" -- a real, clickable filter, not just a badge you
+  // have to scan the whole list to notice.
+  const completenessCounts = useMemo(() => {
+    let missing = 0;
+    for (const r of refs) if (!checkMetadataCompleteness(r).isComplete) missing += 1;
+    return { missing, complete: refs.length - missing };
+  }, [refs]);
+
+  function matchesCompletenessFilter(r: PortunusReference): boolean {
+    if (!completenessFilter) return true;
+    const isComplete = checkMetadataCompleteness(r).isComplete;
+    return completenessFilter === "complete" ? isComplete : !isComplete;
+  }
+
   const filtered = refs.filter(
     (r) =>
       (!providerFilter || (r.provider || "(none)") === providerFilter) &&
-      (!stateFilter || r.state === stateFilter),
+      (!stateFilter || r.state === stateFilter) &&
+      matchesCompletenessFilter(r),
   );
 
   return (
@@ -65,6 +84,25 @@ export default function Console({
             </button>
           ))}
         </div>
+        {completenessCounts.missing > 0 && (
+          <div className="rail-group">
+            <span className="k">Metadata</span>
+            <button
+              className={`rail-facet ${completenessFilter === "missing" ? "active" : ""}`}
+              onClick={() => setCompletenessFilter(completenessFilter === "missing" ? null : "missing")}
+            >
+              <span>⚠ missing</span>
+              <span>{completenessCounts.missing}</span>
+            </button>
+            <button
+              className={`rail-facet ${completenessFilter === "complete" ? "active" : ""}`}
+              onClick={() => setCompletenessFilter(completenessFilter === "complete" ? null : "complete")}
+            >
+              <span>complete</span>
+              <span>{completenessCounts.complete}</span>
+            </button>
+          </div>
+        )}
       </aside>
 
       <div className="console-main">
@@ -87,6 +125,7 @@ export default function Console({
             <span>
               <StatePill state={r.state} />
               <RotationBadge reference={r} />
+              <CompletenessBadge reference={r} />
             </span>
           </button>
         ))}
