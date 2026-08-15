@@ -4,6 +4,27 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-08-15
+
+### Added
+
+- **Metadata crawl.** New `portunus crawl [--org] [--project] [--json]` and the
+  `portunus_crawl_candidates` MCP tool bundle everything already known about a reference
+  missing description/purpose/org (sm_name, group, project, org, repo, its project's vault
+  binding, its provider's rotation binding) into one context object -- a discovery tool, not a
+  writer and not an LLM caller. Read it, then propose fields via the existing
+  `portunus_suggest_metadata`. Follow-on to 0.21.0's suggest/confirm workflow, the "bulk-
+  suggest" work that epic explicitly deferred.
+- **Deploy-docs report.** New `portunus report [--org] [--project] [--out path]` renders
+  current vault state as Markdown -- org -> project structure, each reference's known
+  metadata, and an explicit Gaps section. Independent of crawl -- useful immediately as a real
+  starting point for a company with no deploy documentation, whether or not any crawl-sourced
+  metadata has ever been confirmed.
+- **Settings "Crawl & report" section** -- lists references still missing metadata (reuses the
+  existing completeness derivation), a "Fetch crawl bundle" button framed honestly as context
+  for an LLM session to read (never an automatic filler), and a "Download report" button.
+  `/api/crawl` and `/api/report` are thin shells over the CLI, matching every other route.
+
 ## [0.21.0] - 2026-08-15
 
 ### Added

@@ -23,6 +23,32 @@ export interface PortunusReference {
   suggested: Record<string, { value: unknown; by: string; at: string }>;
 }
 
+// One entry from `portunus crawl --json` / portunus_crawl_candidates --
+// discovery context only, never a value (portunus-metadata-crawl Slice 1).
+export interface CrawlCandidate {
+  name: string;
+  sm_name: string;
+  group: string;
+  project: string;
+  org: string;
+  repo: string;
+  source_files: string[];
+  provider: string;
+  env: string;
+  missing: {
+    description: boolean;
+    purpose: boolean;
+    org_or_project_or_tags: boolean;
+  };
+  vault_binding: {
+    backend: string;
+    sync_mode: string;
+    account: string;
+    wif_audience: string;
+  } | null;
+  rotation_binding: { status: string; account: string } | null;
+}
+
 export interface PortunusView {
   name: string;
   description: string;

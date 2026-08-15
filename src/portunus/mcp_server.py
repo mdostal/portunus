@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotInjectable
 from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
+from .crawl import crawl_candidates
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
@@ -190,6 +191,18 @@ def portunus_discover(project: str, register: bool = False) -> dict:
         ],
         "wif_configured": _wif_configured(project),
     }
+
+
+@mcp.tool()
+def portunus_crawl_candidates(org: str = "", project: str = "") -> dict:
+    """Discovery only -- bundles known context (sm_name, group, project,
+    org, repo, its project's VaultBinding, its provider's RotationBinding)
+    for every reference still missing description/purpose/org, optionally
+    scoped by org/project. Never a value, never a mutation. Read this
+    bundle, then call portunus_suggest_metadata for whichever fields you
+    have a real proposal for -- this tool never writes anything itself."""
+    registry, *_ = _build()
+    return {"candidates": crawl_candidates(registry, org=org, project=project)}
 
 
 @mcp.tool()

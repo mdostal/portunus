@@ -412,6 +412,7 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 .settings-stub { border: 1px solid var(--warn); border-radius: 4px; padding: 0.8rem 1rem; background: var(--warn-bg); }
 .stub-banner { font-size: 0.75rem; color: var(--ink-soft); margin: 0; }
 .settings-hierarchy-list { display: flex; flex-direction: column; gap: 0.2rem; }
+.settings-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .settings-hierarchy-row {
   display: flex;
   align-items: center;

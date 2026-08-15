@@ -32,6 +32,7 @@ from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .roles import PolicyError, VALID_SCOPE_TYPES, delete_policy, load_policies, set_policy
+from .crawl import crawl_candidates, generate_report
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, NotInjectable
@@ -1393,6 +1394,38 @@ def cmd_roles_show(args) -> int:
     return 0
 
 
+def cmd_crawl(args) -> int:
+    """Discovery only -- bundles known context for references missing
+    metadata, for an LLM/human to read and call `portunus metadata
+    confirm`/`portunus_suggest_metadata` against. Never writes a Reference
+    field itself, never touches a value."""
+    registry, *_ = _build()
+    candidates = crawl_candidates(registry, org=args.org, project=args.project)
+    if args.json:
+        print(json.dumps(candidates))
+        return 0
+    if not candidates:
+        print("(no candidates -- every matching reference already has description/purpose/org)")
+        return 0
+    for c in candidates:
+        print(f"  {{{{secret:{c['name']}}}}}  sm_name={c['sm_name']}  group={c['group'] or '-'}")
+    return 0
+
+
+def cmd_report(args) -> int:
+    """Render current vault state as Markdown -- a real 'deploy docs'
+    starting point, independent of whether crawl ever found anything.
+    Read-only, metadata-only -- never a value."""
+    registry, *_ = _build()
+    report = generate_report(registry, org=args.org, project=args.project)
+    if args.out:
+        Path(args.out).write_text(report)
+        print(f"wrote report -> {args.out}")
+        return 0
+    print(report)
+    return 0
+
+
 def cmd_metadata_confirm(args) -> int:
     """Accept an agent-suggested field -- applies it via the SAME retag()
     a manual edit would use (no second write path to drift from), then
@@ -1935,6 +1968,24 @@ def build_parser() -> argparse.ArgumentParser:
     rl_show.add_argument("--scope-value", default="")
     rl_show.add_argument("--json", action="store_true")
     rl_show.set_defaults(func=cmd_roles_show)
+
+    cr = sub.add_parser(
+        "crawl",
+        help="discovery only -- bundle known context for references missing metadata, for an "
+             "LLM/human to review and call `metadata confirm`/portunus_suggest_metadata against",
+    )
+    cr.add_argument("--org", default="")
+    cr.add_argument("--project", default="")
+    cr.add_argument("--json", action="store_true")
+    cr.set_defaults(func=cmd_crawl)
+
+    rp = sub.add_parser(
+        "report", help="render current vault state as Markdown -- a real 'deploy docs' starting point",
+    )
+    rp.add_argument("--org", default="")
+    rp.add_argument("--project", default="")
+    rp.add_argument("--out", default="")
+    rp.set_defaults(func=cmd_report)
 
     md = sub.add_parser(
         "metadata",
