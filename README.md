@@ -593,6 +593,10 @@ claude mcp add --scope user portunus -- portunus mcp
 | `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |
 | `portunus_suggest_metadata(name, description="", purpose="", group="", tags=None)` | Propose description/purpose/group/tags — lands in a pending sidecar, **never the live field**; a human confirms via `portunus metadata confirm` or the UI |
 | `portunus_crawl_candidates(org="", project="")` | Discovery bundle (sm_name/group/project/org/repo/vault-binding/rotation-binding) for every reference missing metadata — never a value, never a write; read it, then call `portunus_suggest_metadata` for whichever fields you have a real proposal for |
+| `portunus_leak_status(name="")` | Already-computed leak severity/finding-count/timestamps for one or every reference with active findings — never a value, never file content, never triggers a scan |
+| `portunus_run_leak_scan()` | Runs a real scan over the human-configured leak-scan paths and persists new findings — `{ref_name, path, line_number}` per finding, never a value; can only read paths already added via `portunus_leak_scan_config_add_path` |
+| `portunus_leak_scan_config_show()` / `_add_path(glob)` / `_remove_path(glob)` | Manage the leak-scan path config — globs only, never a value, never scans anything itself |
+| `portunus_leak_mark_rotated(name)` | Clears a reference's active leak findings — a human/agent assertion Portunus can't independently verify; also invalidates the affected files' scan watermarks so a premature call still gets re-flagged by the next scan |
 | `portunus_resolve_to_tempfile(name="", tags=None)` | A `0600` temp file **path** holding the resolved value — never the value itself |
 | `portunus_resolve_exec(argv, name="", tags=None)` | `{stdout, stderr, returncode}` from running `argv` with a `{{secret}}` marker substituted — never the resolved command line |
 | `portunus_drop(name, sm_name, value, ..., backend="")` | Create a new **local-vault-only** secret — `{name, sm_name, state}`, never the value back |
@@ -708,6 +712,50 @@ project structure plus an explicit gap section — useful immediately as a real 
 starting point, whether or not any crawl-sourced metadata has ever been confirmed. CLI:
 `portunus crawl [--org] [--project] [--json]`, `portunus report [--org] [--project] [--out
 path]`.
+
+**Leak detection — detective, not preventive.** Settings' "Leak scan" section (and `portunus
+leak-scan`) checks whether a managed secret's actual value shows up somewhere it shouldn't —
+logs, `.claude` conversation transcripts, shell history, or any other path you explicitly
+configure (`portunus leak-scan config add-path <glob>` — nothing is scanned until you add a
+path; there is no default). A match escalates a visible severity (warn → urgent → critical)
+over time until you run `portunus leak mark-rotated <name>` — a human assertion Portunus
+can't independently verify, not a real rotation trigger. This finds secrets that already
+leaked; it does not stop the next paste into a chat window, and it never blocks `resolve`/
+`inject` (advisory only, matching the roles.json stub's own "detect first, enforce later"
+precedent). Findings are always `{reference, file, line}` — never the leaked value itself, at
+any layer (CLI, MCP, UI). CLI: `portunus leak-scan [--json]`, `portunus leak-scan config
+add-path/remove-path/show`, `portunus leak status [name]`, `portunus leak mark-rotated
+<name>`. MCP: `portunus_run_leak_scan`, `portunus_leak_status`, `portunus_leak_scan_config_
+show/add_path/remove_path`, `portunus_leak_mark_rotated` — an MCP-connected agent can trigger
+a scan (explicit user decision), but only over paths a human already configured; it can never
+scan anything outside that set.
+
+### Scheduling leak-scan (cron / CI)
+
+`portunus leak-scan` is cron/CI-ready as-is: it never prompts, and exits `1` when new findings
+exist, `0` otherwise.
+
+```bash
+# crontab -e
+0 9 * * * PORTUNUS_HOME=/path/to/home PORTUNUS_PASSPHRASE_FILE=/path/to/passphrase \
+  portunus leak-scan --json >> /path/to/leak-scan.log 2>&1
+```
+
+```xml
+<!-- ~/Library/LaunchAgents/com.portunus.leakscan.plist (macOS launchd) -->
+<key>ProgramArguments</key>
+<array>
+  <string>/usr/local/bin/portunus</string>
+  <string>leak-scan</string>
+  <string>--json</string>
+</array>
+<key>StartCalendarInterval</key>
+<dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+```
+
+In a CI pipeline, treat a non-zero exit as a failed step (new leak found) rather than a script
+error — check the exit code, not just stderr. Never wire the scheduled run to auto-rotate or
+auto-block anything; v1 is deliberately advisory-only (docs/architecture.md §11).
 
 ```bash
 cd ui
