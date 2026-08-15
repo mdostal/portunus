@@ -4,6 +4,20 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-08-15
+
+### Fixed
+
+- **Audit chain: a concurrency race could break the hash chain.** Found on the real
+  production vault — `portunus verify` reported BROKEN. `AuditChain.append()`'s
+  sequence-counter increment and its read of the prior entry's hash were both unlocked; two
+  processes appending close together (two `portunus resolve` calls, or a race against the MCP
+  server handling a concurrent request) could read the same "last" state before either wrote,
+  producing a duplicate `seq` and an unrecoverable break. Fixed with the same `flock` idiom
+  `Registry` already uses. Does not retroactively repair an already-broken historical chain —
+  see the fix's own notes for why that's a separate, explicit decision, not something to do
+  silently.
+
 ## [0.16.1] - 2026-08-14
 
 ### Fixed
