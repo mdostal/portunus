@@ -1,0 +1,42 @@
+name: portunus-provenance-graph
+title: repo/source-file metadata + repo-facet tree view + bulk backfill
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Real data confirmed the gap directly: all 342 ffe-cicd references are auto-discovered
+  placeholders with zero description/purpose/kind/related, and no field captures which git repo
+  (distinct from the shared ffe-cicd GCP project) or which file actually consumes a secret.
+  Adds `repo` (new structured tag field, immediately queryable via `find --tags repo=...`) and
+  `source_files` (new list field, same posture as `related`) to Reference. A new
+  `retag-bulk --group-prefix <p> --repo <name> [--dry-run]` CLI command makes backfilling many
+  references sharing a group prefix one command instead of N -- the real unlock for annotating
+  hundreds of existing secrets. `portunus tree --by {group,repo}` (CLI+MCP) and a Group/Repo
+  toggle in Project Explorer reuse the existing tree infrastructure, keyed on a different field.
+  `related` becomes clickable chips in the UI instead of plain text. A real relationship-graph
+  visualization and automated file-reference discovery are both explicitly deferred (research-
+  brief.md §4) -- `related` has 2 data points in the whole vault today, not a graph-worthy
+  substrate yet.
+
+stories:
+  - id: 01-repo-and-source-files-schema
+    title: repo + source_files fields on Reference, registry, CLI/MCP surface
+    complexity: medium
+    depends_on: []
+  - id: 02-retag-bulk
+    title: portunus retag-bulk --group-prefix (with --dry-run)
+    complexity: medium
+    depends_on: [01-repo-and-source-files-schema]
+  - id: 03-tree-by-repo
+    title: portunus tree --by {group,repo} (CLI + MCP), parameterized _build_tree
+    complexity: low
+    depends_on: [01-repo-and-source-files-schema]
+  - id: 04-ui-repo-toggle-and-related-chips
+    title: Project Explorer Group/Repo toggle, DetailDrawer related-as-chips, source_files display
+    complexity: medium
+    depends_on: [03-tree-by-repo]
+  - id: 05-closeout
+    title: docs, version bump, live proof (scratch data + a small real-vault dry-run demo)
+    complexity: low
+    depends_on: [02-retag-bulk, 04-ui-repo-toggle-and-related-chips]

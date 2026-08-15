@@ -1,0 +1,83 @@
+id: 05-closeout
+epic: portunus-provenance-graph
+title: docs, version bump, live proof (scratch data + a small real-vault dry-run demo)
+status: pending
+complexity: low
+methodology: classic
+depends_on: [02-retag-bulk, 04-ui-repo-toggle-and-related-chips]
+
+description: |
+  README/docs/architecture.md updates documenting repo/source_files and the group/repo tree
+  facet. Version bump (minor). Live proof on a scratch vault covering the full new surface
+  (repo field, source_files, retag-bulk including --dry-run, tree --by repo, UI toggle). Also: a
+  READ-ONLY dry-run demo against the real ffe-cicd data -- `portunus retag-bulk --group-prefix
+  ffe-cicd/event-api --repo event-api --dry-run` -- to show the user concretely what a real
+  backfill would touch, without writing anything. Running it for real (dropping --dry-run) is an
+  explicit follow-up for the user to confirm, not done as part of this story (research-brief.md
+  §4 -- guessing the repo name for real production data isn't this epic's call to make
+  unsupervised).
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it stays green"
+  - "Given `cd ui && npm run build`, when run, then it completes clean"
+  - "Given README.md, when read, then it documents repo/source_files and portunus tree --by"
+  - "Given pyproject.toml/manifest.json/__init__.py/tauri.conf.json/Cargo.toml, when checked, then all carry the same bumped minor version in lockstep"
+  - "Given the live proof, when run, then it demonstrates repo/source_files/retag-bulk/tree --by repo end to end on a scratch vault, AND a --dry-run-only demo against the real ffe-cicd group prefix that makes zero writes -- verified by re-checking the real vault's repo fields are still unset afterward"
+  - "Given the live proof, when complete, then the real vault's registry count and audit chain are confirmed unchanged"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Update docs, apply version bump, write CHANGELOG entry, run the scratch-vault live proof and the real-vault dry-run-only demo.
+    agent: developer
+  - id: review
+    description: Confirm the real-vault demo genuinely used --dry-run and made zero writes.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: Usage section gets a new repo/source_files + retag-bulk + tree --by subsection
+
+files_to_modify:
+  - file: README.md
+    change: Document the new fields, retag-bulk, and tree --by
+  - file: docs/architecture.md
+    change: Brief note if warranted
+  - file: CHANGELOG.md
+    change: New entry
+  - file: pyproject.toml
+    change: Version bump
+  - file: manifest.json
+    change: Version bump
+  - file: src/portunus/__init__.py
+    change: Version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: Version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: Version bump
+
+design_decisions:
+  - decision: The real-vault demo is --dry-run only, the actual backfill is a follow-up
+    rationale: "research-brief.md §4 -- mass-editing 342 real references on an unconfirmed repo-name heuristic is exactly the kind of consequential action that should be offered to the user, not just done"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A beyond what stories 01-04 already cover"
+  - concern: audit-chain-integrity
+    action: "Live proof confirms portunus verify stays INTACT on the real vault; the dry-run demo confirms zero writes occurred there at all."
+
+risks:
+  - severity: low
+    description: Docs could imply the real ffe-cicd backfill already happened
+    mitigation: "Explicit acceptance criterion + CHANGELOG wording must state the dry-run demo made zero real writes and the actual backfill is a follow-up, not done"
+
+references:
+  - path: .pHive/epics/portunus-provenance-graph/docs/design-discussion.md
+    relevant_excerpt: "Full document -- closeout ties together all four prior stories"

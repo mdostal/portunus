@@ -86,6 +86,7 @@ export default function Home() {
         {selected && !addOpen && (
           <DetailDrawer
             reference={selected}
+            allRefs={refs}
             onClose={() => setSelected(null)}
             onRotate={(ref) => {
               setRotateDraft(ref);
@@ -95,6 +96,7 @@ export default function Home() {
               setSelected(null);
               refresh();
             }}
+            onSelectRelated={setSelected}
           />
         )}
       </div>

@@ -1,0 +1,71 @@
+id: 02-retag-bulk
+epic: portunus-provenance-graph
+title: portunus retag-bulk --group-prefix (with --dry-run)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-repo-and-source-files-schema]
+
+description: |
+  New `portunus retag-bulk --group-prefix <p> [--repo <name>] [--source-files a.yml,b.yml]
+  [--dry-run]`: selects every reference whose `group` starts with `--group-prefix` (plain string
+  prefix, no new query language), applies the same only-passed-fields-change +
+  collision-checked update `Registry.retag()` already does, per reference. One reference's
+  collision failure is reported by name and does NOT abort the rest of the batch (matches
+  drop-bulk's existing precedent). `--dry-run` lists what would change without writing --
+  required given this can touch dozens of real references in one call.
+
+acceptance_criteria:
+  - "Given 3 references with group starting 'ffe-cicd/event-api/', when `retag-bulk --group-prefix ffe-cicd/event-api --repo event-api` runs, then all 3 get repo='event-api' and references outside that prefix are untouched"
+  - "Given the same setup with `--dry-run`, when run, then it reports the 3 names that WOULD change and makes zero writes -- verified by re-reading the registry afterward and confirming repo is still unset"
+  - "Given one of the N matched references would collide (e.g. an explicit --env combined with an existing identical-tuple reference), when the batch runs, then that one reference is reported under a `failed` list with its error and the rest still apply"
+  - "Given `--group-prefix` matches zero references, when run, then it reports zero updated, zero failed -- not an error"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Write failing tests for prefix selection, dry-run (no writes), partial-failure isolation, and the zero-match case.
+    agent: tester
+  - id: implement
+    description: Implement cmd_retag_bulk using Registry.retag() per matched reference inside the existing locked pattern.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm dry-run genuinely makes zero writes (not just skips printing) and that a single collision doesn't abort the batch.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: cmd_drop_bulk's per-entry try/except-continue pattern is the direct precedent to mirror; cmd_retag is the single-reference operation this bulk-wraps
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: New retag-bulk subcommand + cmd_retag_bulk handler
+  - file: tests/test_cli_retag_bulk.py
+    change: New file
+
+design_decisions:
+  - decision: Plain group-prefix string match, not a query language
+    rationale: "group is already a hierarchical path -- a prefix match covers the real case (backfilling everything under ffe-cicd/event-api/*) without inventing new selector syntax. --dry-run covers the 'did I select the right set' concern instead."
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- metadata-only bulk operation, no value ever touched or read"
+  - concern: audit-chain-integrity
+    action: "Each successful per-reference retag goes through the same audited path Registry.retag() already uses -- no new audit bypass introduced by batching."
+
+risks:
+  - severity: medium
+    description: A bulk mutation across dozens of real references is more consequential than a single retag if the prefix is wrong
+    mitigation: "--dry-run is a required acceptance criterion, not optional polish -- the tool must support a safe preview before any real backfill runs against production data"
+
+references:
+  - path: .pHive/epics/portunus-provenance-graph/docs/design-discussion.md
+    relevant_excerpt: "§2 -- bulk-retag-by-prefix design"

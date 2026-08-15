@@ -26,7 +26,7 @@ VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested")
 
 # Tag keys resolved against Reference's own fields; anything else is looked
 # up in the open `tags` dict. Keep in sync with Reference's structured fields.
-_STRUCTURED_TAG_FIELDS = ("provider", "project", "env", "scope", "kind")
+_STRUCTURED_TAG_FIELDS = ("provider", "project", "env", "scope", "kind", "repo")
 
 
 class NoMatch(KeyError):
@@ -66,6 +66,10 @@ class Reference:
     group: str = ""       # hierarchical path, e.g. "project-y/supabase/auth" -- for `portunus tree`
     related: list = field(default_factory=list)  # other reference names this one relates to
     backend: str = ""     # "" | "local" | "gcp" | "aws" -- overrides the project's VaultBinding
+    repo: str = ""         # the git repo that consumes this secret -- distinct from `project`
+                            # (one cloud project, e.g. a GCP project, can span many repos)
+    source_files: list = field(default_factory=list)  # file(s) in that repo declaring/
+                            # referencing this secret, e.g. "docker-compose.prod.yml"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -161,6 +165,8 @@ class Registry:
         group: str = "",
         related: Optional[list] = None,
         backend: str = "",
+        repo: str = "",
+        source_files: Optional[list] = None,
     ) -> Reference:
         """Register (or overwrite) a reference. Value is never accepted here."""
         if state not in VALID_STATES:
@@ -174,6 +180,7 @@ class Registry:
                 description=description, purpose=purpose,
                 injected_as=dict(injected_as or {}),
                 group=group, related=list(related or []), backend=backend,
+                repo=repo, source_files=list(source_files or []),
             )
             self._data[name] = ref
         return ref
@@ -256,24 +263,27 @@ class Registry:
         group: Optional[str] = None,
         related: Optional[list] = None,
         backend: Optional[str] = None,
+        repo: Optional[str] = None,
+        source_files: Optional[list] = None,
     ) -> Reference:
-        """Update a reference's provider/project/env/tags/description/purpose/
-        injected_as/group/related/backend in place.
+        """Update a reference's provider/project/env/repo/tags/description/
+        purpose/injected_as/group/related/backend/source_files in place.
 
         Only fields explicitly passed (non-None) change. provider/project/
-        env/tags are collision-checked against every other reference (reuses
-        matches_tag(), the same exact-match logic resolve_by_tags() uses, so
-        there is one collision definition, not two; retagging to a
+        env/repo/tags are collision-checked against every other reference
+        (reuses matches_tag(), the same exact-match logic resolve_by_tags()
+        uses, so there is one collision definition, not two; retagging to a
         reference's own current tags always succeeds). description/purpose/
-        injected_as/group/related/backend are deliberately NOT collision-
-        checked -- they're not in _STRUCTURED_TAG_FIELDS, so two references
-        can never collide over them by definition.
+        injected_as/group/related/backend/source_files are deliberately NOT
+        collision-checked -- they're not in _STRUCTURED_TAG_FIELDS, so two
+        references can never collide over them by definition.
         """
         with self._locked():
             ref = self.require(name)
             new_provider = provider if provider is not None else ref.provider
             new_project = project if project is not None else ref.project
             new_env = env if env is not None else ref.env
+            new_repo = repo if repo is not None else ref.repo
             new_tags_dict = tags if tags is not None else ref.tags
             new_description = description if description is not None else ref.description
             new_purpose = purpose if purpose is not None else ref.purpose
@@ -281,10 +291,12 @@ class Registry:
             new_group = group if group is not None else ref.group
             new_related = related if related is not None else ref.related
             new_backend = backend if backend is not None else ref.backend
+            new_source_files = source_files if source_files is not None else ref.source_files
 
             full_tags: Dict[str, str] = {}
             for field_name, val in (
                 ("provider", new_provider), ("project", new_project), ("env", new_env),
+                ("repo", new_repo),
             ):
                 if val:
                     full_tags[field_name] = val
@@ -301,6 +313,7 @@ class Registry:
             ref.provider = new_provider
             ref.project = new_project
             ref.env = new_env
+            ref.repo = new_repo
             ref.tags = dict(new_tags_dict)
             ref.description = new_description
             ref.purpose = new_purpose
@@ -308,6 +321,7 @@ class Registry:
             ref.group = new_group
             ref.related = list(new_related)
             ref.backend = new_backend
+            ref.source_files = list(new_source_files)
         return ref
 
     # --- lookup ----------------------------------------------------------

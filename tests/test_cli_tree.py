@@ -94,6 +94,61 @@ def test_tree_empty_registry_prints_message_not_error(home, capsys):
     assert "no references" in out.lower() or "empty" in out.lower()
 
 
+# --- story 03 (portunus-provenance-graph): --by {group,repo} ---
+
+def _seed_repo(home):
+    reg = Registry()
+    reg.add("a", "sm-a", repo="event-api", tags={"key": "sm-a"})
+    reg.add("b", "sm-b", repo="event-api", tags={"key": "sm-b"})
+    reg.add("c", "sm-c", repo="social-engine", tags={"key": "sm-c"})
+    reg.add("d", "sm-d")  # no repo set
+    return reg
+
+
+def test_tree_default_by_is_unchanged_from_before_this_story(home, capsys):
+    _seed(home)
+    rc = main(["tree"])
+    out_no_flag = capsys.readouterr().out
+    assert rc == 0
+    rc = main(["tree", "--by", "group"])
+    out_explicit_group = capsys.readouterr().out
+    assert rc == 0
+    assert out_no_flag == out_explicit_group
+
+
+def test_tree_by_repo_nests_under_repo_field(home, capsys):
+    _seed_repo(home)
+    rc = main(["tree", "--by", "repo"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "event-api" in out
+    assert "social-engine" in out
+    assert "a" in out and "b" in out and "c" in out
+
+
+def test_tree_by_repo_no_repo_set_bucket_never_drops_a_reference(home, capsys):
+    _seed_repo(home)
+    rc = main(["tree", "--by", "repo", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert "d" in out["ungrouped"]
+
+
+def test_tree_by_repo_json_matches_cli_shape(home, capsys):
+    _seed_repo(home)
+    rc = main(["tree", "--by", "repo", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert "event-api" in out["tree"]
+    assert sorted(out["tree"]["event-api"]["_refs"]) == ["a", "b"]
+
+
+def test_tree_by_invalid_value_rejected(home, capsys):
+    import pytest
+    with pytest.raises(SystemExit):
+        main(["tree", "--by", "nonsense"])
+
+
 def test_tree_never_touches_a_backend():
     """Structural: tree-building is a pure metadata read, same discipline as
     list_by_project()/discover.py."""

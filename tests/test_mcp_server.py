@@ -88,6 +88,23 @@ def test_portunus_tree_matches_cli_json_shape(home):
     assert "refs" in result
 
 
+def test_portunus_tree_by_repo(home):
+    from portunus import Registry
+    from portunus import mcp_server
+    reg = Registry()
+    reg.add("x", "sm-x", project="demo", repo="event-api", tags={"key": "sm-x"})
+    reg.add("y", "sm-y", project="demo")
+    result = mcp_server.portunus_tree("demo", by="repo")
+    assert "x" in result["tree"]["event-api"]["_refs"]
+    assert "y" in result["ungrouped"]
+
+
+def test_portunus_tree_invalid_by_returns_error_not_crash(home):
+    from portunus import mcp_server
+    result = mcp_server.portunus_tree("demo", by="nonsense")
+    assert "error" in result
+
+
 def test_portunus_tree_no_backend_access():
     from portunus import mcp_server
     code = _no_backend_access(mcp_server.portunus_tree)

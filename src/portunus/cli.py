@@ -160,7 +160,8 @@ def cmd_reg(args) -> int:
         ref = registry.add(args.name, args.sm_name, scope=args.scope,
                            kind=args.kind, project=args.project or "",
                            description=args.description or "", purpose=args.purpose or "",
-                           injected_as=injected_as, group=args.group or "", related=related)
+                           injected_as=injected_as, group=args.group or "", related=related,
+                           repo=args.repo or "")
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
         return 0
     if args.action == "rm":
@@ -448,6 +449,7 @@ def cmd_retag(args) -> int:
         tags = _parse_tags(args.tags) if args.tags else None
         injected_as = _parse_tags(args.injected_as) if args.injected_as else None
         related = _parse_related(args.related) if args.related else None
+        source_files = _parse_related(args.source_files) if args.source_files else None
     except ValueError as exc:
         return _err(str(exc))
 
@@ -470,6 +472,10 @@ def cmd_retag(args) -> int:
         kwargs["group"] = args.group
     if related is not None:
         kwargs["related"] = related
+    if args.repo:
+        kwargs["repo"] = args.repo
+    if source_files is not None:
+        kwargs["source_files"] = source_files
 
     try:
         ref = registry.retag(args.name, **kwargs)
@@ -653,7 +659,7 @@ def cmd_drop(args) -> int:
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
         provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related, backend=args.backend,
+        group=args.group, related=related, backend=args.backend, repo=args.repo,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -714,6 +720,57 @@ def cmd_drop_bulk(args) -> int:
         return 0
     for name in created:
         print(f"  dropped  {name}")
+    for entry in failed:
+        print(f"  failed   {entry['name']}: {entry['error']}")
+    return 0
+
+
+def cmd_retag_bulk(args) -> int:
+    """Bulk counterpart to `retag` -- selects every reference whose `group`
+    starts with --group-prefix (a plain string prefix, no query language)
+    and applies the same Registry.retag() to each. One reference's
+    collision failure is reported under "failed" and does not abort the
+    rest of the batch, same precedent as drop_bulk. --dry-run reports what
+    WOULD change and makes zero writes -- required given this can touch
+    dozens of real references in one call."""
+    registry, _audit, broker, _resolver = _build()
+    try:
+        source_files = _parse_related(args.source_files) if args.source_files else None
+    except ValueError as exc:
+        return _err(str(exc))
+
+    kwargs = {}
+    if args.repo:
+        kwargs["repo"] = args.repo
+    if source_files is not None:
+        kwargs["source_files"] = source_files
+
+    matched = [ref.name for ref in registry if ref.group.startswith(args.group_prefix)]
+
+    if args.dry_run:
+        if args.json:
+            print(json.dumps({"would_update": matched}))
+        else:
+            for name in matched:
+                print(f"  would update  {name}")
+        return 0
+
+    updated: list = []
+    failed: list = []
+    for name in matched:
+        try:
+            registry.retag(name, **kwargs)
+            updated.append(name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": name, "error": f"would collide with: {', '.join(exc.candidates)}"})
+        except KeyError as exc:
+            failed.append({"name": name, "error": str(exc)})
+
+    if args.json:
+        print(json.dumps({"updated": updated, "failed": failed}))
+        return 0
+    for name in updated:
+        print(f"  updated  {name}")
     for entry in failed:
         print(f"  failed   {entry['name']}: {entry['error']}")
     return 0
@@ -1096,14 +1153,19 @@ def cmd_sync(args) -> int:
     return 0
 
 
-def _build_tree(refs):
+def _build_tree(refs, key_fn=None):
     """refs -> (ungrouped_names, nested_tree_dict, refs_meta_dict).
 
-    A reference with no group lands in `ungrouped` -- never silently
-    dropped (Grill H1). `related` entries not present in `refs` (the
-    already-filtered result set) are marked unresolved, never dropped or
-    erroring -- metadata consistency is informational, not fail-closed.
+    `key_fn(ref) -> str` supplies the path to nest under -- defaults to
+    `ref.group` (unchanged behavior for every existing caller). A reference
+    whose key_fn returns "" lands in `ungrouped` -- never silently dropped
+    (Grill H1), same guarantee regardless of which facet is active.
+    `related` entries not present in `refs` (the already-filtered result
+    set) are marked unresolved, never dropped or erroring -- metadata
+    consistency is informational, not fail-closed.
     """
+    if key_fn is None:
+        key_fn = lambda r: r.group  # noqa: E731
     names = {r.name for r in refs}
     ungrouped = []
     tree: dict = {}
@@ -1116,7 +1178,8 @@ def _build_tree(refs):
                 {"name": rel, "unresolved": rel not in names} for rel in r.related
             ],
         }
-        segments = [s for s in r.group.split("/") if s] if r.group else []
+        path = key_fn(r) or ""
+        segments = [s for s in path.split("/") if s] if path else []
         if not segments:
             ungrouped.append(r.name)
             continue
@@ -1137,10 +1200,10 @@ def _related_suffix(name: str, refs_meta: dict) -> str:
     return "  related: " + ", ".join(parts)
 
 
-def _render_tree_text(ungrouped: list, tree: dict, refs_meta: dict) -> str:
+def _render_tree_text(ungrouped: list, tree: dict, refs_meta: dict, bucket_label="(ungrouped)") -> str:
     lines: list = []
     if ungrouped:
-        lines.append("(ungrouped)")
+        lines.append(bucket_label)
         for name in sorted(ungrouped):
             lines.append(f"  {name}{_related_suffix(name, refs_meta)}")
 
@@ -1155,25 +1218,35 @@ def _render_tree_text(ungrouped: list, tree: dict, refs_meta: dict) -> str:
     return "\n".join(lines)
 
 
+_TREE_KEY_FNS = {
+    "group": (lambda r: r.group, "(ungrouped)"),
+    "repo": (lambda r: r.repo, "(no repo set)"),
+}
+
+
 def cmd_tree(args) -> int:
     """LLM-facing relationship/hierarchy query -- metadata only, never a
-    value. Every reference with an empty group renders under an
-    (ungrouped) bucket rather than being silently dropped (Grill H1)."""
+    value. Every reference with an empty key for the active facet (--by)
+    renders under a bucket rather than being silently dropped (Grill H1).
+    --by group (the default, unchanged from before this flag existed) nests
+    by the free-text group path; --by repo nests by the structured repo
+    field instead -- same builder/renderer, different key."""
     registry = Registry()
     refs = list(registry)
     if args.project:
         refs = [r for r in refs if r.project == args.project]
+    key_fn, bucket_label = _TREE_KEY_FNS[args.by]
     if not refs:
         if args.json:
             print(json.dumps({"ungrouped": [], "tree": {}, "refs": {}}))
         else:
             print("no references to show")
         return 0
-    ungrouped, tree, refs_meta = _build_tree(refs)
+    ungrouped, tree, refs_meta = _build_tree(refs, key_fn=key_fn)
     if args.json:
         print(json.dumps({"ungrouped": sorted(ungrouped), "tree": tree, "refs": refs_meta}))
         return 0
-    print(_render_tree_text(ungrouped, tree, refs_meta))
+    print(_render_tree_text(ungrouped, tree, refs_meta, bucket_label=bucket_label))
     return 0
 
 
@@ -1212,6 +1285,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     a.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     a.add_argument("--related", default="", help="comma-separated reference names")
+    a.add_argument("--repo", default="", help="the git repo that consumes this secret")
     rm = rs.add_parser("rm", help="remove a reference")
     rm.add_argument("name")
     rs.add_parser("json", help="dump the registry as JSON")
@@ -1270,7 +1344,25 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated env=target pairs, replaces the injected_as dict")
     rt.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     rt.add_argument("--related", default="", help="comma-separated reference names, replaces the related list")
+    rt.add_argument("--repo", default="", help="the git repo that consumes this secret")
+    rt.add_argument("--source-files", default="",
+                     help="comma-separated file paths in that repo, replaces the source_files list")
     rt.set_defaults(func=cmd_retag)
+
+    rtb = sub.add_parser(
+        "retag-bulk",
+        help="retag every reference whose group starts with a prefix -- backfilling repo/"
+             "source_files across many already-grouped references in one call",
+    )
+    rtb.add_argument("--group-prefix", required=True,
+                      help="plain string prefix matched against each reference's group")
+    rtb.add_argument("--repo", default="", help="the git repo that consumes these secrets")
+    rtb.add_argument("--source-files", default="",
+                      help="comma-separated file paths, replaces the source_files list")
+    rtb.add_argument("--dry-run", action="store_true",
+                      help="report what WOULD change; makes zero writes")
+    rtb.add_argument("--json", action="store_true", help="machine-readable output")
+    rtb.set_defaults(func=cmd_retag_bulk)
 
     ses = sub.add_parser("session", help="browser/login session storage (local-encrypted backend only)")
     ses_sub = ses.add_subparsers(dest="action", required=True)
@@ -1324,6 +1416,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated env=target pairs, e.g. prod=env:STRIPE_KEY")
     dr.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     dr.add_argument("--related", default="", help="comma-separated reference names")
+    dr.add_argument("--repo", default="", help="the git repo that consumes this secret")
     dr.add_argument(
         "--backend",
         choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),
@@ -1462,6 +1555,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="render secrets by group hierarchy + related links (metadata only, never a value)",
     )
     tr.add_argument("--project", default="")
+    tr.add_argument("--by", choices=("group", "repo"), default="group",
+                     help="which field to nest by (default: group, unchanged from before this flag existed)")
     tr.add_argument("--json", action="store_true", help="machine-readable output (UI/LLM consumer)")
     tr.set_defaults(func=cmd_tree)
 

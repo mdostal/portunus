@@ -1,0 +1,74 @@
+id: 04-ui-repo-toggle-and-related-chips
+epic: portunus-provenance-graph
+title: Project Explorer Group/Repo toggle, DetailDrawer related-as-chips, source_files display
+status: pending
+complexity: medium
+methodology: classic
+depends_on: [03-tree-by-repo]
+
+description: |
+  Project Explorer's existing tree view gains a two-way Group/Repo toggle above the render;
+  `buildTree()` gets the same key_fn parameterization story 03 gave the Python side, keyed on
+  `repo` in the repo mode (falling back to "(no repo set)", never dropping a reference).
+  DetailDrawer's `related` line becomes clickable chips -- clicking one switches the drawer to
+  that reference (reuses the existing selection mechanism the reference table already has, no
+  new state model). `source_files` renders in the same metadata block as description/purpose/
+  injected_as when present.
+
+acceptance_criteria:
+  - "Given Project Explorer, when the Repo toggle is selected, then the tree re-renders keyed on repo instead of group, with a '(no repo set)' bucket for references with repo=''"
+  - "Given a reference with related=['other-ref'], when its DetailDrawer is open, then 'other-ref' renders as a clickable chip"
+  - "Given that chip is clicked, when clicked, then the drawer switches to show 'other-ref' (assuming it's in the currently loaded reference set -- an unresolved related name renders as a disabled/non-clickable chip instead, matching the tree's existing 'unresolved' marking for out-of-set related links)"
+  - "Given a reference with source_files set, when its DetailDrawer is open, then the files are listed in the metadata block"
+  - "Given `npm run build`, when run, then it completes with no TypeScript errors"
+
+methodology: classic
+steps:
+  - id: implement
+    description: Add the Group/Repo toggle + repo-keyed buildTree call, related chips, source_files display.
+    agent: developer
+  - id: review
+    description: Confirm an out-of-set related reference renders as a non-clickable/disabled chip rather than a dead link or a crash.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/ProjectExplorer.tsx
+      purpose: buildTree()/TreeBranch -- the existing tree rendering this story parameterizes, same pattern as cli.py's _build_tree
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: The existing plain-text related line (line ~163) this story upgrades to chips
+
+files_to_modify:
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: Parameterize buildTree by group/repo, add the toggle UI
+  - file: ui/app/components/DetailDrawer.tsx
+    change: related chips, source_files display
+  - file: ui/app/types.ts
+    change: Add repo/source_files to PortunusReference
+  - file: ui/lib/portunus.ts
+    change: Add repo/source_files to the server-side PortunusReference interface
+
+design_decisions:
+  - decision: Reuse the existing reference-selection mechanism for chip clicks rather than a new modal/lookup
+    rationale: "The reference table already has a selection model DetailDrawer plugs into -- a chip click is just programmatically selecting that reference, not a new UI pattern"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "N/A -- metadata-only display, the value input itself is unchanged"
+  - concern: audit-chain-integrity
+    action: "N/A -- no new audited action"
+
+risks:
+  - severity: low
+    description: A related chip pointing at a reference outside the currently loaded/filtered set could look broken
+    mitigation: "Explicit acceptance criterion requires an unresolved related chip to render disabled, not attempt a broken navigation"
+
+references:
+  - path: .pHive/epics/portunus-provenance-graph/docs/design-discussion.md
+    relevant_excerpt: "§3-4 -- repo toggle + related chips"
