@@ -1,0 +1,68 @@
+id: 03-ui-crawl-and-report-surface
+epic: portunus-metadata-crawl
+title: Settings UI surface for crawl bundle + report download
+status: pending
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [01-crawl-candidate-bundle, 02-deploy-docs-report]
+
+description: |
+  A "Crawl" section in Settings -- lists references still missing metadata (reuses the existing
+  client-side completeness derivation, no new query) with a button that fetches the crawl
+  bundle and displays/copies it, framed honestly as "context for an LLM session" -- not a
+  magic auto-fill, since no LLM call happens inside the UI itself (design-discussion.md §5). A
+  "Download report" button hits the new report route. Both are thin shells over the existing
+  CLI/MCP primitives, same pattern every other route already uses.
+
+acceptance_criteria:
+  - "Given the Settings page, when the Crawl section renders, then it lists exactly the references currently missing metadata"
+  - "Given the crawl bundle is fetched, when displayed, then it matches `portunus crawl --json`'s own output, confirmed independently via the CLI"
+  - "Given the report is downloaded, when compared, then it matches `portunus report`'s own output"
+  - "Given the Crawl section's own copy, when read, then it accurately describes this as context for an external LLM to use, never implying automatic metadata filling"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: /api/crawl and /api/report routes + Settings page Crawl section.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass against a fixture vault with real gaps -- fetch the bundle, download the report, cross-check both against the CLI.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/SettingsPage.tsx
+      purpose: existing Settings page this story adds a new section to
+    - path: ui/app/completeness.ts
+      purpose: existing completeness derivation reused for the candidate list
+
+files_to_modify:
+  - file: ui/app/api/crawl/route.ts
+    change: new route
+  - file: ui/app/api/report/route.ts
+    change: new route
+  - file: ui/app/components/SettingsPage.tsx
+    change: Crawl section
+
+design_decisions:
+  - decision: no live LLM call from the UI
+    rationale: "design-discussion.md §5 -- honest about what this codebase can currently do; avoids inventing new API-key/LLM-infrastructure scope"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Both routes are thin shells over CLI commands already proven metadata-only in stories 01-02"
+
+risks:
+  - severity: low
+    description: Users might expect one-click automatic metadata filling and be confused it's not automatic
+    mitigation: "Explicit UI copy sets expectations correctly (acceptance criterion 4)"
+
+references:
+  - path: .pHive/epics/portunus-metadata-crawl/docs/design-discussion.md
+    relevant_excerpt: "§5"

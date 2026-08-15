@@ -1,0 +1,85 @@
+id: 04-closeout
+epic: portunus-metadata-crawl
+title: docs, version bump, live proof
+status: pending
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [03-ui-crawl-and-report-surface]
+
+description: |
+  README.md, docs/architecture.md, and .pHive/CONTEXT.md updated for crawl/report. Version bump,
+  CHANGELOG entry, full pytest suite + npm run build, one real live-proof pass (a fixture vault
+  with real gaps -> crawl bundle -> report generation -> both cross-checked via CLI and UI), ship.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it is fully green with zero regressions"
+  - "Given `cd ui && npm run build`, when run, then it completes with zero TypeScript errors"
+  - "Given a real live-proof pass, when each step is checked, then crawl/report both behave exactly as designed and never leak a value"
+  - "Given README.md/docs/architecture.md/.pHive/CONTEXT.md, when read, then they accurately describe crawl/report as discovery/rendering tools, never implying automatic LLM-driven writes"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs
+    description: README.md, docs/architecture.md, .pHive/CONTEXT.md updates.
+    agent: developer
+  - id: version-bump
+    description: Lockstep version bump across all 5 sources; real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Full pytest suite + npm run build + end-to-end live proof.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, PR into dev, merge, promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: terminology glossary, updated with crawl/report vocabulary
+    - path: CHANGELOG.md
+      purpose: release notes
+
+files_to_modify:
+  - file: README.md
+    change: crawl/report documentation
+  - file: docs/architecture.md
+    change: new section for this epic
+  - file: .pHive/CONTEXT.md
+    change: new terminology entries
+  - file: pyproject.toml
+    change: version bump
+  - file: src/portunus/__init__.py
+    change: version bump
+  - file: manifest.json
+    change: version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: version bump
+  - file: CHANGELOG.md
+    change: new entry
+
+design_decisions:
+  - decision: real cargo build + real pip install -e after every version-string edit
+    rationale: "Established this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Live-proof uses scratch data throughout, never the user's real vault for anything beyond the already-completed read-only sampling done during planning"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list, matching every prior release this session"
+
+references:
+  - path: .pHive/epics/portunus-metadata-crawl/epic.yaml
+    relevant_excerpt: "version_bump: minor"

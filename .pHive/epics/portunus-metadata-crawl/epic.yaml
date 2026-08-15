@@ -1,0 +1,43 @@
+name: portunus-metadata-crawl
+title: metadata crawl (LLM-context bundling) + deploy-docs report generation
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd-for-python-live-proof-for-ui
+version_bump: minor
+
+description: |
+  Follow-on to portunus-vault-trust-and-access's suggest/confirm workflow -- this epic is the
+  "bulk-suggest" work that epic's own design-discussion.md explicitly deferred. `portunus crawl`
+  is a discovery tool, not an automated writer: it bundles everything already known about a
+  reference missing metadata (sm_name, group, project, org, repo, its project's VaultBinding,
+  its provider's RotationBinding) into one JSON response, for an LLM (Claude Code, another
+  MCP-connected agent, or a human) to read and call the already-shipped
+  portunus_suggest_metadata against -- no new write path, no LLM-call infrastructure inside
+  Portunus itself. Real vault data (393 references) showed sm_name (the env var name, highly
+  semantic) and group (91% filled, encodes project/app/env structure) are the strongest
+  available signals -- repo is set on fewer than 1% of references, so real external-repo
+  scanning is explicitly deferred until repo fill-rate rises (which this epic's own bundle can
+  help with, by giving an LLM enough context to propose a repo guess). `portunus report`
+  renders current vault state -- crawled or not -- as a Markdown "deploy docs" starting point,
+  the user's own framing for a company that doesn't have any documentation yet.
+
+stories:
+  - id: 01-crawl-candidate-bundle
+    title: portunus crawl -- discovery/context-bundling for incomplete references
+    complexity: medium
+    depends_on: []
+    status: pending
+  - id: 02-deploy-docs-report
+    title: portunus report -- Markdown vault-state report generator
+    complexity: medium
+    depends_on: []
+    status: pending
+  - id: 03-ui-crawl-and-report-surface
+    title: Settings UI surface for crawl bundle + report download
+    complexity: medium
+    depends_on: [01-crawl-candidate-bundle, 02-deploy-docs-report]
+    status: pending
+  - id: 04-closeout
+    title: docs, version bump, live proof
+    complexity: low
+    depends_on: [03-ui-crawl-and-report-surface]
+    status: pending
