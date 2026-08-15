@@ -1,7 +1,7 @@
 id: 02-rotation-binding-account-ui
 epic: portunus-bindings-settings-ui
 title: rotation-binding account hint editable in DetailDrawer
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: []
