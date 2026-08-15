@@ -379,3 +379,164 @@ def severity(status: LeakStatus, now: Optional[float] = None) -> Optional[str]:
     if elapsed_days < URGENT_TO_CRITICAL_DAYS:
         return "urgent"
     return "critical"
+
+
+def summarize(status: LeakStatus, now: Optional[float] = None) -> Dict[str, object]:
+    """{ref_name, severity, finding_count, first_detected_at,
+    last_detected_at} -- the one computed shape both the CLI (Slice 3) and
+    the read-only MCP tool (Slice 4) render, never duplicated."""
+    if not status.findings:
+        return {
+            "ref_name": status.ref_name,
+            "severity": None,
+            "finding_count": 0,
+            "first_detected_at": None,
+            "last_detected_at": None,
+        }
+    return {
+        "ref_name": status.ref_name,
+        "severity": severity(status, now=now),
+        "finding_count": len(status.findings),
+        "first_detected_at": min(f.first_detected_at for f in status.findings),
+        "last_detected_at": max(f.last_detected_at for f in status.findings),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Scan-path config store (portunus-leak-scan Slice 3) -- explicit, persisted,
+# empty by default. Its own lock file, separate from leak-status.json's
+# higher-churn writes (design-discussion.md self-grill).
+# ---------------------------------------------------------------------------
+
+
+def _scan_config_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "leak-scan-config.json")
+
+
+def _scan_config_lock_path(path: Optional[Path] = None) -> Path:
+    return _scan_config_path(path).with_suffix(".lock")
+
+
+def load_scan_paths(path: Optional[Path] = None) -> List[str]:
+    """Missing file means nothing configured yet -- returns []. `leak-scan`
+    with an empty config says so explicitly rather than silently
+    succeeding at having scanned nothing."""
+    config_path = _scan_config_path(path)
+    if not config_path.exists():
+        return []
+    raw = json.loads(config_path.read_text() or "{}")
+    return list(raw.get("paths", []))
+
+
+def _save_scan_paths_unlocked(paths: List[str], path: Optional[Path] = None) -> None:
+    config_path = _scan_config_path(path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = config_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"paths": paths}, indent=2))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, config_path)
+    os.chmod(config_path, 0o600)
+
+
+def add_scan_path(glob_pattern: str, path: Optional[Path] = None) -> List[str]:
+    with flock_path(_scan_config_lock_path(path)):
+        paths = load_scan_paths(path)
+        if glob_pattern not in paths:
+            paths.append(glob_pattern)
+            _save_scan_paths_unlocked(paths, path)
+        return paths
+
+
+def remove_scan_path(glob_pattern: str, path: Optional[Path] = None) -> List[str]:
+    with flock_path(_scan_config_lock_path(path)):
+        paths = load_scan_paths(path)
+        if glob_pattern in paths:
+            paths.remove(glob_pattern)
+            _save_scan_paths_unlocked(paths, path)
+        return paths
+
+
+# ---------------------------------------------------------------------------
+# Watermark persistence (portunus-leak-scan Slice 3) -- its own lock file,
+# rewritten on every scan (highest churn of the three stores).
+# ---------------------------------------------------------------------------
+
+
+def _watermarks_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "leak-scan-watermarks.json")
+
+
+def _watermarks_lock_path(path: Optional[Path] = None) -> Path:
+    return _watermarks_path(path).with_suffix(".lock")
+
+
+def load_watermarks(path: Optional[Path] = None) -> Dict[str, Watermark]:
+    watermarks_path = _watermarks_path(path)
+    if not watermarks_path.exists():
+        return {}
+    raw = json.loads(watermarks_path.read_text() or "{}")
+    return {
+        key: Watermark(
+            offset=w["offset"], size=w["size"], mtime=w["mtime"], line_count=w["line_count"]
+        )
+        for key, w in raw.items()
+    }
+
+
+def save_watermarks(watermarks: Dict[str, Watermark], path: Optional[Path] = None) -> None:
+    with flock_path(_watermarks_lock_path(path)):
+        watermarks_path = _watermarks_path(path)
+        watermarks_path.parent.mkdir(parents=True, exist_ok=True)
+        raw = {
+            key: {"offset": w.offset, "size": w.size, "mtime": w.mtime, "line_count": w.line_count}
+            for key, w in watermarks.items()
+        }
+        tmp = watermarks_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(raw, indent=2))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, watermarks_path)
+        os.chmod(watermarks_path, 0o600)
+
+
+# ---------------------------------------------------------------------------
+# Orchestration (portunus-leak-scan Slice 3) -- ties get_values() +
+# scan_paths() + the three stores together into one call a thin CLI/MCP
+# layer can use without re-implementing the wiring.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScanRunResult:
+    configured_paths: List[str]
+    findings: List[Finding]
+
+
+def run_scan(
+    registry: Registry,
+    broker: Broker,
+    backend: SecretBackend,
+    backend_for: Optional[Callable[[object], SecretBackend]] = None,
+    now: Optional[float] = None,
+    config_path: Optional[Path] = None,
+    status_path: Optional[Path] = None,
+    watermarks_path: Optional[Path] = None,
+) -> ScanRunResult:
+    """The full scan pipeline: load configured paths, fetch resolvable
+    values, scan incrementally, persist new findings and watermarks.
+    `configured_paths` in the result being empty is the signal callers use
+    to report "nothing configured" explicitly rather than a silent
+    empty-success."""
+    configured_paths = load_scan_paths(config_path)
+    if not configured_paths:
+        return ScanRunResult(configured_paths=[], findings=[])
+
+    values = get_values(registry, broker, backend, backend_for=backend_for)
+    prior_watermarks = load_watermarks(watermarks_path)
+    findings, new_watermarks = scan_paths(configured_paths, values, prior_watermarks)
+
+    merged_watermarks = {**prior_watermarks, **new_watermarks}
+    save_watermarks(merged_watermarks, watermarks_path)
+    if findings:
+        record_findings(findings, now=now, path=status_path)
+
+    return ScanRunResult(configured_paths=configured_paths, findings=findings)
