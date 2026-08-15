@@ -1,13 +1,13 @@
-"""portunus crawl -- discovery/context-bundling for references missing
-metadata (portunus-metadata-crawl). A DISCOVERY tool, not a writer: bundles
-everything already known about an incomplete reference (sm_name, group,
-project, org, repo, its project's VaultBinding, its provider's
-RotationBinding) so an LLM (Claude Code, another MCP-connected agent, or a
-human) can read it and call the already-shipped
-Registry.suggest_metadata()/portunus_suggest_metadata against whichever
-fields it has a real proposal for. This module never calls an LLM and never
-writes a Reference field itself -- retag() stays the only path that ever
-does, exactly as before this module existed.
+"""portunus crawl / portunus report (portunus-metadata-crawl).
+
+`crawl_candidates()` is a DISCOVERY tool, not a writer: bundles everything
+already known about an incomplete reference (sm_name, group, project, org,
+repo, its project's VaultBinding, its provider's RotationBinding) so an LLM
+(Claude Code, another MCP-connected agent, or a human) can read it and call
+the already-shipped Registry.suggest_metadata()/portunus_suggest_metadata
+against whichever fields it has a real proposal for. This module never
+calls an LLM and never writes a Reference field itself -- retag() stays the
+only path that ever does, exactly as before this module existed.
 
 Real vault data (checked during planning, 393 references) showed `repo` is
 set on fewer than 1% of references -- a repo-cloning crawler would have
@@ -16,6 +16,10 @@ GOOGLE_CLIENT_SECRET) and `group` (91% filled, encodes project/app/env
 structure) are the strongest signals actually available today; both are
 bundled here. Real external-repo scanning is deliberately out of scope
 until repo fill-rate rises (design-discussion.md §2, §6).
+
+`generate_report()` renders current vault state as Markdown -- a real
+"deploy docs" starting point (the user's own framing), independent of
+whether crawl_candidates() ever found or fixed anything.
 """
 from __future__ import annotations
 
@@ -84,3 +88,64 @@ def crawl_candidates(
             ),
         })
     return candidates
+
+
+_NO_ORG = "(no org set)"
+_NO_PROJECT = "(no project set)"
+
+
+def generate_report(registry: Registry, org: str = "", project: str = "") -> str:
+    """Render current vault state as Markdown -- org -> project structure,
+    each reference's known metadata, and an explicit gap section. Read-only,
+    metadata-only -- never a value. Useful immediately, with or without any
+    crawl-sourced metadata."""
+    refs = [
+        ref for ref in registry
+        if (not org or ref.org == org) and (not project or ref.project == project)
+    ]
+
+    by_org: Dict[str, Dict[str, List]] = {}
+    for ref in refs:
+        o = ref.org or _NO_ORG
+        p = ref.project or _NO_PROJECT
+        by_org.setdefault(o, {}).setdefault(p, []).append(ref)
+
+    lines = ["# Portunus Vault Report", ""]
+    lines.append(f"{len(refs)} reference(s) across {len(by_org)} org(s).")
+    lines.append("")
+
+    for o in sorted(by_org):
+        lines.append(f"## {o}")
+        lines.append("")
+        for p in sorted(by_org[o]):
+            lines.append(f"### {p}")
+            lines.append("")
+            for ref in sorted(by_org[o][p], key=lambda r: r.name):
+                lines.append(f"- **{ref.name}** (sm_name: `{ref.sm_name}`"
+                              + (f", provider: {ref.provider}" if ref.provider else "") + ")")
+                if ref.description:
+                    lines.append(f"  - description: {ref.description}")
+                if ref.purpose:
+                    lines.append(f"  - purpose: {ref.purpose}")
+                if ref.repo:
+                    lines.append(f"  - repo: {ref.repo}")
+            lines.append("")
+
+    gaps = [ref for ref in refs if _is_incomplete(ref)]
+    lines.append("## Gaps")
+    lines.append("")
+    if not gaps:
+        lines.append("None -- every reference in scope has description/purpose/org set.")
+    else:
+        for ref in sorted(gaps, key=lambda r: r.name):
+            missing = []
+            if not ref.description:
+                missing.append("description")
+            if not ref.purpose:
+                missing.append("purpose")
+            if not (ref.org or ref.project or ref.tags):
+                missing.append("org/project/tags")
+            lines.append(f"- **{ref.name}**: missing {', '.join(missing)}")
+    lines.append("")
+
+    return "\n".join(lines)
