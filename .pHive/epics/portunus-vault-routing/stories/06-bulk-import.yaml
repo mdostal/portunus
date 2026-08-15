@@ -1,7 +1,9 @@
 id: 06-bulk-import
 epic: portunus-vault-routing
 title: portunus_drop_bulk (Slice F)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.13.0"
 complexity: medium
 methodology: tdd
 depends_on: [01-vault-binding-model]

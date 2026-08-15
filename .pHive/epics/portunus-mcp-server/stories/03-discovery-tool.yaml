@@ -1,7 +1,9 @@
 id: 03-discovery-tool
 epic: portunus-mcp-server
 title: portunus_discover MCP tool
-status: pending
+status: shipped
+shipped_at: "2026-08-13T00:00:00Z"
+release_id: "v0.11.0"
 complexity: low
 methodology: tdd
 depends_on: [01-mcp-scaffold]

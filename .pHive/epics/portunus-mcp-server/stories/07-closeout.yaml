@@ -1,7 +1,9 @@
 id: 07-closeout
 epic: portunus-mcp-server
 title: Register in this environment, live JSON-RPC verification, real Gemini-key proof
-status: pending
+status: shipped
+shipped_at: "2026-08-13T00:00:00Z"
+release_id: "v0.11.0"
 complexity: medium
 methodology: classic
 depends_on:

@@ -1,7 +1,9 @@
 id: 02-rotation-provenance
 epic: portunus-metadata-and-rotation-provenance
 title: RotationBinding + RotationAdapter stub registry (Vercel priority) + UI wiring
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.15.0"
 complexity: medium
 methodology: tdd
 depends_on: []

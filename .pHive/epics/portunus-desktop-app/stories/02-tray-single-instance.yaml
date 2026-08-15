@@ -1,7 +1,9 @@
 id: 02-tray-single-instance
 epic: portunus-desktop-app
 title: Menu-bar tray, single-instance enforcement, close-to-tray, clean sidecar shutdown
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.16.0"
 complexity: low
 methodology: classic
 depends_on: [01-tauri-shell-sidecar]

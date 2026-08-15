@@ -1,7 +1,9 @@
 id: 01-mcp-scaffold
 epic: portunus-mcp-server
 title: portunus mcp subcommand + FastMCP stdio server + health tool
-status: pending
+status: shipped
+shipped_at: "2026-08-13T00:00:00Z"
+release_id: "v0.11.0"
 complexity: medium
 methodology: tdd
 depends_on: []

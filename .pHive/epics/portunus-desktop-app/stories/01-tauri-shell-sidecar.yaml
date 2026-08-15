@@ -1,7 +1,9 @@
 id: 01-tauri-shell-sidecar
 epic: portunus-desktop-app
 title: Tauri scaffold -- Next.js standalone sidecar, PATH capture, dynamic port
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.16.0"
 complexity: medium
 methodology: classic
 depends_on: []

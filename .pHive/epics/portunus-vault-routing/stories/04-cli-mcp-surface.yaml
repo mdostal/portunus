@@ -1,7 +1,9 @@
 id: 04-cli-mcp-surface
 epic: portunus-vault-routing
 title: CLI/MCP surface for bindings + sync (Slice D)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.13.0"
 complexity: medium
 methodology: tdd
 depends_on: [03-sync-down-cache]

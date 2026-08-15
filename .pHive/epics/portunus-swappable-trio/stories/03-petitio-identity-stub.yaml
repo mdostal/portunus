@@ -1,7 +1,9 @@
 id: 03-petitio-identity-stub
 epic: portunus-swappable-trio
 title: Identity + inert requester parameter (Slice Petitio-0)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.14.0"
 complexity: low
 methodology: tdd
 depends_on: []

@@ -1,7 +1,9 @@
 id: 05-closeout
 epic: portunus-swappable-trio
 title: Docs, 4 architecture diagrams, version bump, live proof
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.14.0"
 complexity: medium
 methodology: classic
 depends_on: [02-offline-resilient-sync, 03-petitio-identity-stub, 04-ui-two-zone-backend-picker]

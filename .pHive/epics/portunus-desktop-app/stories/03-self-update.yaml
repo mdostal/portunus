@@ -1,7 +1,9 @@
 id: 03-self-update
 epic: portunus-desktop-app
 title: gh-CLI-backed update check + confirmed relauncher swap
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.16.0"
 complexity: high
 methodology: classic
 depends_on: [01-tauri-shell-sidecar]

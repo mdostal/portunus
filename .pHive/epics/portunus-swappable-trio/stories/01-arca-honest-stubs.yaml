@@ -1,7 +1,9 @@
 id: 01-arca-honest-stubs
 epic: portunus-swappable-trio
 title: Five interface-conformant ARCA stubs (Slice ARCA-1)
-status: pending
+status: shipped
+shipped_at: "2026-08-14T00:00:00Z"
+release_id: "v0.14.0"
 complexity: medium
 methodology: tdd
 depends_on: []
