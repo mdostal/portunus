@@ -3,9 +3,11 @@ import { cleanError, runPortunus } from "@/lib/portunus";
 
 // Thin shell-out to `portunus bindings show/set` -- same pattern every
 // other route uses. No gating/routing logic duplicated in TypeScript; the
-// backend dropdown/sync_mode toggle only ever reflect what the CLI itself
-// reports. The WIF audience value itself is never returned by `bindings
-// show` -- unchanged restraint from before this route existed.
+// backend dropdown/sync_mode/account/wif_audience fields only ever reflect
+// what the CLI itself reports. `bindings show` DOES return the real
+// wif_audience value (neither it nor account is a credential -- account is
+// a local gcloud identity selector, wif_audience is WIF infrastructure
+// topology; see VaultBinding's own docstring in backend.py).
 export async function GET(req: NextRequest) {
   const project = req.nextUrl.searchParams.get("project");
   if (!project) {
@@ -30,6 +32,8 @@ export async function POST(req: NextRequest) {
   const args = ["bindings", "set", project];
   if (body.backend) args.push("--backend", String(body.backend));
   if (body.sync_mode) args.push("--sync-mode", String(body.sync_mode));
+  if (body.account) args.push("--account", String(body.account));
+  if (body.wif_audience) args.push("--wif-audience", String(body.wif_audience));
 
   const setResult = await runPortunus(args);
   if (setResult.code !== 0) {
