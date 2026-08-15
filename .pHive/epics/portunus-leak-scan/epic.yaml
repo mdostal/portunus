@@ -53,4 +53,4 @@ stories:
     title: docs, version bump, end-to-end live proof
     complexity: low
     depends_on: [06-mcp-automation-and-skill]
-    status: pending
+    status: shipped

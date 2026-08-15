@@ -1,7 +1,7 @@
 id: 07-closeout
 epic: portunus-leak-scan
 title: docs, version bump, end-to-end live proof
-status: pending
+status: shipped
 complexity: low
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [06-mcp-automation-and-skill]
