@@ -35,6 +35,7 @@ export default function DetailDrawer({
   const [loading, setLoading] = useState(true);
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveDraft, setMoveDraft] = useState({
+    org: reference.org,
     provider: reference.provider,
     project: reference.project,
     env: reference.env,
@@ -43,6 +44,8 @@ export default function DetailDrawer({
     injected_as: dictToKvString(reference.injected_as),
     group: reference.group,
     related: (reference.related || []).join(","),
+    repo: reference.repo,
+    source_files: (reference.source_files || []).join(","),
   });
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveStatus, setMoveStatus] = useState<string | null>(null);
@@ -158,9 +161,11 @@ export default function DetailDrawer({
       <StatePill state={reference.state} />
       <RotationBadge reference={reference} prominent />
       <div className="tags-row">
+        {reference.org && <span className="chip">org={reference.org}</span>}
         {reference.provider && <span className="chip">provider={reference.provider}</span>}
         {reference.project && <span className="chip">project={reference.project}</span>}
         {reference.env && <span className="chip">env={reference.env}</span>}
+        {reference.repo && <span className="chip">repo={reference.repo}</span>}
         {Object.entries(reference.tags || {}).map(([k, v]) => (
           <span className="chip" key={k}>
             {k}={v}
@@ -292,6 +297,15 @@ export default function DetailDrawer({
         <form className="inject-controls" onSubmit={submitMove}>
           <div className="form-row">
             <label className="form-field">
+              <span>org (umbrella above project)</span>
+              <input
+                className="field"
+                value={moveDraft.org}
+                onChange={(e) => setMoveDraft((d) => ({ ...d, org: e.target.value }))}
+                placeholder="firefly-events"
+              />
+            </label>
+            <label className="form-field">
               <span>provider</span>
               <input
                 className="field"
@@ -360,6 +374,26 @@ export default function DetailDrawer({
                 value={moveDraft.related}
                 onChange={(e) => setMoveDraft((d) => ({ ...d, related: e.target.value }))}
                 placeholder="project-y-mongodb-prod"
+              />
+            </label>
+          </div>
+          <div className="form-row">
+            <label className="form-field">
+              <span>repo (which git repo consumes this)</span>
+              <input
+                className="field"
+                value={moveDraft.repo}
+                onChange={(e) => setMoveDraft((d) => ({ ...d, repo: e.target.value }))}
+                placeholder="event-api"
+              />
+            </label>
+            <label className="form-field">
+              <span>source_files (comma-separated)</span>
+              <input
+                className="field"
+                value={moveDraft.source_files}
+                onChange={(e) => setMoveDraft((d) => ({ ...d, source_files: e.target.value }))}
+                placeholder="docker-compose.prod.yml"
               />
             </label>
           </div>

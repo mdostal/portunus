@@ -160,7 +160,7 @@ def cmd_reg(args) -> int:
         except ValueError as exc:
             return _err(str(exc))
         ref = registry.add(args.name, args.sm_name, scope=args.scope,
-                           kind=args.kind, project=args.project or "",
+                           kind=args.kind, org=args.org or "", project=args.project or "",
                            description=args.description or "", purpose=args.purpose or "",
                            injected_as=injected_as, group=args.group or "", related=related,
                            repo=args.repo or "")
@@ -456,6 +456,8 @@ def cmd_retag(args) -> int:
         return _err(str(exc))
 
     kwargs = {}
+    if args.org:
+        kwargs["org"] = args.org
     if args.provider:
         kwargs["provider"] = args.provider
     if args.project:
@@ -490,7 +492,7 @@ def cmd_retag(args) -> int:
 
     broker.audit.append("retag", ref.sm_name, "ok")
     print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
-          f"(provider={ref.provider}, project={ref.project}, env={ref.env}, tags={ref.tags})")
+          f"(org={ref.org}, provider={ref.provider}, project={ref.project}, env={ref.env}, tags={ref.tags})")
     return 0
 
 
@@ -655,13 +657,15 @@ def cmd_drop(args) -> int:
         extra_tags = _parse_tags(args.tags) if args.tags else {}
         injected_as = _parse_tags(args.injected_as) if args.injected_as else {}
         related = _parse_related(args.related) if args.related else []
+        source_files = _parse_related(args.source_files) if args.source_files else []
     except ValueError as exc:
         return _err(str(exc))
     ref = registry.add(
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
-        provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
+        org=args.org, provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
         group=args.group, related=related, backend=args.backend, repo=args.repo,
+        source_files=source_files,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
@@ -742,6 +746,8 @@ def cmd_retag_bulk(args) -> int:
         return _err(str(exc))
 
     kwargs = {}
+    if args.org:
+        kwargs["org"] = args.org
     if args.repo:
         kwargs["repo"] = args.repo
     if source_files is not None:
@@ -1387,6 +1393,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("sm_name")
     a.add_argument("--scope", default="")
     a.add_argument("--kind", default="")
+    a.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     a.add_argument("--project", default="")
     a.add_argument("--description", default="", help="what this secret is")
     a.add_argument("--purpose", default="", help="what this secret is for")
@@ -1441,8 +1448,9 @@ def build_parser() -> argparse.ArgumentParser:
                       help="required for an 'add' request: comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
     ask.set_defaults(func=cmd_ask)
 
-    rt = sub.add_parser("retag", help="update a reference's provider/project/env/tags/metadata in place")
+    rt = sub.add_parser("retag", help="update a reference's org/provider/project/env/tags/metadata in place")
     rt.add_argument("name")
+    rt.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     rt.add_argument("--provider", default="")
     rt.add_argument("--project", default="")
     rt.add_argument("--env", default="")
@@ -1465,6 +1473,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rtb.add_argument("--group-prefix", required=True,
                       help="plain string prefix matched against each reference's group")
+    rtb.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     rtb.add_argument("--repo", default="", help="the git repo that consumes these secrets")
     rtb.add_argument("--source-files", default="",
                       help="comma-separated file paths, replaces the source_files list")
@@ -1515,6 +1524,7 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("sm_name", help="vault key, e.g. dostal-shared-anthropic")
     dr.add_argument("--scope", default="")
     dr.add_argument("--kind", default="")
+    dr.add_argument("--org", default="", help="organizational umbrella above project, e.g. firefly-events")
     dr.add_argument("--provider", default="")
     dr.add_argument("--project", default="")
     dr.add_argument("--env", default="")
@@ -1526,6 +1536,8 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     dr.add_argument("--related", default="", help="comma-separated reference names")
     dr.add_argument("--repo", default="", help="the git repo that consumes this secret")
+    dr.add_argument("--source-files", default="",
+                     help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
         choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),

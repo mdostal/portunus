@@ -22,6 +22,7 @@ export default function AddSecretForm({
     kind: initial?.kind || "",
     scope: initial?.scope || "",
     backend: initial?.backend || "",
+    org: initial?.org || "",
     provider: initial?.provider || "",
     project: initial?.project || "",
     env: initial?.env || "",
@@ -31,6 +32,8 @@ export default function AddSecretForm({
     injected_as: initial?.injected_as || "",
     group: initial?.group || "",
     related: initial?.related || "",
+    repo: initial?.repo || "",
+    source_files: initial?.source_files || "",
   });
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -120,6 +123,10 @@ export default function AddSecretForm({
         </div>
         <div className="form-row">
           <label className="form-field">
+            <span>org (umbrella above project)</span>
+            <input className="field" {...field("org")} placeholder="firefly-events" />
+          </label>
+          <label className="form-field">
             <span>provider</span>
             <input className="field" {...field("provider")} placeholder="vercel" />
           </label>
@@ -158,6 +165,16 @@ export default function AddSecretForm({
           <label className="form-field">
             <span>related (comma-separated)</span>
             <input className="field" {...field("related")} placeholder="other-ref-name" />
+          </label>
+        </div>
+        <div className="form-row">
+          <label className="form-field">
+            <span>repo (which git repo consumes this)</span>
+            <input className="field" {...field("repo")} placeholder="event-api" />
+          </label>
+          <label className="form-field">
+            <span>source_files (comma-separated)</span>
+            <input className="field" {...field("source_files")} placeholder="docker-compose.prod.yml" />
           </label>
         </div>
         <label className="form-field">
