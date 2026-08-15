@@ -38,10 +38,15 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `check_injectable(name, requester: Optional[Identity] = None)` carries a deliberately inert
   seam (portunus-swappable-trio) — `Identity` (name + kind: human/agent/system, resolved the
   same way `AuditChain`'s actor already is) is threaded through but never consulted; every
-  caller is currently allowed regardless of `requester`. Real role-based enforcement (a
-  `PolicyStore`, an `EscalationRequest` state machine modeled on Teleport's request→review→
-  time-boxed-grant pattern) is designed (see `.pHive/epics/portunus-swappable-trio/docs/
-  research-brief.md`) but not yet built — no rush, per explicit product direction.
+  caller is currently allowed regardless of `requester`. The `PolicyStore` half of that design
+  now exists as `roles.py` (portunus-vault-trust-and-access) — `PolicyRecord(scope_type: org|
+  project|env, scope_value, role, actions[])`, persisted for real in `PORTUNUS_HOME/roles.json`,
+  editable via `portunus roles set/delete/show` and the UI's Settings page — but STILL not
+  consumed anywhere: `check_injectable()`/`retag()` are byte-identical whether or not
+  `roles.json` has content (`tests/test_roles.py`'s own defining test proves this directly, not
+  just asserts it). Real enforcement (still needs an `EscalationRequest`-style evaluation
+  function — most-specific-scope-wins? explicit deny beats allow? genuinely open) is future
+  work — no rush, per explicit product direction.
 - **Reference** — a registry entry: `name -> Secret Manager location`, plus scope, kind,
   lifecycle `state`, and approval gate. Never carries the value itself.
 - **Placeholder** — a `{{secret:NAME}}` token. `Resolver` substitutes it with the live value
@@ -154,6 +159,36 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   (`allow_expired=True` opts out for metadata-only callers). `inspect_session()`/
   `list_sessions()` return namespace/TTL/rotation/`expired` metadata only, never the session
   payload. CLI-exposed as `portunus session store|load|inspect|list|remove` — `load` mirrors `resolve`'s tempfile-only-out discipline exactly (0600 file, path only, never the record on stdout). No UI exposure yet.
+- **`org`** (`registry.py`, portunus-vault-trust-and-access) — an organizational umbrella one
+  level above `project` (e.g. `firefly-events` spanning `ffe-cicd`/`shindig`), IS in
+  `_STRUCTURED_TAG_FIELDS` (tag-matchable, participates in `retag()`'s collision check
+  alongside `provider`/`project`/`env`/`repo`) — unlike `group`, which stays free-text/
+  organizational-only and unrelated to identity. Vault Map's org → project drill-down is built
+  entirely on this field (no new store) — the fix for a flat card wall becoming unmanageable
+  past ~30 repos.
+- **Custom views** (`views.py`, `PORTUNUS_HOME/views.json`) — named, human-curated lists of
+  reference *names* (not a saved query) for task-shaped clustering that doesn't map onto org/
+  project/env ("everything for a specific deploy"). Deliberately orthogonal to the structural
+  hierarchy. Every mutator (`create_view`/`add_to_view`/`remove_from_view`/`delete_view`) wraps
+  its own load→mutate→save in one `flock` acquisition — locked from day one, unlike
+  `vault-bindings.json`'s own still-unfixed retrofitted save-only lock. CLI: `portunus views
+  create/add/remove/delete/show`. UI: Console's "My views" panel + per-reference add/remove in
+  `DetailDrawer`.
+- **`suggested` / `portunus_suggest_metadata`** (`registry.py`'s `Reference.suggested` sidecar,
+  `Registry.suggest_metadata()`/`clear_suggestion()`, the MCP tool of the same name) — an agent
+  proposes `description`/`purpose`/`tags`/`group` (`SUGGESTIBLE_FIELDS` — routing fields are
+  structurally rejected, never suggestible: they carry resolution-time consequences an agent
+  shouldn't redirect); the proposal lands ONLY in the sidecar, never the live field.
+  `portunus metadata confirm <name> <field>` applies it via the SAME `retag()` a manual edit
+  would use (no second write path), then clears the sidecar entry; `reject` just clears it,
+  never touching the live field. UI: `DetailDrawer` shows a "suggested by \<agent\>: '...'
+  [Confirm] [Reject]" block per pending field.
+- **`portunus vault status` / first-run detection** — reports whether `PORTUNUS_HOME` has EVER
+  been initialized (absence of BOTH
+  `registry.json` and `vault-bindings.json`), checked in Python against `paths.home()`'s own
+  resolution rather than duplicated as filesystem logic in TypeScript. Drives the Standalone
+  UI's first-run `SetupWizard` — an already-used vault, however empty it looks, never sees it
+  again.
 
 ## Key paths
 
@@ -167,6 +202,9 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/adapters.py` — boundary injection adapters (env/file/HTTP header/HTTP body).
 - `src/portunus/intent.py` — `parse_intent()`, the semantic front door's text-to-tags step.
 - `src/portunus/cli.py` — the `portunus` CLI entry point (`find`, `inject`, `ask`, `drop`, ...).
+- `src/portunus/views.py` — custom views (`PORTUNUS_HOME/views.json`), locked from day one.
+- `src/portunus/roles.py` — STUB role/policy schema (`PORTUNUS_HOME/roles.json`) — persists for
+  real, consumed by nothing.
 - `ui/` — the standalone localhost-only UI (Console / Vault Map / Ask Bar). Every API route
   under `ui/app/api/` shells out to the same gated `portunus` console script rather than
   reimplementing any gating logic in TypeScript — see `ui/lib/portunus.ts`. Also runnable as a

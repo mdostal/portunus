@@ -86,6 +86,27 @@ export default function DetailDrawer({
     }
   }
 
+  const [suggestionBusy, setSuggestionBusy] = useState(false);
+
+  // Confirm applies via the SAME /api/retag path a manual edit would use
+  // (mirrors the CLI's own `portunus metadata confirm` -- no second write
+  // path); reject only clears the sidecar entry, never touches the live
+  // field. Both close the drawer + refresh on success -- the same
+  // consistency choice submitMove already made for its own mutation.
+  async function resolveSuggestion(fieldName: string, action: "confirm" | "reject") {
+    setSuggestionBusy(true);
+    try {
+      const res = await fetch("/api/metadata", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, name: reference.name, field: fieldName }),
+      });
+      if (res.ok) onMoved();
+    } finally {
+      setSuggestionBusy(false);
+    }
+  }
+
   async function removeFromView(viewName: string) {
     setViewsBusy(true);
     try {
@@ -256,6 +277,38 @@ export default function DetailDrawer({
           </select>
         )}
       </div>
+
+      {/* Agent-suggested metadata (Slice 6) -- landed in the suggested{}
+          sidecar via portunus_suggest_metadata, NEVER the live field, until
+          confirmed here. Reject discards without ever touching the live
+          field either. */}
+      {Object.entries(reference.suggested || {}).length > 0 && (
+        <div className="suggestion-block">
+          {Object.entries(reference.suggested || {}).map(([fieldName, info]) => (
+            <div className="suggestion-row" key={fieldName}>
+              <span className="k">{fieldName}</span>
+              <span className="suggestion-value">
+                {typeof info.value === "string" ? info.value : JSON.stringify(info.value)}
+              </span>
+              <span className="suggestion-by">suggested by {info.by}</span>
+              <button
+                className="btn quiet"
+                disabled={suggestionBusy}
+                onClick={() => resolveSuggestion(fieldName, "confirm")}
+              >
+                Confirm
+              </button>
+              <button
+                className="btn quiet"
+                disabled={suggestionBusy}
+                onClick={() => resolveSuggestion(fieldName, "reject")}
+              >
+                Reject
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {(reference.description || reference.purpose || Object.keys(reference.injected_as || {}).length > 0
         || reference.group || reference.repo || (reference.related || []).length > 0

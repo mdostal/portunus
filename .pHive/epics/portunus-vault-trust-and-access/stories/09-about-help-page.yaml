@@ -1,0 +1,58 @@
+id: 09-about-help-page
+epic: portunus-vault-trust-and-access
+title: in-app About/Help page
+status: shipped
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [06-llm-suggest-human-confirm-metadata, 08-setup-wizard]
+
+description: |
+  New About tab -- what Portunus is, the component model (ARCA/OSTIARIUS/Petitio), how to
+  organize a large vault (org hierarchy + custom views), how the suggest/confirm workflow
+  works, best practices, and an honest disclosure that roles are not yet enforced. Static
+  content, ported from README.md's own framing plus new sections for this epic's additions.
+
+acceptance_criteria:
+  - "Given the About tab, when opened, then it renders without any API fetch (static content)"
+  - "Given the Roles section of the page, when read, then it explicitly states enforcement is not yet built -- matches Settings' own stub-banner honesty"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: AboutPage.tsx + About tab wiring.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass confirming the tab renders and key sections are present.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/AboutPage.tsx
+      purpose: the new page
+
+files_to_modify:
+  - file: ui/app/components/AboutPage.tsx
+    change: new component
+  - file: ui/app/page.tsx
+    change: About tab wiring
+
+design_decisions:
+  - decision: never document a feature as more real than it is
+    rationale: "Matches the stub-banner honesty already established in Settings -- the About page's own Roles section repeats the same disclosure rather than glossing over it"
+
+cross_cutting: []
+
+risks:
+  - severity: low
+    description: None material -- static content
+    mitigation: "npm run build clean; live Playwright content check"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/vertical-plan.md
+    relevant_excerpt: "Slice 9"

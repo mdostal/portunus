@@ -1,0 +1,71 @@
+id: 05-role-policy-schema-stub
+epic: portunus-vault-trust-and-access
+title: role/policy schema -- stub only, no enforcement
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  New src/portunus/roles.py: PolicyRecord(scope_type: org|project|env, scope_value, role,
+  actions[]) persisted to PORTUNUS_HOME/roles.json, locked from day one (views.py's own
+  pattern). Models the real motivating example: org-wide dev access + project-scoped admin
+  with prod-release rights, coexisting as separate records. role/actions are deliberately open
+  strings, not a hardcoded enum. CLI: `portunus roles set/delete/show`. Petitio's future
+  access-level engine, explicitly deferred by the user -- check_injectable()/retag() never read
+  this file.
+
+acceptance_criteria:
+  - "Given a policy set via CLI, when reloaded, then it round-trips correctly, keyed by (scope_type, scope_value, role)"
+  - "Given multiple policies at different scopes, when both are set, then they coexist without collision"
+  - "Given check_injectable()/retag() calls before and after configuring restrictive-looking policies, then behavior is BYTE-IDENTICAL -- the defining stub-inertness test"
+  - "Given 10 concurrent processes each setting a distinct policy, when all complete, then all 10 persist -- zero lost writes"
+
+methodology: tdd
+steps:
+  - id: implement
+    description: roles.py (PolicyRecord, set_policy/delete_policy/load_policies, locked from day one) + CLI subcommands.
+    agent: developer
+  - id: test
+    description: pytest including the byte-identical stub-inertness test and a real multi-process concurrency test.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [test]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/roles.py
+      purpose: the new stub store
+    - path: src/portunus/broker.py
+      purpose: Identity/check_injectable's existing inert seam this extends in shape
+    - path: src/portunus/views.py
+      purpose: the lock-from-day-one pattern reused here
+
+files_to_modify:
+  - file: src/portunus/roles.py
+    change: new module
+  - file: src/portunus/cli.py
+    change: roles set/delete/show subcommands
+
+design_decisions:
+  - decision: role and actions are open strings, not a hardcoded enum
+    rationale: "design-discussion.md §1 -- role meaning is scope-dependent (an org-wide dev and a project-level admin aren't the same shape of permission)"
+  - decision: no evaluation function shipped
+    rationale: "Building it now, unused, would be speculative work this epic's own §0 argues against for a different reason (compliance isolation) but the same principle applies"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Policies only ever describe scope/role/actions, all plain config strings -- structural check confirms no .access( anywhere in roles.py"
+
+risks:
+  - severity: medium
+    description: A future edit could accidentally start reading roles.json somewhere, silently activating unreviewed enforcement
+    mitigation: "The byte-identical test is the guard -- any PR that makes it fail is making exactly that change and must justify it explicitly"
+
+references:
+  - path: .pHive/epics/portunus-vault-trust-and-access/docs/design-discussion.md
+    relevant_excerpt: "§1"

@@ -17,11 +17,11 @@ from typing import List, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .backend import BackendError, SyncingBackend, load_vault_bindings
-from .broker import ApprovalRequired, NotInjectable
+from .broker import ApprovalRequired, Identity, NotInjectable
 from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
-from .registry import AmbiguousMatch, NoMatch, Registry
+from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
 from .rotation import load_rotation_bindings
 
@@ -190,6 +190,39 @@ def portunus_discover(project: str, register: bool = False) -> dict:
         ],
         "wif_configured": _wif_configured(project),
     }
+
+
+@mcp.tool()
+def portunus_suggest_metadata(
+    name: str, description: str = "", purpose: str = "",
+    group: str = "", tags: Optional[dict] = None,
+) -> dict:
+    """Propose description/purpose/group/tags for a reference -- lands in a
+    provenance sidecar, NEVER the live field. A human must explicitly
+    confirm (`portunus metadata confirm <name> <field>`, or the UI's
+    accept/reject control) before it takes effect on the real reference.
+    Routing fields (org/provider/project/env/repo/backend) are never
+    suggestible here -- those carry resolution-time consequences and stay
+    human-only, direct `portunus retag`."""
+    registry, _audit, _broker, _resolver = _build()
+    fields: dict = {}
+    if description:
+        fields["description"] = description
+    if purpose:
+        fields["purpose"] = purpose
+    if group:
+        fields["group"] = group
+    if tags:
+        fields["tags"] = tags
+    if not fields:
+        return {"error": f"at least one of {SUGGESTIBLE_FIELDS} is required"}
+    try:
+        ref = registry.suggest_metadata(name, by=Identity.from_env().name, fields=fields)
+    except KeyError:
+        return {"error": f"unknown reference: {name}"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"name": ref.name, "suggested_fields": list(fields.keys())}
 
 
 @mcp.tool()

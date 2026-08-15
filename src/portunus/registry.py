@@ -13,6 +13,7 @@ import json
 import os
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
@@ -27,6 +28,16 @@ VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested")
 # Tag keys resolved against Reference's own fields; anything else is looked
 # up in the open `tags` dict. Keep in sync with Reference's structured fields.
 _STRUCTURED_TAG_FIELDS = ("org", "provider", "project", "env", "scope", "kind", "repo")
+
+# Fields an agent may ever suggest via Registry.suggest_metadata() --
+# deliberately excludes every routing field (org/provider/project/env/repo/
+# backend). Those carry resolution-time consequences (backend.py's 3-level
+# precedence tree keys on project/backend) -- an agent that could set them
+# could effectively redirect where a future resolve fetches from. Wrong
+# description/purpose/tags/group is annoying, not dangerous -- that's the
+# whole reason these four, and only these four, get the lighter suggest/
+# confirm workflow (portunus-vault-trust-and-access design-discussion.md §2).
+SUGGESTIBLE_FIELDS = ("description", "purpose", "tags", "group")
 
 
 class NoMatch(KeyError):
@@ -72,6 +83,11 @@ class Reference:
                             # (one cloud project, e.g. a GCP project, can span many repos)
     source_files: list = field(default_factory=list)  # file(s) in that repo declaring/
                             # referencing this secret, e.g. "docker-compose.prod.yml"
+    suggested: dict = field(default_factory=dict)  # {field_name: {"value":..., "by":..., "at":...}}
+                            # agent-proposed metadata, pending human confirm/reject -- NEVER
+                            # applied to the live field except via Registry.confirm_suggestion()
+                            # (portunus-vault-trust-and-access). Only description/purpose/tags/
+                            # group are ever suggestible -- see SUGGESTIBLE_FIELDS.
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -330,6 +346,33 @@ class Registry:
             ref.related = list(new_related)
             ref.backend = new_backend
             ref.source_files = list(new_source_files)
+        return ref
+
+    def suggest_metadata(self, name: str, by: str, fields: Dict[str, object]) -> Reference:
+        """Agent-proposed metadata, landing ONLY in the `suggested` sidecar
+        -- never the live field. Only SUGGESTIBLE_FIELDS may ever be
+        proposed here; passing a routing field (org/provider/project/env/
+        repo/backend) raises rather than silently dropping it, so a caller
+        never mistakes "was ignored" for "was suggested but not yet shown."
+        """
+        invalid = sorted(set(fields) - set(SUGGESTIBLE_FIELDS))
+        if invalid:
+            raise ValueError(f"not suggestible: {invalid} (only {SUGGESTIBLE_FIELDS})")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._locked():
+            ref = self.require(name)
+            for field_name, value in fields.items():
+                ref.suggested[field_name] = {"value": value, "by": by, "at": now}
+        return ref
+
+    def clear_suggestion(self, name: str, field_name: str) -> Reference:
+        """Drop one field's pending suggestion, whether it was just applied
+        (confirm) or discarded outright (reject) -- the caller decides
+        which by whether it called retag() first. No-op if there was no
+        pending suggestion for that field."""
+        with self._locked():
+            ref = self.require(name)
+            ref.suggested.pop(field_name, None)
         return ref
 
     # --- lookup ----------------------------------------------------------
