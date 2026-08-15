@@ -1,0 +1,87 @@
+id: 02-vault-lock-and-coordinated-snapshot
+epic: portunus-vault-backup
+title: A fourth lock (vault-bindings.json) + a coordinated multi-file snapshot primitive
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  Two closely related additions, both prerequisites for story 03: (a) `vault-bindings.json`
+  currently has no lock at all, unlike registry.json (Registry._locked()), audit.log
+  (AuditChain._locked()), and vault.enc.json (LocalEncryptedBackend._locked()) -- give it the
+  same fcntl.flock idiom, its own dedicated `.lock` file. (b) A new coordinated-snapshot
+  primitive that acquires all four locks (registry, vault.enc, vault-bindings, audit) in a fixed
+  alphabetical order (to prevent lock-ordering deadlock against any future code that acquires
+  more than one), reads all four files' current bytes while holding every lock, and returns them
+  together -- guaranteeing the snapshot reflects one consistent instant, not four independent
+  reads straddling a concurrent writer's mutation. This primitive is infrastructure only in this
+  story -- no export/import command yet (that's story 03); this story's own tests exercise it
+  directly.
+
+acceptance_criteria:
+  - "Given two processes, one calling the new vault-bindings lock and one already holding it, when the second process attempts to acquire it, then it blocks until released (same flock semantics as the other three locks) rather than proceeding unsynchronized"
+  - "Given a coordinated snapshot call while a concurrent writer is mid-mutation on any one of the four files, when the snapshot completes, then all four files it captured are read only after every lock was held simultaneously -- no interleaving where one file's mutation is included and a dependent file's isn't"
+  - "Given the four locks acquired in a fixed alphabetical order every time (by any caller), when tested with concurrent snapshot calls, then no deadlock occurs across repeated concurrent runs"
+  - "Given a project without rotation-bindings.json or gcp-bindings.json present, when a snapshot runs, then it's not treated as an error -- the primitive returns present files only, with a corrected file-list check"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Real multi-process regression tests (matching this session's own barrier-file synchronization technique used for the earlier AuditChain/LocalEncryptedBackend lock fixes) proving lock-blocking and snapshot-consistency, not thread-based approximations.
+    agent: tester
+  - id: implement
+    description: Add VaultBindings._locked() (or equivalent) using the existing flock idiom; implement the coordinated snapshot function.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm fixed lock-acquisition order is enforced identically everywhere it's used (no caller can acquire a subset out of order).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: Registry._locked() -- the exact flock idiom (dedicated .lock file, exclusive lock, bounded polling with timeout) this story replicates for vault-bindings.json
+    - path: src/portunus/audit.py
+      purpose: AuditChain._locked() -- second real-world instance of the same idiom, added earlier this session to fix the sequence-counter race
+    - path: src/portunus/localvault.py
+      purpose: LocalEncryptedBackend._locked() -- third instance, added earlier this session to fix the store()/remove() lost-write race; also the file this story's snapshot primitive reads vault.enc.json through
+    - path: src/portunus/paths.py
+      purpose: home() resolution -- where all four target files and their new/existing lock files live
+
+files_to_modify:
+  - file: src/portunus/vault_bindings.py
+    change: Add a dedicated _locked() context manager using the same flock idiom (exact module TBD by implement step based on where load_vault_bindings()/save currently live)
+  - file: src/portunus/backup.py
+    change: New module -- the coordinated snapshot primitive (fixed alphabetical lock order, read-all-under-lock, return file contents keyed by filename)
+  - file: tests/test_backup.py
+    change: New multi-process regression tests
+
+design_decisions:
+  - decision: Fixed alphabetical lock-acquisition order
+    rationale: "design-discussion.md §3 -- prevents lock-ordering deadlock if any future code path ever needs more than one of these locks at once"
+  - decision: Snapshot primitive is separate from the export command
+    rationale: "Keeps the concurrency-critical, highest-risk-of-subtle-bugs part (multi-lock acquisition) independently testable from the archive-format/passphrase concerns story 03 adds on top"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The snapshot primitive reads master.key and vault.enc.json's raw (still-encrypted) bytes -- it must never decrypt anything itself, only pass bytes through. Verify no decryption call is introduced in this story."
+  - concern: audit-chain-integrity
+    action: "Acquiring audit.log's lock as part of the coordinated snapshot must not itself append an audit entry or otherwise mutate the chain -- read-only under lock."
+
+risks:
+  - severity: medium
+    description: A lock-ordering bug (inconsistent acquisition order between this new primitive and any future multi-lock caller) could deadlock the whole vault
+    mitigation: "Fixed, single documented order (alphabetical) as the one and only pattern; acceptance criterion 3 requires a real concurrent-deadlock regression test"
+
+references:
+  - path: .pHive/epics/portunus-vault-backup/docs/design-discussion.md
+    relevant_excerpt: "§3 -- coordinated snapshot design"
+  - path: .pHive/epics/portunus-vault-backup/docs/research-brief.md
+    relevant_excerpt: "§3 -- concurrency relevance to backup/restore"

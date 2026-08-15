@@ -435,6 +435,11 @@ state agent-initiated `ask "add ..."` requests use — so nothing becomes inject
 human reviews and promotes it. The local reference name is derived as `<project>-<sm-name>`
 so two different projects that happen to share a secret name never collide.
 
+For a project bound `--sync-mode cached` (see below), `--register` also warms the local
+encrypted cache immediately — no separate first-resolve round-trip needed before the value is
+available offline. The reference's `state` still stays `requested`: it's not injectable any
+sooner, only cached sooner.
+
 ### Per-project/per-reference vault routing + sync-down caching
 
 A reference resolves through whichever backend its own project (or the reference itself) is
@@ -480,6 +485,28 @@ portunus drop-bulk entries.json   # [{"name": ..., "sm_name": ..., "value": ...}
 
 A malformed entry is reported under a separate `failed` list and never aborts the rest of the
 batch.
+
+### Vault backup: passphrase-locked export/import
+
+`portunus vault export`/`portunus vault import` move the vault's whole critical-state surface
+(reference registry, master key, encrypted values, vault bindings, audit log) as one portable
+archive — useful for a machine move, a reinstall, or just a real backup that doesn't depend on
+a fully-signed desktop app's own local sandboxing.
+
+```bash
+export PORTUNUS_EXPORT_PASSPHRASE="something only you know"   # or answer the interactive prompt
+portunus vault export --out ~/backups/portunus-$(date +%F).pvault
+portunus vault import ~/backups/portunus-2026-08-14.pvault --force   # on a new machine
+```
+
+The archive is re-encrypted under your passphrase (PBKDF2-SHA256, 600k iterations) — it never
+carries the vault's own live decryption key. A wrong passphrase on import fails closed with a
+clear error; the passphrase itself is never accepted via an inline flag, only the
+`PORTUNUS_EXPORT_PASSPHRASE` env var or an interactive prompt. `import` refuses to touch a
+`PORTUNUS_HOME` that already has vault state present unless you pass `--force` (a full replace,
+not a merge). CLI-only by design — no MCP tool, no UI surface: an archive containing every
+secret in your vault should never be triggerable by an LLM-facing tool without you directly
+running the command yourself.
 
 ### Target a different vault (`--home`)
 

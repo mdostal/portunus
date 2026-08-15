@@ -203,6 +203,50 @@ on — it doesn't add a new component, doesn't change ARCA's backend-selection p
 and doesn't touch how a value is resolved. `portunus tree --by repo` is the same tree-rendering
 path as `--by group` (§1's `Resolver` node is unaffected), keyed on a different field.
 
+## 8. Eager sync-down + vault export/import (portunus-vault-backup)
+
+Two related but mechanically distinct additions on top of §2's ARCA backend-selection tree and
+the local-encrypted vault's own file layout, both added to close a real gap: nothing purpose-
+built existed for either "get a freshly-discovered secret's value cached locally right away" or
+"move/restore the whole vault."
+
+**Eager sync-down.** `discover --register` (CLI and MCP) previously left a freshly-registered
+reference's local cache cold — `SyncingBackend` (§2) only pulls a value down on the *first real
+resolve*, and a freshly-registered reference always lands at `state=requested`, which
+`Broker.check_injectable` fails closed on. For a project bound `sync_mode=cached`, registration
+now also calls `_eager_sync_down()` (`cli.py`), which warms the local cache immediately by
+calling the routed backend's `access()` directly — deliberately bypassing `check_injectable` for
+this one internal, value-never-returned cache-populate call. The reference's `state` stays
+`requested` throughout: every real resolve/inject/ask/MCP path is gated exactly as before: only
+*when* it's warm changes, never *whether* it's injectable.
+
+**Vault export/import.** `portunus vault export`/`portunus vault import` (CLI-only — no MCP
+tool, no UI surface: a full-vault archive should never be triggerable by an LLM-facing tool
+without a human directly initiating it) move the vault's critical-state surface as one portable,
+passphrase-locked archive. Two pieces make this safe, both in `backup.py`:
+
+- **Coordinated snapshot.** `registry.json`, `master.key`, `vault.enc.json`,
+  `vault-bindings.json`, and `audit.log` + `.clock` (the append() sequence counter — MUST travel
+  with `audit.log`, not just alongside it, or a restored chain's next `append()` can re-mint a
+  seq that already exists) are all read together under every relevant lock — `registry.lock`,
+  `vault.enc.lock`, `vault-bindings.lock` (new; previously the only critical-state file with no
+  lock at all), `.clock.lock` — acquired in one fixed, alphabetically-sorted order so the result
+  reflects one consistent instant, never independent reads straddling a concurrent writer.
+  Legacy `gcp-bindings.json`/`rotation-bindings.json` are included if present, read unlocked
+  (neither has a dedicated writer-side lock today either).
+- **Passphrase re-encryption.** The snapshot is bundled and re-encrypted under a PBKDF2-SHA256-
+  derived key (600k iterations) from an operator passphrase — never the vault's own `master.key`
+  bundled as-is. `master.key` alone is sufficient to decrypt every stored value; an archive
+  meant to leave the access-controlled `PORTUNUS_HOME` must not carry a live decryption key
+  un-re-encrypted. The passphrase itself is sourced only via `PORTUNUS_EXPORT_PASSPHRASE` or an
+  interactive prompt, never an inline flag — the same boundary-only convention `portunus drop`
+  uses for its own sensitive input.
+
+No bidirectional multi-machine sync was built — `SyncingBackend` already solves the narrower
+"stay usable while disconnected" problem it exists for, and real sync would need genuine
+conflict-resolution design given this vault has real concurrent-writer traffic (see the
+`AuditChain`/`LocalEncryptedBackend` lock fixes this epic's own prerequisite work built on).
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

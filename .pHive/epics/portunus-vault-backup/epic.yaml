@@ -1,0 +1,38 @@
+name: portunus-vault-backup
+title: eager sync-down on discover + passphrase-locked vault export/import
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Two confirmed needs, related but mechanically distinct. (1) The real primary driver: adding a
+  new secret to GCP SM today takes discover --register (state=requested) then a separate later
+  resolve to actually warm the local cache (SyncingBackend, cached-mode projects only) --
+  collapsed to one step via a new eager sync-down that fires at register time, reusing
+  SyncingBackend's existing pull-cache mechanism, deliberately bypassing check_injectable for
+  this one internal cache-populate operation (state stays requested throughout -- the fail-closed
+  guarantee on every real resolve/inject path is unaffected). (2) portunus vault export/import --
+  a coordinated, passphrase-locked snapshot of the real critical-state surface (registry.json,
+  master.key, vault.enc.json, vault-bindings.json, rotation-bindings.json, audit.log -- NOT the
+  lock files or ephemeral approvals/), acquired under the same flock idiom already used
+  elsewhere, so a vault survives a machine move/reinstall/backup without depending on a
+  fully-signed desktop app's stricter local sandboxing. No bidirectional multi-machine sync --
+  confirmed with the user as a separate, bigger, not-yet-needed epic if it ever is.
+
+stories:
+  - id: 01-eager-sync-down-on-discover
+    title: discover --register warms the local cache immediately for cached-mode projects
+    complexity: medium
+    depends_on: []
+  - id: 02-vault-lock-and-coordinated-snapshot
+    title: A fourth lock (vault-bindings.json) + a coordinated multi-file snapshot primitive
+    complexity: medium
+    depends_on: []
+  - id: 03-vault-export-import
+    title: portunus vault export/import -- passphrase-locked portable archive
+    complexity: high
+    depends_on: [02-vault-lock-and-coordinated-snapshot]
+  - id: 04-closeout
+    title: docs, version bump, live proof
+    complexity: low
+    depends_on: [01-eager-sync-down-on-discover, 03-vault-export-import]
