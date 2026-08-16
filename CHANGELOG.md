@@ -4,6 +4,14 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-08-16
+
+### Fixed
+
+- `portunus reg rm <name>` now also purges the underlying stored value from whichever backend
+  actually serves the reference (today: local-encrypted only), not just the registry pointer.
+  Previously the value was left orphaned in the vault forever after "removing" a reference.
+
 ## [0.25.0] - 2026-08-16
 
 ### Added
