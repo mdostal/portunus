@@ -1,7 +1,7 @@
 id: 02-leak-badge-across-ui
 epic: portunus-leak-visibility
 title: LeakBadge component -- wired into Console, DetailDrawer, Vault Map, Project Explorer
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [01-findings-detail-exposure]

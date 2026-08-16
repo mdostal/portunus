@@ -34,7 +34,7 @@ stories:
     title: LeakBadge component -- wired into Console, DetailDrawer, Vault Map, Project Explorer
     complexity: medium
     depends_on: [01-findings-detail-exposure]
-    status: pending
+    status: shipped
   - id: 03-in-app-report-view
     title: in-app rendered report view -- small custom Markdown-to-React renderer, no new dependency
     complexity: medium
