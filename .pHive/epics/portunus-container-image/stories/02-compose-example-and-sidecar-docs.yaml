@@ -1,7 +1,7 @@
 id: 02-compose-example-and-sidecar-docs
 epic: portunus-container-image
 title: docker-compose.yml worked example + sidecar/k8s pattern documentation
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [01-dockerfile-and-entrypoint]

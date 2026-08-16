@@ -33,7 +33,7 @@ stories:
     title: docker-compose.yml worked example + sidecar/k8s pattern documentation
     complexity: medium
     depends_on: [01-dockerfile-and-entrypoint]
-    status: pending
+    status: shipped
   - id: 03-closeout
     title: docs, version bump, live proof (build + run via real Docker)
     complexity: low
