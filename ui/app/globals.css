@@ -295,6 +295,40 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   border-radius: 4px;
 }
 
+.leak-badge {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.leak-badge.prominent {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 0.3rem 0.6rem;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 4px;
+}
+/* Same severity tokens SettingsPage's own leak-severity pills already use. */
+.leak-badge-warn { color: var(--steel); background: var(--paper); }
+.leak-badge-warn.prominent { border-color: var(--hair); }
+.leak-badge-urgent { color: var(--warn); background: var(--warn-bg); }
+.leak-badge-urgent.prominent { border-color: var(--warn); }
+.leak-badge-critical { color: var(--crit); background: var(--crit-bg); }
+.leak-badge-critical.prominent { border-color: var(--crit); }
+
+.leak-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--warn);
+  background: var(--warn-bg);
+  border-radius: 4px;
+  padding: 0.7rem 0.8rem;
+}
+
 .chip {
   font-family: var(--font-mono);
   font-size: 0.68rem;

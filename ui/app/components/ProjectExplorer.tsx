@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { PortunusReference } from "../types";
+import type { LeakSummary, PortunusReference } from "../types";
 import StatePill from "./StatePill";
 import CompletenessBadge from "./CompletenessBadge";
+import LeakBadge from "./LeakBadge";
 
 interface DiscoveredSecret {
   sm_name: string;
@@ -119,10 +120,12 @@ function TreeRefRow({
   reference,
   presentNames,
   onSelect,
+  leakMap = {},
 }: {
   reference: PortunusReference;
   presentNames: Set<string>;
   onSelect: (ref: PortunusReference) => void;
+  leakMap?: Record<string, LeakSummary>;
 }) {
   return (
     <button className="explorer-row" onClick={() => onSelect(reference)}>
@@ -130,6 +133,7 @@ function TreeRefRow({
       <span>
         {reference.sm_name} <StatePill state={reference.state} />
         <CompletenessBadge reference={reference} />
+        <LeakBadge summary={leakMap[reference.name]} />
       </span>
       <RelatedChips reference={reference} presentNames={presentNames} />
     </button>
@@ -142,18 +146,20 @@ function TreeBranch({
   presentNames,
   onSelect,
   depth,
+  leakMap = {},
 }: {
   label: string;
   node: TreeNode;
   presentNames: Set<string>;
   onSelect: (ref: PortunusReference) => void;
   depth: number;
+  leakMap?: Record<string, LeakSummary>;
 }) {
   return (
     <div className="tree-branch" style={{ marginLeft: depth === 0 ? 0 : "1rem" }}>
       <div className="tree-branch-label">{label}/</div>
       {node.refs.map((r) => (
-        <TreeRefRow reference={r} presentNames={presentNames} onSelect={onSelect} key={r.name} />
+        <TreeRefRow reference={r} presentNames={presentNames} onSelect={onSelect} leakMap={leakMap} key={r.name} />
       ))}
       {Object.entries(node.children)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -164,6 +170,7 @@ function TreeBranch({
             presentNames={presentNames}
             onSelect={onSelect}
             depth={depth + 1}
+            leakMap={leakMap}
             key={seg}
           />
         ))}
@@ -171,7 +178,13 @@ function TreeBranch({
   );
 }
 
-export default function ProjectExplorer({ onSelect }: { onSelect: (ref: PortunusReference) => void }) {
+export default function ProjectExplorer({
+  onSelect,
+  leakMap = {},
+}: {
+  onSelect: (ref: PortunusReference) => void;
+  leakMap?: Record<string, LeakSummary>;
+}) {
   const [project, setProject] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -462,7 +475,13 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
                   <div className="tree-branch">
                     <div className="tree-branch-label">{TREE_FACET_BUCKET_LABEL[treeFacet]}</div>
                     {ungrouped.map((r) => (
-                      <TreeRefRow reference={r} presentNames={presentNames} onSelect={onSelect} key={r.name} />
+                      <TreeRefRow
+                        reference={r}
+                        presentNames={presentNames}
+                        onSelect={onSelect}
+                        leakMap={leakMap}
+                        key={r.name}
+                      />
                     ))}
                   </div>
                 )}
@@ -475,6 +494,7 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
                       presentNames={presentNames}
                       onSelect={onSelect}
                       depth={0}
+                      leakMap={leakMap}
                       key={seg}
                     />
                   ))}

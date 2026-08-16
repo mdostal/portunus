@@ -52,12 +52,25 @@ export interface CrawlCandidate {
 // portunus_leak_status's own summary shape -- severity/finding_count/
 // timestamps only, never a value, never a file's content (portunus-leak-
 // scan Slice 4).
+export interface LeakFindingDetail {
+  path: string;
+  line_number: number;
+  first_detected_at: number;
+  last_detected_at: number;
+}
+
 export interface LeakSummary {
   ref_name: string;
   severity: "warn" | "urgent" | "critical" | null;
   finding_count: number;
   first_detected_at: number | null;
   last_detected_at: number | null;
+  // Only present when fetched with ?name=/--detail (portunus-leak-visibility
+  // Story 01) -- distinct_files is the "leaked in N conversations" headline
+  // number (unique file paths, not raw finding_count, which can double-count
+  // one secret matching many lines of the same transcript).
+  distinct_files?: number;
+  findings?: LeakFindingDetail[];
 }
 
 export interface PortunusView {
