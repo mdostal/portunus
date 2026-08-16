@@ -1,7 +1,7 @@
 id: 03-ui-surfacing
 epic: portunus-leak-scan-git-awareness
 title: surface classification in LeakBadge tooltip + DetailDrawer's finding history
-status: pending
+status: shipped
 complexity: low
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [02-source-classification]

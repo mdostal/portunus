@@ -36,7 +36,7 @@ stories:
     title: surface classification in LeakBadge tooltip + DetailDrawer's finding history
     complexity: low
     depends_on: [02-source-classification]
-    status: pending
+    status: shipped
   - id: 04-closeout
     title: docs, version bump, live proof against the real portunus repo
     complexity: low
