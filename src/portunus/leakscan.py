@@ -39,6 +39,8 @@ import glob as glob_module
 import json
 import os
 import re
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -496,6 +498,115 @@ def remove_scan_path(glob_pattern: str, path: Optional[Path] = None) -> List[str
 
 
 # ---------------------------------------------------------------------------
+# Git-repository scan targets (portunus-leak-scan-git-awareness Story 01) --
+# its own store/lock, explicit and persisted, empty by default, matching
+# leak-scan-config.json's own "nothing scanned until a human adds it" posture.
+# ---------------------------------------------------------------------------
+
+
+def _repos_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "leak-scan-repos.json")
+
+
+def _repos_lock_path(path: Optional[Path] = None) -> Path:
+    return _repos_path(path).with_suffix(".lock")
+
+
+def load_scan_repos(path: Optional[Path] = None) -> List[str]:
+    repos_path = _repos_path(path)
+    if not repos_path.exists():
+        return []
+    raw = json.loads(repos_path.read_text() or "{}")
+    return list(raw.get("repos", []))
+
+
+def _save_scan_repos_unlocked(repos: List[str], path: Optional[Path] = None) -> None:
+    repos_path = _repos_path(path)
+    repos_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = repos_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"repos": repos}, indent=2))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, repos_path)
+    os.chmod(repos_path, 0o600)
+
+
+def add_scan_repo(repo_path: str, path: Optional[Path] = None) -> List[str]:
+    with flock_path(_repos_lock_path(path)):
+        repos = load_scan_repos(path)
+        if repo_path not in repos:
+            repos.append(repo_path)
+            _save_scan_repos_unlocked(repos, path)
+        return repos
+
+
+def remove_scan_repo(repo_path: str, path: Optional[Path] = None) -> List[str]:
+    with flock_path(_repos_lock_path(path)):
+        repos = load_scan_repos(path)
+        if repo_path in repos:
+            repos.remove(repo_path)
+            _save_scan_repos_unlocked(repos, path)
+        return repos
+
+
+def _dump_git_history(repo_path: str) -> Optional[Path]:
+    """Dump a repo's full history (every branch, full diffs, OLDEST first)
+    to a fresh temp file for scan_paths() to read unchanged -- no new
+    matching engine, reusing exactly the mechanism a manual verification
+    already proved works end to end. Oldest-first (--reverse) so that
+    adding new commits APPENDS to the dump rather than shifting every
+    existing line's number -- keeps (path, line_number) dedup keys stable
+    across repeated scans of an actively-developed repo. A rebase/force-
+    push can still rewrite history in ways this doesn't protect against --
+    an accepted, documented limitation (design-discussion.md §2), not
+    silently assumed away.
+
+    Returns None (not an error) if the path isn't a git repo or git isn't
+    available -- a misconfigured repo entry never crashes the whole scan
+    run."""
+    if not Path(repo_path).is_dir():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, "log", "--all", "-p", "--full-history", "--reverse"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    fd, tmp_path = tempfile.mkstemp(prefix="portunus-leak-scan-repo-")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(result.stdout)
+    return Path(tmp_path)
+
+
+def _scan_repo_history(repo_path: str, values: Dict[str, str]) -> List[Finding]:
+    """Scan one configured repo's full git history for occurrences of
+    `values`. Always a full re-scan -- git history can be rewritten, which
+    makes a byte-offset watermark (correct for append-only log files)
+    unsafe here (design-discussion.md §2). The temp dump is always deleted
+    before this function returns, success or failure. Findings are
+    remapped from the (ephemeral, fresh-every-run) temp file path to a
+    stable `"<repo> (git history)"` label so record_findings()'s dedup key
+    stays meaningful across runs."""
+    dump_path = _dump_git_history(repo_path)
+    if dump_path is None:
+        return []
+    try:
+        findings, _ = scan_paths([str(dump_path)], values, {})
+    finally:
+        dump_path.unlink(missing_ok=True)
+    stable_label = f"{repo_path} (git history)"
+    return [
+        Finding(
+            ref_name=f.ref_name, path=stable_label,
+            line_number=f.line_number, byte_offset=f.byte_offset,
+        )
+        for f in findings
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Watermark persistence (portunus-leak-scan Slice 3) -- its own lock file,
 # rewritten on every scan (highest churn of the three stores).
 # ---------------------------------------------------------------------------
@@ -572,6 +683,7 @@ def _invalidate_watermarks_for_paths(
 @dataclass
 class ScanRunResult:
     configured_paths: List[str]
+    configured_repos: List[str]
     findings: List[Finding]
 
 
@@ -584,23 +696,35 @@ def run_scan(
     config_path: Optional[Path] = None,
     status_path: Optional[Path] = None,
     watermarks_path: Optional[Path] = None,
+    repos_path: Optional[Path] = None,
 ) -> ScanRunResult:
-    """The full scan pipeline: load configured paths, fetch resolvable
-    values, scan incrementally, persist new findings and watermarks.
-    `configured_paths` in the result being empty is the signal callers use
-    to report "nothing configured" explicitly rather than a silent
-    empty-success."""
+    """The full scan pipeline: load configured paths/repos, fetch
+    resolvable values, scan (incrementally for paths, always-full for
+    repos -- design-discussion.md §2), persist new findings and
+    watermarks. Both `configured_paths` and `configured_repos` empty is
+    the signal callers use to report "nothing configured" explicitly
+    rather than a silent empty-success."""
     configured_paths = load_scan_paths(config_path)
-    if not configured_paths:
-        return ScanRunResult(configured_paths=[], findings=[])
+    configured_repos = load_scan_repos(repos_path)
+    if not configured_paths and not configured_repos:
+        return ScanRunResult(configured_paths=[], configured_repos=[], findings=[])
 
     values = get_values(registry, broker, backend, backend_for=backend_for)
-    prior_watermarks = load_watermarks(watermarks_path)
-    findings, new_watermarks = scan_paths(configured_paths, values, prior_watermarks)
 
-    merged_watermarks = {**prior_watermarks, **new_watermarks}
-    save_watermarks(merged_watermarks, watermarks_path)
+    findings: List[Finding] = []
+    if configured_paths:
+        prior_watermarks = load_watermarks(watermarks_path)
+        path_findings, new_watermarks = scan_paths(configured_paths, values, prior_watermarks)
+        findings.extend(path_findings)
+        merged_watermarks = {**prior_watermarks, **new_watermarks}
+        save_watermarks(merged_watermarks, watermarks_path)
+
+    for repo in configured_repos:
+        findings.extend(_scan_repo_history(repo, values))
+
     if findings:
         record_findings(findings, now=now, path=status_path)
 
-    return ScanRunResult(configured_paths=configured_paths, findings=findings)
+    return ScanRunResult(
+        configured_paths=configured_paths, configured_repos=configured_repos, findings=findings
+    )
