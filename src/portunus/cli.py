@@ -158,7 +158,7 @@ def _build(project: str = ""):
 
 # --- subcommand handlers -------------------------------------------------
 def cmd_reg(args) -> int:
-    registry, *_ = _build()
+    registry, audit, broker, resolver = _build()
     if args.action == "show":
         if not len(registry):
             print("(empty registry)")
@@ -182,7 +182,33 @@ def cmd_reg(args) -> int:
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
         return 0
     if args.action == "rm":
-        print("removed" if registry.remove(args.name) else "no such reference")
+        ref = registry.get(args.name)
+        if ref is None:
+            print("no such reference")
+            return 0
+        # Best-effort: also purge the underlying stored value from whichever
+        # backend actually serves this reference -- registry.remove() alone
+        # only drops the pointer, leaving the encrypted value (local
+        # backend) or the cloud secret (GCP/other) orphaned forever. Not
+        # every backend supports a programmatic remove (GCP Secret Manager
+        # deletion is deliberately out of scope here -- a human should do
+        # that explicitly in the console); those are skipped silently, the
+        # registry entry is still removed either way.
+        backend = resolver.backend_for(ref) if resolver.backend_for else resolver.backend
+        purged_value = False
+        if hasattr(backend, "remove"):
+            try:
+                purged_value = bool(backend.remove(ref.sm_name))
+            except Exception:
+                purged_value = False
+        registry.remove(args.name)
+        if purged_value:
+            print(f"removed {{{{secret:{args.name}}}}} -- registry entry and stored value both purged")
+        else:
+            print(
+                f"removed {{{{secret:{args.name}}}}} -- registry entry only "
+                "(this backend does not support automatic value removal)"
+            )
         return 0
     if args.action == "json":
         import json
