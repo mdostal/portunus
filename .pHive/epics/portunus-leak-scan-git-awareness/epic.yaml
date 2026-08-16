@@ -41,4 +41,4 @@ stories:
     title: docs, version bump, live proof against the real portunus repo
     complexity: low
     depends_on: [03-ui-surfacing]
-    status: pending
+    status: shipped

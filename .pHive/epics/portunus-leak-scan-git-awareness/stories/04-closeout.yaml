@@ -1,7 +1,7 @@
 id: 04-closeout
 epic: portunus-leak-scan-git-awareness
 title: docs, version bump, live proof against the real portunus repo
-status: pending
+status: shipped
 complexity: low
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [03-ui-surfacing]
