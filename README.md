@@ -790,6 +790,21 @@ DetailDrawer — the last of which also shows the full file:line history and a "
 button. Independent from the rotation-requested flag (`RotationBadge`) — an agent-requested
 rotation and a leak-detected one are different facts, not the same signal.
 
+**Git-repository history is a first-class scan target — not just flat log files.**
+`portunus leak-scan config add-repo <path>` scans a repo's FULL history (every branch, every
+commit, via `git log --all -p`), not just its current working tree — the same technique that
+proved live no leaked credential had ever touched this codebase's own history, now built in
+rather than a manual dump-and-scan workaround. Always a full re-scan per run (git history can be
+rewritten, unlike an append-only log file) — repo histories are far smaller than the log corpus
+that motivated incremental scanning in the first place. Every finding is classified by WHERE it
+came from: `log` / `local` file, or `git-history` — and for the latter, whether the repo's
+GitHub remote is `public`, `private`, or `unknown` (never a guess; resolved via `gh repo view`,
+the same gh-CLI/your-own-credential posture the desktop app's self-updater already uses). A
+public-repo finding gets the loudest treatment anywhere it's shown — it's the single most
+severity-relevant fact this feature can surface. CLI: `portunus leak-scan config
+add-repo/remove-repo/show-repos`, and `portunus leak status <name> --detail` for the full
+per-finding classification.
+
 ### Scheduling leak-scan (cron / CI)
 
 `portunus leak-scan` is cron/CI-ready as-is: it never prompts, and exits `1` when new findings

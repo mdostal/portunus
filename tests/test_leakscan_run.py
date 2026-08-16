@@ -38,6 +38,7 @@ def test_remove_unconfigured_path_is_a_harmless_no_op(home):
 def test_run_scan_with_no_configured_paths_reports_that_explicitly(stack):
     result = run_scan(stack["registry"], stack["broker"], stack["backend"])
     assert result.configured_paths == []
+    assert result.configured_repos == []
     assert result.findings == []
 
 

@@ -1,0 +1,72 @@
+id: 03-ui-surfacing
+epic: portunus-leak-scan-git-awareness
+title: surface classification in LeakBadge tooltip + DetailDrawer's finding history
+status: shipped
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [02-source-classification]
+
+description: |
+  DetailDrawer's expandable finding history (portunus-leak-visibility Story 02) gains the
+  classification per entry: "git-history (public: owner/repo)" / "git-history (private:
+  owner/repo)" / "git-history (unknown visibility: owner/repo)" / "log" / "local" -- a public-repo
+  finding is the single most severity-relevant piece of information this epic adds, so it's
+  never buried (design-discussion.md §5). LeakBadge's own compact tooltip stays the "leaked in N
+  conversations" headline (unchanged) -- the richer per-finding classification lives in
+  DetailDrawer, the surface already established as where finding-level detail belongs
+  (portunus-leak-visibility's own scoping decision, not revisited here). Also adds config UI for
+  add-repo/remove-repo alongside the existing scan-path config UI in Settings.
+
+acceptance_criteria:
+  - "Given a finding classified as git-history from a public repo, when DetailDrawer's history renders, then it's clearly labeled as public -- the highest-visibility treatment"
+  - "Given a finding classified as log or local, when rendered, then it's labeled accordingly, distinct from git-history findings"
+  - "Given Settings' Leak scan section, when a repo path is added via the UI, then it round-trips exactly like the CLI's add-repo command"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: DetailDrawer finding-history classification labels + Settings repo-config UI + API route updates.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass against a fixture vault with a real git-history finding from a real small test repo -- confirm the classification renders correctly.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: the finding-history panel (portunus-leak-visibility Story 02) this story adds classification labels to
+    - path: ui/app/components/SettingsPage.tsx
+      purpose: the existing scan-path config UI this story's repo-config UI sits alongside
+
+files_to_modify:
+  - file: ui/app/components/DetailDrawer.tsx
+    change: classification labels in the finding-history list
+  - file: ui/app/components/SettingsPage.tsx
+    change: add-repo/remove-repo UI alongside existing scan-path config
+  - file: ui/app/api/leak-scan-config/route.ts
+    change: repo config support (or a sibling route)
+  - file: ui/app/types.ts
+    change: source_kind/repo_path/repo_visibility on LeakFindingDetail
+
+design_decisions:
+  - decision: public-repo classification gets the most visually prominent treatment
+    rationale: "design-discussion.md §5 -- it's the single most severity-relevant fact this epic surfaces"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "UI only ever renders the same metadata fields already proven safe at the backend layer -- no new value-touching code path"
+
+risks:
+  - severity: low
+    description: A long repo owner/name string could crowd DetailDrawer's compact history rows
+    mitigation: "Live Playwright pass checks real rendering, not just a mockup, to catch actual layout issues"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan-git-awareness/docs/design-discussion.md
+    relevant_excerpt: "§5"

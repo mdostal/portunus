@@ -329,6 +329,27 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   padding: 0.7rem 0.8rem;
 }
 
+/* WHERE a finding came from -- a public repo is the single most
+   severity-relevant fact this codebase surfaces about a leak, so it gets
+   the loudest treatment, not the same quiet label as a local log file. */
+.finding-source-public {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--crit);
+  background: var(--crit-bg);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+.finding-source-private,
+.finding-source-unknown,
+.finding-source-log,
+.finding-source-local {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--steel);
+}
+
 .report-view-panel {
   border: 1px solid var(--hair);
   background: var(--paper-raised);

@@ -1,0 +1,72 @@
+id: 01-git-repo-scan-targets
+epic: portunus-leak-scan-git-awareness
+title: git-repository history as a scan target -- add-repo config, full re-scan per run, reusing scan_paths()
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  New `leak-scan-repos.json` store (own lock file, matching the one-store-per-write-frequency
+  discipline the other three leak-scan stores already use) holding a list of configured repo
+  paths. `portunus leak-scan config add-repo/remove-repo/show-repos`. At scan time, for each
+  configured repo: run `git log --all -p --full-history` into a fresh temp file, feed it through
+  the EXISTING scan_paths() unchanged (no new matching logic -- formalizes exactly what the
+  manual verification proved works), delete the temp file after. Always a full re-scan per repo
+  per run (design-discussion.md §2) -- git history is not append-only, so the existing
+  incremental byte-offset watermark (built for log files) is deliberately not applied to repos.
+
+acceptance_criteria:
+  - "Given a configured repo with a secret's value in its git history, when a scan runs, then the finding is reported"
+  - "Given a repo with a secret's value that was later removed by a subsequent commit, when a scan runs, then the finding is STILL reported (history scanning finds it even though the current working tree doesn't have it)"
+  - "Given a repo scan, when it completes, then no temp dump file is left on disk afterward -- checked directly, not just assumed"
+  - "Given the same repo scanned twice in a row with no new commits, when the second scan runs, then it re-scans the full history again (not incrementally skipped) -- proving the deliberate no-incremental-watermark-for-repos decision, not an accidental regression"
+  - "Given `portunus leak-scan config show-repos`, when run, then it lists exactly the configured repo paths"
+  - "Given the git-history-dump-and-scan code path, when AST-inspected, then it never returns/logs/prints a value -- same structural check every prior story in this codebase uses"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for add-repo/remove-repo/show-repos, history-dump-and-scan finding a value in history but not the working tree, temp-file cleanup, and the deliberate full-rescan-every-time behavior.
+    agent: tester
+  - id: implement
+    description: leak-scan-repos.json store + git log -p dump wrapper + run_scan() integration.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/leakscan.py
+      purpose: scan_paths()/run_scan() -- the existing engine this story feeds a generated dump file through unchanged, plus the three existing store patterns (config/status/watermarks) this story's fourth store (repos) matches exactly
+    - path: src/portunus/cli.py
+      purpose: cmd_leak_scan_config_add_path/remove_path/show -- the CLI pattern add-repo/remove-repo/show-repos mirrors
+
+files_to_modify:
+  - file: src/portunus/leakscan.py
+    change: leak-scan-repos.json store + git history dump-and-scan wrapper, wired into run_scan()
+  - file: src/portunus/cli.py
+    change: leak-scan config add-repo/remove-repo/show-repos subcommands
+
+design_decisions:
+  - decision: full re-scan of a repo's history every run, never incremental
+    rationale: "design-discussion.md §2 -- git history can be rewritten (rebase/force-push), making a byte-offset watermark unsafe; repo histories are far smaller than the corpus that motivated incremental scanning in the first place"
+  - decision: reuse scan_paths() unchanged via a temp-file dump, no new matching engine
+    rationale: "research-brief.md §2 -- the manual verification already proved this mechanism works end to end; a second matching implementation would be pure duplication risk for zero benefit"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The temp dump file is deleted immediately after each scan run, same pattern resolve_to_tempfile's caller-deletes-it discipline already uses elsewhere -- verified directly in tests, not just documented"
+
+risks:
+  - severity: low
+    description: A very large repo's full-history dump could be slow to regenerate on every scan
+    mitigation: "Accepted v1 tradeoff (design-discussion.md §2) -- repo histories are orders of magnitude smaller than the log corpus that originally motivated incremental scanning; revisit only if it becomes a real complaint"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan-git-awareness/docs/design-discussion.md
+    relevant_excerpt: "§1, §2"

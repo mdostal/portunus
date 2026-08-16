@@ -20,7 +20,7 @@ def test_leak_scan_with_no_config_reports_explicitly(home, capsys):
     rc = main(["leak-scan"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "no scan paths configured" in out
+    assert "no scan paths or repos configured" in out
 
 
 def test_leak_scan_config_add_show_remove_round_trips(home, capsys):
@@ -207,3 +207,53 @@ def test_leak_cli_handlers_never_reference_a_value_source_check():
         tree = ast.parse(src)
         code = ast.unparse(tree)
         assert ".access(" not in code
+
+
+def test_leak_scan_config_add_show_remove_repo_round_trip(home, capsys):
+    rc = main(["leak-scan", "config", "add-repo", "/tmp/some-repo"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(["leak-scan", "config", "show-repos", "--json"])
+    out = capsys.readouterr().out
+    assert json.loads(out) == ["/tmp/some-repo"]
+
+    rc = main(["leak-scan", "config", "remove-repo", "/tmp/some-repo"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(["leak-scan", "config", "show-repos", "--json"])
+    out = capsys.readouterr().out
+    assert json.loads(out) == []
+
+
+def test_leak_scan_finds_a_value_in_a_configured_repo_history(home, tmp_path, capsys):
+    import os
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "config.txt").write_text("leaked: SECRET-VALUE-abc123-xyz\n")
+    subprocess.run(["git", "add", "config.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "oops"], cwd=repo, check=True)
+
+    Registry().add("x", "sm-x")
+    os.environ["PORTUNUS_BACKEND"] = "mock"
+    os.environ["PORTUNUS_MOCK_SM_X"] = "SECRET-VALUE-abc123-xyz"
+    try:
+        main(["leak-scan", "config", "add-repo", str(repo)])
+        capsys.readouterr()
+
+        rc = main(["leak-scan", "--json"])
+        out = capsys.readouterr().out
+        findings = json.loads(out)
+        assert rc == 1
+        assert len(findings) >= 1
+        assert all(f["ref_name"] == "x" for f in findings)
+        assert all("(git history)" in f["path"] for f in findings)
+    finally:
+        del os.environ["PORTUNUS_BACKEND"]
+        del os.environ["PORTUNUS_MOCK_SM_X"]
