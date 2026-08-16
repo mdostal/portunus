@@ -1,7 +1,7 @@
 id: 01-dockerfile-and-entrypoint
 epic: portunus-container-image
 title: Dockerfile -- non-root, VOLUME-declared PORTUNUS_HOME, gcloud CLI included
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: []

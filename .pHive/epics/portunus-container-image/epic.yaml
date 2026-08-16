@@ -28,7 +28,7 @@ stories:
     title: Dockerfile -- non-root, VOLUME-declared PORTUNUS_HOME, gcloud CLI included
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-compose-example-and-sidecar-docs
     title: docker-compose.yml worked example + sidecar/k8s pattern documentation
     complexity: medium
