@@ -1,0 +1,70 @@
+id: 02-compose-example-and-sidecar-docs
+epic: portunus-container-image
+title: docker-compose.yml worked example + sidecar/k8s pattern documentation
+status: shipped
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [01-dockerfile-and-entrypoint]
+
+description: |
+  A real docker-compose.yml showing the sidecar pattern (a Portunus service + an example "app"
+  service sharing a named volume for PORTUNUS_HOME), and documentation covering: the two real v1
+  use cases (CI/build-step sidecar; Kubernetes sidecar container sharing a pod's volume/network
+  namespace), the persistent-volume requirement (design-discussion.md §3 -- distinguishing
+  local-encrypted-backend risk from GCP-backend-only usage), per-backend/per-environment auth
+  (local: zero-config; GCP local dev: mounted ~/.config/gcloud; GCP real k8s: Workload Identity,
+  documented as the RECOMMENDED production path), and the Podman rootless-UID volume-permission
+  gotcha (design-discussion.md §7) with a tested workaround.
+
+acceptance_criteria:
+  - "Given `docker compose up`, when run against the new docker-compose.yml, then the Portunus service starts and a secret dropped via one service is resolvable from the shared-volume path"
+  - "Given the new documentation, when read, then it states plainly that PORTUNUS_HOME must be a persistent volume for the local-encrypted backend, distinct from GCP-backend-only usage"
+  - "Given the new documentation, when read, then it lists the three auth paths (local zero-config, GCP local dev via mounted gcloud config, GCP real k8s via Workload Identity) with Workload Identity clearly marked as the recommended production path"
+  - "Given the Podman gotcha note, when tested (if Podman is available) or researched against Podman's own documented behavior, then the workaround flag/command given actually addresses the rootless-UID volume-permission issue"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: docker-compose.yml + README/architecture.md sidecar-pattern and auth-path documentation.
+    agent: developer
+  - id: live-verify
+    description: Real `docker compose up` smoke test proving the shared-volume sidecar pattern actually works.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: Dockerfile
+      purpose: the image this compose file and docs reference, built in story 01
+    - path: docs/architecture.md
+      purpose: gets a new section for the container deployment model, matching every other epic's own architecture.md addition
+
+files_to_modify:
+  - file: docker-compose.yml
+    change: new file -- sidecar worked example
+  - file: README.md
+    change: new "Running in a container" section
+  - file: docs/architecture.md
+    change: new section on the container deployment model and why it targets same-pod/same-host reachability
+
+design_decisions:
+  - decision: Workload Identity documented as the recommended production k8s auth path, not just listed
+    rationale: "design-discussion.md §4 -- it's genuinely the better answer (keyless, no credential ever touches the container), not one option among equals"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The compose example's live-verify step never prints the dropped secret's value in any log output it produces -- checked directly, not just assumed"
+
+risks:
+  - severity: low
+    description: Podman is not installed on this development machine, so the rootless-UID gotcha can only be researched/documented, not locally live-verified
+    mitigation: "Acceptance criterion allows research-based verification against Podman's own documented behavior when Podman itself is unavailable -- flagged explicitly in the docs as unverified-in-this-repo, not silently presented as tested"
+
+references:
+  - path: .pHive/epics/portunus-container-image/docs/design-discussion.md
+    relevant_excerpt: "§2, §3, §4, §7"

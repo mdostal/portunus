@@ -226,6 +226,17 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `.pHive/epics/portunus-leak-scan/docs/design-discussion.md` §2's addendum, not silently
   overwritten; widening WHO can trigger a scan never widened WHAT can be scanned (still only
   human-configured paths).
+- **Container deployment / `Dockerfile`** (`portunus-container-image`) — packages the CLI + MCP
+  server only (not the UI) as a non-root, `PORTUNUS_HOME`-volume-declared image. Deliberately
+  targets same-pod/same-host reachability (`docker exec`/`kubectl exec`, a shared pod volume, or
+  Portunus starting the consumer via `resolve --exec`) rather than a network-reachable shared
+  broker service — the MCP server is stdio-only today, and a genuinely shared service would need
+  the currently-stub-only RBAC (`roles.py`) actually enforced, explicitly deferred future work.
+  `PORTUNUS_HOME` must be a real persistent volume for the local-encrypted backend specifically
+  (self-bootstrapping master key means an unmounted/removed volume silently and permanently loses
+  every secret); GCP-backend-only usage is unaffected. GKE Workload Identity is the recommended
+  production auth path (already keyless). One image ships with the `gcloud` CLI included rather
+  than a slim/full split — a deliberate v1 tradeoff, not an oversight.
 
 ## Key paths
 

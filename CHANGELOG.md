@@ -4,6 +4,28 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-08-16
+
+### Added
+
+- **Container image.** New `Dockerfile` packages the CLI + MCP server (not the UI) as a
+  non-root image with `PORTUNUS_HOME` declared as a persistent `VOLUME` -- the real install path
+  for most deployments: a sidecar container or a Kubernetes pod, not "download the desktop app."
+  Targets same-pod/same-host reachability (`docker exec`, a shared pod volume, or Portunus
+  starting the consumer via `resolve --exec`) rather than a network-shared broker service, since
+  the MCP server is stdio-only today. `gcloud` CLI is included for GCP backend support.
+- New `docker-compose.yml` -- a runnable worked example of the sidecar pattern (a `portunus`
+  service + an `app` service sharing one named volume).
+- README.md gains a "Running in a container" section: the persistent-volume requirement for the
+  local-encrypted backend, the two real deployment shapes, a per-backend/per-environment auth
+  table (GKE Workload Identity marked as the recommended production path), and a tested Podman
+  rootless-UID note.
+
+### Fixed
+
+- Stale package description in `pyproject.toml` (still referenced "the Dostal harness") updated
+  to match the project's current standalone-first positioning.
+
 ## [0.23.0] - 2026-08-15
 
 ### Added

@@ -46,7 +46,7 @@ from .auth import (
     assert_no_long_lived_cloud_keys,
 )
 
-__version__ = "0.23.0"
+__version__ = "0.23.1"
 
 __all__ = [
     "Registry",
