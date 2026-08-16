@@ -1,7 +1,7 @@
 id: 01-git-repo-scan-targets
 epic: portunus-leak-scan-git-awareness
 title: git-repository history as a scan target -- add-repo config, full re-scan per run, reusing scan_paths()
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []

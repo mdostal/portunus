@@ -26,7 +26,7 @@ stories:
     title: git-repository history as a scan target -- add-repo config, full re-scan per run, reusing scan_paths()
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-source-classification
     title: source classification on findings -- log/local/git-history, public/private via gh
     complexity: medium
