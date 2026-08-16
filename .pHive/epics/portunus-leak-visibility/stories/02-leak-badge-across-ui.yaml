@@ -1,0 +1,89 @@
+id: 02-leak-badge-across-ui
+epic: portunus-leak-visibility
+title: LeakBadge component -- wired into Console, DetailDrawer, Vault Map, Project Explorer
+status: pending
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [01-findings-detail-exposure]
+
+description: |
+  New LeakBadge.tsx, following RotationBadge.tsx/CompletenessBadge.tsx's exact established
+  pattern (confirmed via research: native `title="..."` attribute is the ONLY tooltip mechanism
+  this codebase uses anywhere -- no custom tooltip component to build; pill-shaped badge, mono
+  font, `.prominent` modifier for DetailDrawer's larger treatment). Fetched once per page load
+  (a leak-status map, ref_name -> summary+distinct_files), passed down -- not a per-row fetch,
+  matching CompletenessBadge's own derive-don't-refetch discipline.
+
+  Wired into all four places a reference's name already renders (confirmed via research, exact
+  insertion points next to the existing RotationBadge/CompletenessBadge):
+  Console.tsx:195-199, DetailDrawer.tsx:227-228 (prominent, with the full expandable finding
+  history), VaultMap.tsx:147-156, ProjectExplorer.tsx's TreeRefRow (118-137).
+
+  Independent signal from RotationBadge -- does NOT set or read tags.rotation_requested
+  (design-discussion.md §1). A "Mark rotated" action is reachable from the badge itself (its
+  tooltip in list/card views, an inline button in DetailDrawer's prominent view) so a human
+  doesn't have to navigate back to Settings to act on what they just saw.
+
+acceptance_criteria:
+  - "Given a reference with active leak findings, when rendered anywhere (Console row, Vault Map card, Project Explorer row, DetailDrawer), then a LeakBadge shows the severity and a hover tooltip stating 'leaked in N conversation(s)'"
+  - "Given a reference with no leak findings, when rendered, then no LeakBadge appears -- same null-render discipline as RotationBadge/CompletenessBadge"
+  - "Given DetailDrawer specifically, when a leaked reference is open, then the full finding history (each path:line, first/last detected) is shown, not just the summary count"
+  - "Given the badge's Mark rotated action, when used, then it calls the existing mark-rotated flow and the badge disappears on the next refresh -- no new mutation path invented"
+  - "Given the tooltip content, when compared to the API's distinct_files count, then they match exactly -- 'leaked in 3 conversations' means 3 distinct files, not 3 raw findings"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: LeakBadge.tsx + wiring into the 4 files + CSS matching the existing badge pattern.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass against a fixture vault with real leak findings -- confirm the badge renders correctly in all 4 surfaces and mark-rotated works from it.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/components/RotationBadge.tsx
+      purpose: "the exact pattern LeakBadge follows -- null-render discipline, tags-driven precedent (LeakBadge diverges: leak-status-driven, not tags-driven)"
+    - path: ui/app/components/CompletenessBadge.tsx
+      purpose: the derive-from-already-fetched-data precedent
+    - path: ui/app/globals.css
+      purpose: ".rotation-badge/.completeness-badge (lines ~262-296) -- the pill-shaped, mono-font, .prominent-modifier CSS pattern LeakBadge's own classes mirror"
+
+files_to_modify:
+  - file: ui/app/components/LeakBadge.tsx
+    change: new component
+  - file: ui/app/components/Console.tsx
+    change: LeakBadge wired in next to RotationBadge/CompletenessBadge
+  - file: ui/app/components/DetailDrawer.tsx
+    change: LeakBadge (prominent) + expandable finding history
+  - file: ui/app/components/VaultMap.tsx
+    change: LeakBadge wired into reference cards
+  - file: ui/app/components/ProjectExplorer.tsx
+    change: LeakBadge wired into TreeRefRow
+  - file: ui/app/globals.css
+    change: .leak-badge styles matching the existing pattern
+
+design_decisions:
+  - decision: native title="..." tooltip, no custom tooltip component
+    rationale: "research confirmed this is the ONLY tooltip mechanism anywhere in this codebase -- consistency over inventing a richer one"
+  - decision: independent from RotationBadge/tags.rotation_requested
+    rationale: "design-discussion.md §1 -- avoids a new, undesigned write path from leak-scan into the registry; preserves the 'why' distinction between agent-requested and leak-detected rotation needs"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The UI layer only ever renders path/line_number/severity/timestamps already proven safe -- no new code path touches a value"
+
+risks:
+  - severity: low
+    description: Wiring into 4 separate files risks visual inconsistency if the CSS pattern isn't matched precisely
+    mitigation: "Live Playwright pass checks all 4 surfaces render consistently, not just one"
+
+references:
+  - path: .pHive/epics/portunus-leak-visibility/docs/design-discussion.md
+    relevant_excerpt: "§1, §3, §5, self-grill"

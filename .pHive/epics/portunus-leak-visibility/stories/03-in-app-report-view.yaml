@@ -1,0 +1,69 @@
+id: 03-in-app-report-view
+epic: portunus-leak-visibility
+title: in-app rendered report view -- small custom Markdown-to-React renderer, no new dependency
+status: pending
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: []
+
+description: |
+  Settings' "Download report" button currently only triggers a file download
+  (portunus-metadata-crawl Story 03) -- there is no in-app view of it. New: a small, narrow
+  custom Markdown-to-React renderer (design-discussion.md §4 -- generate_report()'s output is a
+  predictable, narrow subset: #/##/### headers, - bullets, **bold**, inline `code` -- no
+  external markdown-parsing dependency needed, preserving ui/package.json's existing
+  3-dependency minimalism) and a real view/panel in Settings (or a new tab) rendering the
+  fetched report as actual formatted HTML instead of a raw text blob or download-only.
+
+acceptance_criteria:
+  - "Given the in-app report view, when rendered, then # / ## / ### headers, - bullets, **bold**, and inline `code` all render as real HTML elements, not raw markdown syntax"
+  - "Given the same report content, when compared to `portunus report`'s own CLI output, then the rendered view's structure (org -> project hierarchy, Gaps section) matches exactly -- same data, different presentation"
+  - "Given org/project scoping is available via the existing /api/report route, when used from the in-app view, then the same scoping works (not just the whole-vault default)"
+  - "Given ui/package.json, when inspected after this story, then it still has exactly 3 runtime dependencies -- no markdown library added"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: Markdown-to-React renderer utility + report view panel/route.
+    agent: developer
+  - id: live-verify
+    description: Playwright pass against a fixture vault -- confirm the rendered view matches the CLI report's structure.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/crawl.py
+      purpose: generate_report() -- the exact, narrow Markdown shape this story's renderer needs to cover, nothing more
+    - path: ui/app/api/report/route.ts
+      purpose: existing route this story's view fetches from -- no new backend endpoint needed
+    - path: ui/package.json
+      purpose: confirms the current 3-dependency baseline this story must not expand
+
+files_to_modify:
+  - file: ui/app/lib/renderReportMarkdown.tsx
+    change: new small Markdown-to-React renderer utility
+  - file: ui/app/components/SettingsPage.tsx
+    change: report view panel replacing/augmenting the download-only button
+
+design_decisions:
+  - decision: a small custom renderer, not a markdown-parsing library
+    rationale: "design-discussion.md §4 -- generate_report()'s output is fully controlled and narrow; a library is unjustified weight for content this predictable"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The report itself was already proven never to contain a value (portunus-metadata-crawl Story 02) -- this story only changes how it's presented, not what data it contains"
+
+risks:
+  - severity: low
+    description: A future generate_report() change could add a Markdown construct the renderer doesn't handle
+    mitigation: "The renderer falls back to rendering an unrecognized line as plain text rather than dropping or erroring on it -- degrades gracefully, never silently loses content"
+
+references:
+  - path: .pHive/epics/portunus-leak-visibility/docs/design-discussion.md
+    relevant_excerpt: "§4"
