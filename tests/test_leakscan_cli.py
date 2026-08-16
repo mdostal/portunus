@@ -118,6 +118,38 @@ def test_leak_status_and_mark_rotated_round_trip(home, tmp_path, capsys):
         del os.environ["PORTUNUS_MOCK_SM_X"]
 
 
+def test_leak_status_detail_flag_includes_findings_and_distinct_files(home, tmp_path, capsys):
+    Registry().add("x", "sm-x")
+    import os
+
+    os.environ["PORTUNUS_BACKEND"] = "mock"
+    os.environ["PORTUNUS_MOCK_SM_X"] = "SECRET-VALUE-abc123-xyz"
+    try:
+        f = tmp_path / "app.log"
+        f.write_text("uh oh: SECRET-VALUE-abc123-xyz\nagain: SECRET-VALUE-abc123-xyz\n")
+        add_scan_path(str(f))
+        main(["leak-scan"])
+        capsys.readouterr()
+
+        rc = main(["leak", "status", "x", "--json", "--detail"])
+        out = capsys.readouterr().out
+        summary = json.loads(out)
+        assert rc == 0
+        assert summary["finding_count"] == 2
+        assert summary["distinct_files"] == 1
+        assert len(summary["findings"]) == 2
+
+        # without --detail, the shape stays exactly as before
+        rc = main(["leak", "status", "x", "--json"])
+        out = capsys.readouterr().out
+        summary = json.loads(out)
+        assert "findings" not in summary
+        assert "distinct_files" not in summary
+    finally:
+        del os.environ["PORTUNUS_BACKEND"]
+        del os.environ["PORTUNUS_MOCK_SM_X"]
+
+
 def test_leak_status_with_no_findings_at_all_says_so(home, capsys):
     rc = main(["leak", "status"])
     out = capsys.readouterr().out

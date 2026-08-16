@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { PortunusReference } from "./types";
+import type { LeakSummary, PortunusReference } from "./types";
 import Console from "./components/Console";
 import VaultMap from "./components/VaultMap";
 import AskBar from "./components/AskBar";
@@ -29,6 +29,11 @@ export default function Home() {
   // Finish button just flips this to false rather than re-checking, since
   // by then a binding/reference genuinely exists.
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+  // ref_name -> LeakSummary, fetched once per page load (portunus-leak-
+  // visibility) and passed down to every surface that renders a
+  // reference -- not a per-row fetch, matching CompletenessBadge's own
+  // derive-from-already-fetched-data discipline.
+  const [leakMap, setLeakMap] = useState<Record<string, LeakSummary>>({});
 
   useEffect(() => {
     fetch("/api/vault-status")
@@ -36,6 +41,21 @@ export default function Home() {
       .then((data) => setNeedsSetup(data.initialized === false))
       .catch(() => setNeedsSetup(false));
   }, []);
+
+  const refreshLeakMap = useCallback(() => {
+    fetch("/api/leak-status")
+      .then((r) => r.json())
+      .then((data) => {
+        const map: Record<string, LeakSummary> = {};
+        for (const s of data.statuses || []) map[s.ref_name] = s;
+        setLeakMap(map);
+      })
+      .catch(() => setLeakMap({}));
+  }, []);
+
+  useEffect(() => {
+    refreshLeakMap();
+  }, [refreshLeakMap]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -109,11 +129,18 @@ export default function Home() {
         <main className="main">
           {loading && <p className="inline-status">loading registry…</p>}
           {error && <p className="inline-status error">✗ {error}</p>}
-          {!loading && !error && tab === "console" && <Console refs={refs} onSelect={setSelected} />}
-          {!loading && !error && tab === "map" && (
-            <VaultMap refs={refs} onSelect={setSelected} onAdd={(provider) => setAddDraftProvider(provider)} />
+          {!loading && !error && tab === "console" && (
+            <Console refs={refs} onSelect={setSelected} leakMap={leakMap} />
           )}
-          {tab === "project" && <ProjectExplorer onSelect={setSelected} />}
+          {!loading && !error && tab === "map" && (
+            <VaultMap
+              refs={refs}
+              onSelect={setSelected}
+              onAdd={(provider) => setAddDraftProvider(provider)}
+              leakMap={leakMap}
+            />
+          )}
+          {tab === "project" && <ProjectExplorer onSelect={setSelected} leakMap={leakMap} />}
           {!loading && !error && tab === "settings" && <SettingsPage refs={refs} />}
           {tab === "about" && <AboutPage />}
         </main>
@@ -124,6 +151,8 @@ export default function Home() {
           <DetailDrawer
             reference={selected}
             allRefs={refs}
+            leakSummary={leakMap[selected.name]}
+            onLeakStatusChanged={refreshLeakMap}
             onClose={() => setSelected(null)}
             onRotate={(ref) => {
               setRotateDraft(ref);

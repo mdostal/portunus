@@ -1,0 +1,86 @@
+id: 04-closeout
+epic: portunus-leak-visibility
+title: docs, version bump, live proof against the real vault
+status: shipped
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [02-leak-badge-across-ui, 03-in-app-report-view]
+
+description: |
+  README.md/docs/architecture.md/.pHive/CONTEXT.md updated to describe LeakBadge and the in-app
+  report view. Version bump (minor per epic.yaml), CHANGELOG.md entry, full pytest suite +
+  npm run build, and -- since the real vault already has genuine findings from the earlier
+  dogfooding pass -- a real live proof against the actual desktop app showing the badges and
+  report view working against real data, not just a fixture.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it is fully green with zero regressions"
+  - "Given `cd ui && npm run build`, when run, then it completes with zero TypeScript errors"
+  - "Given the real desktop app rebuilt from this branch, when opened against the real vault, then LeakBadge renders correctly on the real leaked references and the report view renders correctly"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs
+    description: README.md, docs/architecture.md, .pHive/CONTEXT.md updates.
+    agent: developer
+  - id: version-bump
+    description: Lockstep version bump across all 5 sources; real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Full pytest suite + npm run build + real desktop app rebuild against the real vault.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, PR into dev, merge, promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: terminology glossary, updated with LeakBadge/report-view vocabulary
+    - path: CHANGELOG.md
+      purpose: release notes
+
+files_to_modify:
+  - file: README.md
+    change: LeakBadge/report-view documentation
+  - file: docs/architecture.md
+    change: new section for this epic
+  - file: .pHive/CONTEXT.md
+    change: new terminology entries
+  - file: pyproject.toml
+    change: version bump
+  - file: src/portunus/__init__.py
+    change: version bump
+  - file: manifest.json
+    change: version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: version bump
+  - file: CHANGELOG.md
+    change: new entry
+
+design_decisions:
+  - decision: real cargo build + real pip install -e after every version-string edit
+    rationale: "established this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Live-proof against the real vault reads only already-safe metadata (paths/lines/severity) -- never a value -- same as every earlier dogfooding step this session"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list, matching every prior release this session"
+
+references:
+  - path: .pHive/epics/portunus-leak-visibility/epic.yaml
+    relevant_excerpt: "version_bump: minor"

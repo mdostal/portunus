@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { PortunusReference } from "../types";
+import type { LeakSummary, PortunusReference } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
+import LeakBadge from "./LeakBadge";
 import { checkMetadataCompleteness } from "../completeness";
 
 const NO_ORG = "(no org set)";
@@ -43,10 +44,12 @@ export default function VaultMap({
   refs,
   onSelect,
   onAdd,
+  leakMap = {},
 }: {
   refs: PortunusReference[];
   onSelect: (ref: PortunusReference) => void;
   onAdd: (provider: string) => void;
+  leakMap?: Record<string, LeakSummary>;
 }) {
   const [org, setOrg] = useState<string | null>(null);
   const [project, setProject] = useState<string | null>(null);
@@ -153,6 +156,7 @@ export default function VaultMap({
                     <StatePill state={r.state} />
                     <RotationBadge reference={r} />
                     <CompletenessBadge reference={r} />
+                    <LeakBadge summary={leakMap[r.name]} />
                   </div>
                 </button>
               ))}
