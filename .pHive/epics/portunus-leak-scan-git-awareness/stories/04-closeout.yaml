@@ -1,0 +1,88 @@
+id: 04-closeout
+epic: portunus-leak-scan-git-awareness
+title: docs, version bump, live proof against the real portunus repo
+status: pending
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [03-ui-surfacing]
+
+description: |
+  README.md/docs/architecture.md/.pHive/CONTEXT.md updated for git-repo scan targets and source
+  classification. Version bump (minor per epic.yaml), CHANGELOG.md entry, full pytest suite +
+  npm run build, and a real live proof: configure the actual portunus repo as a scan target (a
+  clean, correct rehearsal of the manual verification that motivated this epic), confirm it
+  reports source_kind=git-history + repo_visibility=public correctly, and confirm the temp dump
+  file is genuinely cleaned up afterward.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it is fully green with zero regressions"
+  - "Given `cd ui && npm run build`, when run, then it completes with zero TypeScript errors"
+  - "Given the real portunus repo configured as a scan target, when scanned, then any finding correctly reports source_kind=git-history and repo_visibility=public (the repo is public)"
+  - "Given .pHive/CONTEXT.md, when read, then it accurately describes git-repo scan targets and source classification, including the soft-heuristic caveat for log-vs-local"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs
+    description: README.md, docs/architecture.md, .pHive/CONTEXT.md updates.
+    agent: developer
+  - id: version-bump
+    description: Lockstep version bump across all 5 sources; real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Full pytest suite + npm run build + real scan of the portunus repo itself.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, PR into dev, merge, promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: terminology glossary, updated with git-repo scan targets/source classification
+    - path: CHANGELOG.md
+      purpose: release notes
+
+files_to_modify:
+  - file: README.md
+    change: git-repo scan target + source classification documentation
+  - file: docs/architecture.md
+    change: new section for this epic
+  - file: .pHive/CONTEXT.md
+    change: new terminology entries
+  - file: pyproject.toml
+    change: version bump
+  - file: src/portunus/__init__.py
+    change: version bump
+  - file: manifest.json
+    change: version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: version bump
+  - file: CHANGELOG.md
+    change: new entry
+
+design_decisions:
+  - decision: real cargo build + real pip install -e after every version-string edit
+    rationale: "established this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Live-proof against the real portunus repo confirms the temp dump file is genuinely deleted afterward, not just documented as deleted"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list, matching every prior release this session"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan-git-awareness/epic.yaml
+    relevant_excerpt: "version_bump: minor"
