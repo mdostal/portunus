@@ -1493,13 +1493,20 @@ def cmd_leak_scan_config_show(args) -> int:
 
 
 def cmd_leak_status(args) -> int:
+    detail = getattr(args, "detail", False)
     statuses = load_leak_status()
     if args.name:
         status = statuses.get(args.name)
-        summary = summarize(status) if status else {
-            "ref_name": args.name, "severity": None, "finding_count": 0,
-            "first_detected_at": None, "last_detected_at": None,
-        }
+        if status:
+            summary = summarize(status, detail=detail)
+        else:
+            summary = {
+                "ref_name": args.name, "severity": None, "finding_count": 0,
+                "first_detected_at": None, "last_detected_at": None,
+            }
+            if detail:
+                summary["findings"] = []
+                summary["distinct_files"] = 0
         if args.json:
             print(json.dumps(summary))
             return 0
@@ -1511,7 +1518,7 @@ def cmd_leak_status(args) -> int:
 
     active = {name: s for name, s in statuses.items() if s.findings}
     if args.json:
-        print(json.dumps([summarize(s) for s in active.values()]))
+        print(json.dumps([summarize(s, detail=detail) for s in active.values()]))
         return 0
     if not active:
         print("(no references with active leak findings)")
@@ -2124,6 +2131,10 @@ def build_parser() -> argparse.ArgumentParser:
     lk_status = lk_sub.add_parser("status", help="show current leak severity + finding counts")
     lk_status.add_argument("name", nargs="?", default="")
     lk_status.add_argument("--json", action="store_true")
+    lk_status.add_argument(
+        "--detail", action="store_true",
+        help="include the raw per-finding path/line list and a distinct-files count",
+    )
     lk_status.set_defaults(func=cmd_leak_status)
 
     lk_rotated = lk_sub.add_parser(

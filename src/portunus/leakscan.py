@@ -393,25 +393,52 @@ def severity(status: LeakStatus, now: Optional[float] = None) -> Optional[str]:
     return "critical"
 
 
-def summarize(status: LeakStatus, now: Optional[float] = None) -> Dict[str, object]:
+def summarize(
+    status: LeakStatus, now: Optional[float] = None, detail: bool = False
+) -> Dict[str, object]:
     """{ref_name, severity, finding_count, first_detected_at,
     last_detected_at} -- the one computed shape both the CLI (Slice 3) and
-    the read-only MCP tool (Slice 4) render, never duplicated."""
+    the read-only MCP tool (Slice 4) render, never duplicated.
+
+    `detail=True` (portunus-leak-visibility Story 01) additionally includes
+    `findings` (the raw path/line_number/timestamps list -- still never a
+    value) and `distinct_files` (unique file paths, NOT raw finding count --
+    a transcript can match the same secret on many lines, which shouldn't
+    inflate "how many places did this leak" beyond how many actual files
+    are involved). Defaults to False so every existing caller's shape is
+    unchanged -- no accidental behavior change."""
     if not status.findings:
-        return {
+        base: Dict[str, object] = {
             "ref_name": status.ref_name,
             "severity": None,
             "finding_count": 0,
             "first_detected_at": None,
             "last_detected_at": None,
         }
-    return {
+        if detail:
+            base["findings"] = []
+            base["distinct_files"] = 0
+        return base
+
+    base = {
         "ref_name": status.ref_name,
         "severity": severity(status, now=now),
         "finding_count": len(status.findings),
         "first_detected_at": min(f.first_detected_at for f in status.findings),
         "last_detected_at": max(f.last_detected_at for f in status.findings),
     }
+    if detail:
+        base["findings"] = [
+            {
+                "path": f.path,
+                "line_number": f.line_number,
+                "first_detected_at": f.first_detected_at,
+                "last_detected_at": f.last_detected_at,
+            }
+            for f in status.findings
+        ]
+        base["distinct_files"] = len({f.path for f in status.findings})
+    return base
 
 
 # ---------------------------------------------------------------------------
