@@ -1,0 +1,41 @@
+name: portunus-container-image
+title: containerize Portunus (CLI + MCP server) for sidecar / Kubernetes deployment
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd-for-python-live-proof-for-ui
+version_bump: patch
+
+description: |
+  Most real installs won't be "download the desktop app" -- they'll be "pull an image and run
+  Portunus alongside another service, as a sidecar container or in a Kubernetes pod" (the user's
+  own framing; local dev on Docker/Mac and Podman/Arch). No container support exists today --
+  confirmed via repo search: no Dockerfile, no compose file, no k8s manifests, no docs.
+
+  v1 targets same-pod/same-host reachability (a consumer reaches Portunus via docker exec, a
+  shared pod volume/network namespace, or a harness spawning `docker run -i ... portunus mcp`
+  directly as its MCP client subprocess) -- NOT a network-reachable shared broker service many
+  pods call, which would need the currently-stubbed RBAC to actually be enforced (separate,
+  larger, explicitly out-of-scope future epic). The MCP server being stdio-only today (the
+  underlying `mcp` library already supports sse/streamable-http, Portunus just never wires past
+  the default) makes this the natural, low-risk v1 boundary, not an arbitrary one.
+
+  No Python/TypeScript application code changes -- this is packaging (a real Dockerfile, non-root
+  user, VOLUME-declared PORTUNUS_HOME) and documentation (the persistent-volume requirement for
+  the local-encrypted backend, per-backend/per-environment auth paths: zero-config local vault,
+  mounted ~/.config/gcloud for local dev, GKE Workload Identity for real k8s -- keyless already).
+
+stories:
+  - id: 01-dockerfile-and-entrypoint
+    title: Dockerfile -- non-root, VOLUME-declared PORTUNUS_HOME, gcloud CLI included
+    complexity: medium
+    depends_on: []
+    status: pending
+  - id: 02-compose-example-and-sidecar-docs
+    title: docker-compose.yml worked example + sidecar/k8s pattern documentation
+    complexity: medium
+    depends_on: [01-dockerfile-and-entrypoint]
+    status: pending
+  - id: 03-closeout
+    title: docs, version bump, live proof (build + run via real Docker)
+    complexity: low
+    depends_on: [02-compose-example-and-sidecar-docs]
+    status: pending

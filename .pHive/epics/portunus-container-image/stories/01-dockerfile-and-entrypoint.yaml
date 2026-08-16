@@ -1,0 +1,71 @@
+id: 01-dockerfile-and-entrypoint
+epic: portunus-container-image
+title: Dockerfile -- non-root, VOLUME-declared PORTUNUS_HOME, gcloud CLI included
+status: pending
+complexity: medium
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: []
+
+description: |
+  New root-level Dockerfile: Python slim base, installs the portunus package (pip install .,
+  not editable), installs the gcloud CLI (design-discussion.md §6 -- one image, not a slim/full
+  split, for v1), runs as a non-root user (design-discussion.md self-grill), declares
+  PORTUNUS_HOME as a VOLUME so an unmounted run still persists across restarts instead of
+  silently using ephemeral container-layer storage, and sets ENTRYPOINT ["portunus"] so
+  `docker run <image> resolve --exec ...` matches today's CLI usage exactly. `docker run -i
+  <image> mcp` must work unchanged for stdio MCP clients.
+
+acceptance_criteria:
+  - "Given `docker build .`, when run, then it succeeds and produces a runnable image"
+  - "Given `docker run <image> --version` (or equivalent), when run, then it reports the portunus package version, proving the entrypoint and installed package are wired correctly"
+  - "Given `docker run <image>` as a fresh container, when inspected, then the process runs as a non-root user"
+  - "Given a container run WITHOUT an explicit volume mount, when it writes to PORTUNUS_HOME and is restarted, then the same anonymous volume is reused (VOLUME declaration honored), not silently ephemeral storage"
+  - "Given a bind-mounted volume, when a secret is dropped then the container is removed and recreated with the same mount, then the secret is still resolvable -- the actual persistent-volume proof, not just a VOLUME-keyword check"
+  - "Given `docker run <image> gcloud --version` (or equivalent), when run, then the gcloud CLI is present and functional"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: implement
+    description: Dockerfile + .dockerignore.
+    agent: developer
+  - id: live-verify
+    description: Real `docker build` + `docker run` smoke tests against the acceptance criteria above -- not simulated, an actual local Docker build on this machine.
+    agent: tester
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [live-verify]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: pyproject.toml
+      purpose: package metadata/dependencies (cryptography, mcp) + the `portunus` console-script entry point this Dockerfile's ENTRYPOINT wraps
+    - path: src/portunus/paths.py
+      purpose: PORTUNUS_HOME resolution -- already environment-driven, no code change needed, just a VOLUME declaration at the same path
+
+files_to_modify:
+  - file: Dockerfile
+    change: new file
+  - file: .dockerignore
+    change: new file
+
+design_decisions:
+  - decision: one image with gcloud CLI included, not a slim/full split
+    rationale: "design-discussion.md §6 -- image size doesn't matter much for a sidecar/CI image; two images is real ongoing maintenance cost for an early, unproven feature"
+  - decision: non-root container user
+    rationale: "design-discussion.md self-grill -- PORTUNUS_HOME's own 0600/0700 permissions are already the real access control; running as root adds no benefit and is an avoidable hardening gap for a secret-handling image"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "No new code path touches a value -- this is packaging only. The live-verify step's persistent-volume proof confirms the vault survives a container recreation without ever printing/logging a value during the check."
+
+risks:
+  - severity: low
+    description: gcloud CLI install could meaningfully bloat the image or be brittle across base-image updates
+    mitigation: "Pin the gcloud install method to Google's own documented apt/install script; accepted image-size tradeoff per design-discussion.md §6"
+
+references:
+  - path: .pHive/epics/portunus-container-image/docs/design-discussion.md
+    relevant_excerpt: "§3, §5, §6, self-grill"

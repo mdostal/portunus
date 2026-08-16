@@ -1,0 +1,83 @@
+id: 03-closeout
+epic: portunus-container-image
+title: docs, version bump, live proof (build + run via real Docker)
+status: pending
+complexity: low
+methodology: tdd-for-python-live-proof-for-ui
+depends_on: [02-compose-example-and-sidecar-docs]
+
+description: |
+  .pHive/CONTEXT.md terminology entry for the container deployment model. Version bump (patch
+  per epic.yaml -- packaging/docs only, no functional code change), CHANGELOG.md entry, full
+  pytest suite (must stay green even though this epic touches no Python source), and one final
+  consolidated live proof: build the real image, run it with a bind-mounted volume, drop a
+  secret, remove and recreate the container against the same mount, confirm the secret still
+  resolves -- the actual persistent-volume guarantee, end to end, on this machine's real Docker.
+
+acceptance_criteria:
+  - "Given the full pytest suite, when run, then it is fully green with zero regressions"
+  - "Given a real `docker build` + `docker run` cycle including a container removal and recreation against the same mount, when a secret is dropped before removal, then it is still resolvable after recreation"
+  - "Given .pHive/CONTEXT.md, when read, then it accurately describes the container deployment model and its same-pod/same-host scope"
+
+methodology: tdd-for-python-live-proof-for-ui
+steps:
+  - id: docs
+    description: .pHive/CONTEXT.md update.
+    agent: developer
+  - id: version-bump
+    description: Lockstep version bump across all 5 sources (patch); real cargo build; real pip install -e.
+    agent: developer
+    depends_on: [docs]
+  - id: changelog
+    description: CHANGELOG.md entry.
+    agent: developer
+    depends_on: [version-bump]
+  - id: live-proof
+    description: Full pytest suite + final consolidated Docker live proof.
+    agent: tester
+    depends_on: [changelog]
+  - id: integrate
+    description: Commit, push, PR into dev, merge, promote dev->main, cut GitHub release.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/CONTEXT.md
+      purpose: terminology glossary, updated with the container deployment model
+    - path: CHANGELOG.md
+      purpose: release notes
+
+files_to_modify:
+  - file: pyproject.toml
+    change: version bump
+  - file: src/portunus/__init__.py
+    change: version bump
+  - file: manifest.json
+    change: version bump
+  - file: ui/src-tauri/tauri.conf.json
+    change: version bump
+  - file: ui/src-tauri/Cargo.toml
+    change: version bump
+  - file: CHANGELOG.md
+    change: new entry
+  - file: .pHive/CONTEXT.md
+    change: new terminology entry
+
+design_decisions:
+  - decision: real cargo build + real pip install -e after every version-string edit
+    rationale: "established this session -- a sed-only version-string change does not refresh Cargo.lock's cached version field or pip's dist-info"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Live-proof uses a scratch fixture secret throughout, never the maintainer's real vault"
+
+risks:
+  - severity: low
+    description: Standard closeout risk -- version drift between sources if any file is missed
+    mitigation: "Explicit lockstep list, matching every prior release this session"
+
+references:
+  - path: .pHive/epics/portunus-container-image/epic.yaml
+    relevant_excerpt: "version_bump: patch"
