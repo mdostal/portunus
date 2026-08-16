@@ -308,7 +308,7 @@ export default function ProjectExplorer({ onSelect }: { onSelect: (ref: Portunus
             className="field"
             value={project}
             onChange={(e) => setProject(e.target.value)}
-            placeholder="personalsites-487021"
+            placeholder="my-project-12345"
           />
         </label>
         <button className="btn solid" type="submit" disabled={loading || !project}>
