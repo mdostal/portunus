@@ -261,7 +261,7 @@ def portunus_run_leak_scan() -> dict:
     portunus_leak_scan_config_add_path."""
     registry, audit, broker, resolver = _build()
     result = run_scan(registry, broker, resolver.backend, backend_for=resolver.backend_for)
-    if not result.configured_paths:
+    if not result.configured_paths and not result.configured_repos:
         return {"configured": False, "findings": []}
     audit.append("leak-scan", "*", f"{len(result.findings)}-new-findings")
     for finding in result.findings:

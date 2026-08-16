@@ -4,6 +4,27 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-16
+
+### Added
+
+- **Git-repository history as a leak-scan target.** `portunus leak-scan config add-repo <path>`
+  scans a repo's FULL history (every branch, every commit via `git log --all -p`), not just its
+  current working tree -- formalizing the manual technique that verified live no leaked
+  credential had ever touched this codebase's own history. Always a full re-scan per run (git
+  history can be rewritten, unlike an append-only log file); reuses the existing scan engine
+  unchanged via a temp dump, no second matching implementation.
+- **Source classification on every finding.** `log` / `local` / `git-history`, and for
+  git-history findings, whether the repo's GitHub remote is `public`, `private`, or `unknown`
+  (resolved via `gh repo view`, the same gh-CLI/your-own-credential posture the desktop app's
+  self-updater already uses -- never an embedded token, never a guess). A public-repo finding
+  gets the loudest treatment anywhere it renders -- the single most severity-relevant fact this
+  feature can surface.
+- Settings gains git-repo config (add/remove, mirroring the existing scan-path UI); DetailDrawer's
+  finding history now labels each entry by source ("⚠ PUBLIC repo: ...", "private repo: ...",
+  "log file", "local file"). `portunus leak status --detail` and the MCP/API equivalents expose
+  the full per-finding classification.
+
 ## [0.24.0] - 2026-08-16
 
 ### Added

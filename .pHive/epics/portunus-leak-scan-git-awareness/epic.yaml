@@ -1,0 +1,44 @@
+name: portunus-leak-scan-git-awareness
+title: git-repository history as a leak-scan target + source classification (log/local/codebase, public/private)
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd-for-python-live-proof-for-ui
+version_bump: minor
+
+description: |
+  Immediately after manually verifying (by dumping the portunus repo's full git history to a
+  scratch file and running it through the existing leak-scan engine, then deleting the scratch
+  file) that none of the real leak-scan findings from earlier dogfooding had ever touched the
+  codebase, the user asked for this to become a real, built-in capability: "we should have both
+  available and able to run with portunus and it should be able to help us see -- is it logged,
+  is it local, is it in a code base, is it in a private codebase or a public codebase, etc."
+
+  Two additions: (a) git-repository history as a first-class scan target
+  (`portunus leak-scan config add-repo <path>`) -- reuses the existing scan_paths() engine
+  unchanged by dumping `git log --all -p` to a temp file per run (full re-scan every time, not
+  incremental -- git history can be rewritten, unlike an append-only log file, and repo
+  histories are far smaller than the 3.4 GB corpus that motivated incremental scanning in the
+  first place); (b) source classification on every finding -- log / local / git-history, and
+  for git-history findings, public/private via `gh repo view` (the same gh-CLI, user's-own-
+  credential posture the desktop app's updater.rs already established for this codebase).
+
+stories:
+  - id: 01-git-repo-scan-targets
+    title: git-repository history as a scan target -- add-repo config, full re-scan per run, reusing scan_paths()
+    complexity: medium
+    depends_on: []
+    status: shipped
+  - id: 02-source-classification
+    title: source classification on findings -- log/local/git-history, public/private via gh
+    complexity: medium
+    depends_on: [01-git-repo-scan-targets]
+    status: shipped
+  - id: 03-ui-surfacing
+    title: surface classification in LeakBadge tooltip + DetailDrawer's finding history
+    complexity: low
+    depends_on: [02-source-classification]
+    status: shipped
+  - id: 04-closeout
+    title: docs, version bump, live proof against the real portunus repo
+    complexity: low
+    depends_on: [03-ui-surfacing]
+    status: shipped

@@ -57,6 +57,14 @@ export interface LeakFindingDetail {
   line_number: number;
   first_detected_at: number;
   last_detected_at: number;
+  // portunus-leak-scan-git-awareness -- WHERE this finding came from.
+  // source_kind is a soft, named heuristic for "log"/"local" (getting it
+  // wrong is cosmetic, never a security gap); repo_visibility is only
+  // ever "public"/"private" when actually resolved via `gh repo view` --
+  // "unknown" otherwise, never a guess.
+  source_kind: "log" | "local" | "git-history";
+  repo_path: string | null;
+  repo_visibility: "public" | "private" | "unknown" | null;
 }
 
 export interface LeakSummary {

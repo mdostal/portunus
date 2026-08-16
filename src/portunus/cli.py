@@ -35,10 +35,13 @@ from .roles import PolicyError, VALID_SCOPE_TYPES, delete_policy, load_policies,
 from .crawl import crawl_candidates, generate_report
 from .leakscan import (
     add_scan_path,
+    add_scan_repo,
     load_leak_status,
     load_scan_paths,
+    load_scan_repos,
     mark_rotated,
     remove_scan_path,
+    remove_scan_repo,
     run_scan,
     summarize,
 )
@@ -1443,11 +1446,14 @@ def cmd_leak_scan(args) -> int:
     registry, audit, broker, resolver = _build()
     result = run_scan(registry, broker, resolver.backend, backend_for=resolver.backend_for)
 
-    if not result.configured_paths:
+    if not result.configured_paths and not result.configured_repos:
         if args.json:
             print(json.dumps({"configured": False, "findings": []}))
         else:
-            print("(no scan paths configured -- `portunus leak-scan config add-path <glob>` first)")
+            print(
+                "(no scan paths or repos configured -- `portunus leak-scan config add-path "
+                "<glob>` or `add-repo <path>` first)"
+            )
         return 0
 
     audit.append("leak-scan", "*", f"{len(result.findings)}-new-findings")
@@ -1489,6 +1495,31 @@ def cmd_leak_scan_config_show(args) -> int:
         return 0
     for p in paths:
         print(f"  {p}")
+    return 0
+
+
+def cmd_leak_scan_config_add_repo(args) -> int:
+    add_scan_repo(args.repo_path)
+    print(f"added repo -> {args.repo_path}")
+    return 0
+
+
+def cmd_leak_scan_config_remove_repo(args) -> int:
+    remove_scan_repo(args.repo_path)
+    print(f"removed repo -> {args.repo_path}")
+    return 0
+
+
+def cmd_leak_scan_config_show_repos(args) -> int:
+    repos = load_scan_repos()
+    if args.json:
+        print(json.dumps(repos))
+        return 0
+    if not repos:
+        print("(no repos configured)")
+        return 0
+    for r in repos:
+        print(f"  {r}")
     return 0
 
 
@@ -2124,6 +2155,20 @@ def build_parser() -> argparse.ArgumentParser:
     ls_config_show = ls_config_sub.add_parser("show", help="show configured scan paths")
     ls_config_show.add_argument("--json", action="store_true")
     ls_config_show.set_defaults(func=cmd_leak_scan_config_show)
+
+    ls_config_add_repo = ls_config_sub.add_parser(
+        "add-repo", help="add a git repo to scan its full history (all branches, all commits)",
+    )
+    ls_config_add_repo.add_argument("repo_path")
+    ls_config_add_repo.set_defaults(func=cmd_leak_scan_config_add_repo)
+
+    ls_config_remove_repo = ls_config_sub.add_parser("remove-repo", help="remove a configured git repo")
+    ls_config_remove_repo.add_argument("repo_path")
+    ls_config_remove_repo.set_defaults(func=cmd_leak_scan_config_remove_repo)
+
+    ls_config_show_repos = ls_config_sub.add_parser("show-repos", help="show configured git repos")
+    ls_config_show_repos.add_argument("--json", action="store_true")
+    ls_config_show_repos.set_defaults(func=cmd_leak_scan_config_show_repos)
 
     lk = sub.add_parser("leak", help="query/manage leak-scan findings for a reference")
     lk_sub = lk.add_subparsers(dest="action", required=True)

@@ -1,0 +1,70 @@
+id: 02-source-classification
+epic: portunus-leak-scan-git-awareness
+title: source classification on findings -- log/local/git-history, public/private via gh
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: [01-git-repo-scan-targets]
+
+description: |
+  Every Finding/LeakFinding gains `source_kind` ("git-history" | "log" | "local") and, for
+  git-history findings, `repo_path` + `repo_visibility` ("public" | "private" | "unknown").
+  `source_kind` for plain-path findings is a soft heuristic (log-like filename/extension ->
+  "log", else "local") -- documented as exactly that, never oversold as certain
+  (design-discussion.md §3). `repo_visibility` resolved via `gh repo view <remote> --json
+  visibility`, mirroring updater.rs's existing gh-CLI/user's-own-credential posture -- non-GitHub
+  remotes, no remote, or gh unavailable/unauthenticated all resolve to "unknown", never a guess.
+  Resolved ONCE per configured repo per scan run, not once per finding (design-discussion.md §4).
+
+acceptance_criteria:
+  - "Given a finding from a configured repo's git history, when classified, then source_kind is 'git-history' and repo_path/repo_visibility are populated"
+  - "Given a finding from a plain path glob matching a log-like filename (.log/.jsonl/shell history), when classified, then source_kind is 'log'"
+  - "Given a finding from a plain path glob NOT matching the log heuristic, when classified, then source_kind is 'local'"
+  - "Given a repo with a GitHub remote, when repo_visibility is resolved, then it correctly reports 'public' or 'private' matching `gh repo view`'s own answer"
+  - "Given a repo with no remote, a non-GitHub remote, or no gh CLI available, when repo_visibility is resolved, then it reports 'unknown' -- never a guessed public/private value"
+  - "Given a repo producing multiple findings in one scan, when repo_visibility is resolved, then `gh repo view` is called exactly once for that repo, not once per finding"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for each source_kind case, visibility resolution (real + mocked gh calls), the once-per-repo-not-per-finding call count, and the unknown-fallback cases.
+    agent: tester
+  - id: implement
+    description: Classification logic in leakscan.py, threaded through Finding/LeakFinding/summarize().
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/src-tauri/src/updater.rs
+      purpose: the exact gh-CLI, user's-own-credential precedent this story's repo_visibility resolution mirrors in Python
+    - path: src/portunus/leakscan.py
+      purpose: Finding/LeakFinding dataclasses this story extends with source_kind/repo_path/repo_visibility
+
+files_to_modify:
+  - file: src/portunus/leakscan.py
+    change: source_kind/repo_path/repo_visibility fields + classification logic + gh repo view wrapper
+
+design_decisions:
+  - decision: gh repo view called once per repo per scan run, cached for that run's duration
+    rationale: "design-discussion.md §4 -- a repo can produce many findings (one secret at 48 locations, confirmed live); redundant per-finding network calls would be wasteful and slow"
+  - decision: source_kind's log-vs-local distinction is an explicitly-documented soft heuristic
+    rationale: "design-discussion.md §3 -- getting it wrong is cosmetic (mislabeled category), never a security gap; the finding and its severity are unaffected either way"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "New fields are all metadata (path/visibility/classification strings) -- same structural AST check every prior story used, extended to cover the new fields"
+
+risks:
+  - severity: low
+    description: gh CLI calls could fail or hang in an unusual environment (no network, rate-limited)
+    mitigation: "Any gh failure resolves to repo_visibility='unknown' rather than blocking the scan or raising -- a classification failure never prevents a real finding from being reported"
+
+references:
+  - path: .pHive/epics/portunus-leak-scan-git-awareness/docs/design-discussion.md
+    relevant_excerpt: "§3, §4"

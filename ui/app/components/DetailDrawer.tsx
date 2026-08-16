@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AuditEntry, LeakSummary, PortunusReference, PortunusView } from "../types";
+import type { AuditEntry, LeakFindingDetail, LeakSummary, PortunusReference, PortunusView } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
@@ -16,6 +16,25 @@ function dictToKvString(dict: Record<string, string> | undefined): string {
   return Object.entries(dict || {})
     .map(([k, v]) => `${k}=${v}`)
     .join(",");
+}
+
+/** WHERE a leak finding came from, in one glance -- a public-repo finding
+ * is the single most severity-relevant fact this codebase can surface
+ * about a leak (portunus-leak-scan-git-awareness design-discussion.md
+ * §5), so it never reads the same as a local log file. */
+function findingSourceLabel(f: LeakFindingDetail): { text: string; className: string } {
+  if (f.source_kind === "git-history") {
+    const repoName = f.repo_path ? f.repo_path.split("/").filter(Boolean).pop() : "repo";
+    if (f.repo_visibility === "public") {
+      return { text: `⚠ PUBLIC repo: ${repoName}`, className: "finding-source-public" };
+    }
+    if (f.repo_visibility === "private") {
+      return { text: `private repo: ${repoName}`, className: "finding-source-private" };
+    }
+    return { text: `repo (visibility unknown): ${repoName}`, className: "finding-source-unknown" };
+  }
+  if (f.source_kind === "log") return { text: "log file", className: "finding-source-log" };
+  return { text: "local file", className: "finding-source-local" };
 }
 
 export default function DetailDrawer({
@@ -284,12 +303,18 @@ export default function DetailDrawer({
             verify that independently.
           </p>
           <div className="settings-hierarchy-list">
-            {(leakDetail.findings || []).map((f, i) => (
-              <div className="settings-hierarchy-row" key={`${f.path}:${f.line_number}:${i}`}>
-                <span title={f.path}>{f.path.split("/").pop()}</span>
-                <span>line {f.line_number}</span>
-              </div>
-            ))}
+            {(leakDetail.findings || []).map((f, i) => {
+              const source = findingSourceLabel(f);
+              return (
+                <div className="settings-hierarchy-row" key={`${f.path}:${f.line_number}:${i}`}>
+                  <span title={f.path}>{f.path.split("/").pop()}</span>
+                  <span>line {f.line_number}</span>
+                  <span className={source.className} title={f.path}>
+                    {source.text}
+                  </span>
+                </div>
+              );
+            })}
           </div>
           <button className="btn quiet" disabled={markRotatedBusy} onClick={markLeakRotated}>
             {markRotatedBusy ? "Marking…" : "Mark rotated"}

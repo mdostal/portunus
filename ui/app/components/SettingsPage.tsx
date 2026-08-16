@@ -155,6 +155,8 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
 
   const [scanPaths, setScanPaths] = useState<string[]>([]);
   const [newScanPath, setNewScanPath] = useState("");
+  const [scanRepos, setScanRepos] = useState<string[]>([]);
+  const [newScanRepo, setNewScanRepo] = useState("");
   const [leakStatuses, setLeakStatuses] = useState<LeakSummary[]>([]);
   const [leakBusy, setLeakBusy] = useState(false);
   const [leakError, setLeakError] = useState<string | null>(null);
@@ -163,8 +165,14 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
   function refreshScanPaths() {
     fetch("/api/leak-scan-config")
       .then((r) => r.json())
-      .then((data) => setScanPaths(data.paths || []))
-      .catch(() => setScanPaths([]));
+      .then((data) => {
+        setScanPaths(data.paths || []);
+        setScanRepos(data.repos || []);
+      })
+      .catch(() => {
+        setScanPaths([]);
+        setScanRepos([]);
+      });
   }
 
   function refreshLeakStatuses() {
@@ -188,7 +196,7 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
       const res = await fetch("/api/leak-scan-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", glob: newScanPath.trim() }),
+        body: JSON.stringify({ action: "add", target: "path", glob: newScanPath.trim() }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -208,10 +216,50 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
       const res = await fetch("/api/leak-scan-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "remove", glob }),
+        body: JSON.stringify({ action: "remove", target: "path", glob }),
       });
       const data = await res.json();
       if (res.ok) setScanPaths(data.paths || []);
+    } finally {
+      setLeakBusy(false);
+    }
+  }
+
+  // Git-repo scan targets (portunus-leak-scan-git-awareness) -- same
+  // add/remove pattern as scan paths, disambiguated via `target: "repo"`.
+  async function addScanRepo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newScanRepo.trim()) return;
+    setLeakBusy(true);
+    setLeakError(null);
+    try {
+      const res = await fetch("/api/leak-scan-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", target: "repo", repo_path: newScanRepo.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLeakError(data.error || "failed to add repo");
+        return;
+      }
+      setScanRepos(data.repos || []);
+      setNewScanRepo("");
+    } finally {
+      setLeakBusy(false);
+    }
+  }
+
+  async function removeScanRepo(repoPath: string) {
+    setLeakBusy(true);
+    try {
+      const res = await fetch("/api/leak-scan-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", target: "repo", repo_path: repoPath }),
+      });
+      const data = await res.json();
+      if (res.ok) setScanRepos(data.repos || []);
     } finally {
       setLeakBusy(false);
     }
@@ -330,7 +378,8 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
         </p>
 
         <p className="inline-status">
-          {scanPaths.length} scan path{scanPaths.length === 1 ? "" : "s"} configured
+          {scanPaths.length} scan path{scanPaths.length === 1 ? "" : "s"}, {scanRepos.length} git
+          repo{scanRepos.length === 1 ? "" : "s"} configured
           {lastScanAt ? ` -- last scan ${lastScanAt}` : ""}.
         </p>
 
@@ -361,8 +410,43 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
           </button>
         </form>
 
+        <p className="inline-status">
+          Git repos -- scans a repo&apos;s full history (all branches, all commits), not just the
+          current working tree, and reports whether the repo&apos;s GitHub remote is public or
+          private.
+        </p>
+
+        <div className="settings-hierarchy-list">
+          {scanRepos.map((r) => (
+            <div className="settings-hierarchy-row" key={r}>
+              <span>{r}</span>
+              <button className="btn quiet" disabled={leakBusy} onClick={() => removeScanRepo(r)}>
+                Remove
+              </button>
+            </div>
+          ))}
+          {scanRepos.length === 0 && <p className="inline-status">(no repos configured)</p>}
+        </div>
+
+        <form className="settings-policy-form" onSubmit={addScanRepo}>
+          <input
+            className="field"
+            placeholder="path to a local git repo clone"
+            value={newScanRepo}
+            disabled={leakBusy}
+            onChange={(e) => setNewScanRepo(e.target.value)}
+          />
+          <button className="btn quiet" type="submit" disabled={leakBusy || !newScanRepo.trim()}>
+            + add repo
+          </button>
+        </form>
+
         <div className="settings-actions">
-          <button className="btn quiet" disabled={leakBusy || scanPaths.length === 0} onClick={runLeakScanNow}>
+          <button
+            className="btn quiet"
+            disabled={leakBusy || (scanPaths.length === 0 && scanRepos.length === 0)}
+            onClick={runLeakScanNow}
+          >
             {leakBusy ? "Scanning…" : "Run scan now"}
           </button>
         </div>

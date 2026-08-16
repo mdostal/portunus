@@ -253,6 +253,18 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `generate_report()`'s exact, narrow output shape, not a markdown-parsing dependency
   (`ui/package.json` stays at 3 runtime dependencies). Settings' "View report" button renders
   the report in-app; "Download report" still saves it as a file.
+- **Git-repo scan targets / source classification** (`portunus-leak-scan-git-awareness`) —
+  `portunus leak-scan config add-repo <path>` scans a repo's FULL git history (`git log --all -p
+  --full-history --reverse`, dumped to a temp file per run, fed through the SAME scan_paths()
+  engine unchanged, temp file always deleted). `--reverse` (oldest-first) is deliberate: new
+  commits only ever append to the dump, keeping the `(path, line_number)` dedup key stable
+  across an actively-developed repo's scans. Always a full re-scan, never incremental (git
+  history can be rewritten). Every `Finding`/`LeakFinding` carries `source_kind` (`log` / `local`
+  / `git-history` — a soft, documented heuristic for the first two) and, for git-history
+  findings, `repo_path` + `repo_visibility` (`public`/`private`/`unknown`, resolved via `gh repo
+  view <remote>` ONCE per repo per scan — mirrors `ui/src-tauri/src/updater.rs`'s own gh-CLI,
+  user's-own-credential posture, never an embedded token; never a guess when unresolvable). A
+  public-repo finding gets the loudest UI treatment anywhere it renders.
 
 ## Key paths
 

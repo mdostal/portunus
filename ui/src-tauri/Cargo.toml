@@ -1,6 +1,6 @@
 [package]
 name = "portunus-desktop"
-version = "0.24.0"
+version = "0.25.0"
 description = "Portunus Vault -- a native desktop shell around the existing Next.js Vault UI, kept in lockstep with the portunus Python package's own version."
 authors = ["Mathew Dostal"]
 license = "MIT"
