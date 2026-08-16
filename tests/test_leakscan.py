@@ -179,10 +179,18 @@ def test_non_utf8_bytes_are_handled_without_crashing(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_finding_dataclass_has_no_value_capable_field():
+    """Every field must be metadata (name/path/number/classification-label),
+    never something that could hold a secret value or a substring of one.
+    portunus-leak-scan-git-awareness added source_kind/repo_path/
+    repo_visibility -- all classification strings, re-verified here rather
+    than the assertion just being loosened to accept them."""
     from portunus.leakscan import Finding
 
     field_names = set(Finding.__dataclass_fields__.keys())
-    assert field_names == {"ref_name", "path", "line_number", "byte_offset"}
+    assert field_names == {
+        "ref_name", "path", "line_number", "byte_offset",
+        "source_kind", "repo_path", "repo_visibility",
+    }
 
 
 def test_leakscan_module_never_calls_print_or_logging():

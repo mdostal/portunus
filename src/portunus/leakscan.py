@@ -61,16 +61,44 @@ URGENT_TO_CRITICAL_DAYS = 7
 _SECONDS_PER_DAY = 86400.0
 
 
+#: Filenames/extensions that look like a log or conversation transcript
+#: rather than an arbitrary local file -- a soft, named heuristic
+#: (design-discussion.md §3, portunus-leak-scan-git-awareness), not a
+#: rigorous classifier. Getting it wrong just mislabels a category; the
+#: finding itself and its severity are unaffected either way.
+_LOG_LIKE_SUFFIXES = (".log", ".jsonl")
+_LOG_LIKE_NAMES = (".zsh_history", ".bash_history", ".history", "history")
+
+
+def _classify_path_source(path: str) -> str:
+    """'log' | 'local' -- see _LOG_LIKE_SUFFIXES/_LOG_LIKE_NAMES."""
+    name = Path(path).name
+    if name in _LOG_LIKE_NAMES:
+        return "log"
+    if Path(path).suffix in _LOG_LIKE_SUFFIXES:
+        return "log"
+    return "local"
+
+
 @dataclass(frozen=True)
 class Finding:
     """A single location where a managed secret's value was found outside
     the vault. Deliberately narrow: no field here is capable of holding a
-    value or a substring of one."""
+    value or a substring of one.
+
+    `source_kind` ("log" | "local" | "git-history") and, for git-history
+    findings, `repo_path`/`repo_visibility` ("public" | "private" |
+    "unknown") classify WHERE the finding came from (portunus-leak-scan-
+    git-awareness) -- still never a value, only metadata already safe to
+    surface."""
 
     ref_name: str
     path: str
     line_number: int
     byte_offset: int
+    source_kind: str = "local"
+    repo_path: Optional[str] = None
+    repo_visibility: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +194,7 @@ def _scan_one_file(
     offset = start_offset
     consumed_offset = start_offset
     consumed_line_count = line_count
+    source_kind = _classify_path_source(str(path))
 
     try:
         with path.open("rb") as fh:
@@ -181,7 +210,9 @@ def _scan_one_file(
                 text = line_bytes.decode("utf-8", errors="replace")
                 for match in pattern.finditer(text):
                     for name in value_to_names.get(match.group(0), []):
-                        findings.append(Finding(name, str(path), line_count, offset))
+                        findings.append(
+                            Finding(name, str(path), line_count, offset, source_kind=source_kind)
+                        )
                 offset += len(line_bytes)
                 consumed_offset = offset
                 consumed_line_count = line_count
@@ -241,6 +272,9 @@ class LeakFinding:
     line_number: int
     first_detected_at: float
     last_detected_at: float
+    source_kind: str = "local"
+    repo_path: Optional[str] = None
+    repo_visibility: Optional[str] = None
 
 
 @dataclass
@@ -273,6 +307,9 @@ def _load_status_unlocked(path: Optional[Path] = None) -> Dict[str, LeakStatus]:
                     line_number=f["line_number"],
                     first_detected_at=f["first_detected_at"],
                     last_detected_at=f["last_detected_at"],
+                    source_kind=f.get("source_kind", "local"),
+                    repo_path=f.get("repo_path"),
+                    repo_visibility=f.get("repo_visibility"),
                 )
                 for f in cfg.get("findings", [])
             ],
@@ -292,6 +329,9 @@ def _save_status_unlocked(statuses: Dict[str, LeakStatus], path: Optional[Path] 
                     "line_number": f.line_number,
                     "first_detected_at": f.first_detected_at,
                     "last_detected_at": f.last_detected_at,
+                    "source_kind": f.source_kind,
+                    "repo_path": f.repo_path,
+                    "repo_visibility": f.repo_visibility,
                 }
                 for f in status.findings
             ],
@@ -344,6 +384,9 @@ def record_findings(
                         line_number=finding.line_number,
                         first_detected_at=ts,
                         last_detected_at=ts,
+                        source_kind=finding.source_kind,
+                        repo_path=finding.repo_path,
+                        repo_visibility=finding.repo_visibility,
                     )
                 )
         _save_status_unlocked(statuses, path)
@@ -436,6 +479,9 @@ def summarize(
                 "line_number": f.line_number,
                 "first_detected_at": f.first_detected_at,
                 "last_detected_at": f.last_detected_at,
+                "source_kind": f.source_kind,
+                "repo_path": f.repo_path,
+                "repo_visibility": f.repo_visibility,
             }
             for f in status.findings
         ]
@@ -580,6 +626,39 @@ def _dump_git_history(repo_path: str) -> Optional[Path]:
     return Path(tmp_path)
 
 
+def _resolve_repo_visibility(repo_path: str) -> str:
+    """'public' | 'private' | 'unknown' -- resolved via `gh repo view`,
+    the user's own already-authenticated GitHub CLI, mirroring
+    ui/src-tauri/src/updater.rs's own posture for this codebase (never an
+    embedded token). Never guesses: no remote, a non-GitHub remote, or gh
+    being unavailable/unauthenticated all resolve to 'unknown'."""
+    try:
+        remote = subprocess.run(
+            ["git", "-C", repo_path, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    if remote.returncode != 0 or not remote.stdout.strip():
+        return "unknown"
+    remote_url = remote.stdout.strip()
+    try:
+        result = subprocess.run(
+            ["gh", "repo", "view", remote_url, "--json", "visibility", "--jq", ".visibility"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    visibility = result.stdout.strip().upper()
+    if visibility == "PUBLIC":
+        return "public"
+    if visibility == "PRIVATE":
+        return "private"
+    return "unknown"
+
+
 def _scan_repo_history(repo_path: str, values: Dict[str, str]) -> List[Finding]:
     """Scan one configured repo's full git history for occurrences of
     `values`. Always a full re-scan -- git history can be rewritten, which
@@ -588,7 +667,8 @@ def _scan_repo_history(repo_path: str, values: Dict[str, str]) -> List[Finding]:
     before this function returns, success or failure. Findings are
     remapped from the (ephemeral, fresh-every-run) temp file path to a
     stable `"<repo> (git history)"` label so record_findings()'s dedup key
-    stays meaningful across runs."""
+    stays meaningful across runs. repo_visibility is resolved ONCE per
+    repo here, not once per finding (design-discussion.md §4)."""
     dump_path = _dump_git_history(repo_path)
     if dump_path is None:
         return []
@@ -596,11 +676,15 @@ def _scan_repo_history(repo_path: str, values: Dict[str, str]) -> List[Finding]:
         findings, _ = scan_paths([str(dump_path)], values, {})
     finally:
         dump_path.unlink(missing_ok=True)
+    if not findings:
+        return []
+    visibility = _resolve_repo_visibility(repo_path)
     stable_label = f"{repo_path} (git history)"
     return [
         Finding(
             ref_name=f.ref_name, path=stable_label,
             line_number=f.line_number, byte_offset=f.byte_offset,
+            source_kind="git-history", repo_path=repo_path, repo_visibility=visibility,
         )
         for f in findings
     ]
