@@ -329,6 +329,24 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   padding: 0.7rem 0.8rem;
 }
 
+.report-view-panel {
+  border: 1px solid var(--hair);
+  background: var(--paper-raised);
+  border-radius: 4px;
+  padding: 0.8rem 1rem;
+  max-height: 28rem;
+  overflow-y: auto;
+}
+.report-view { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; }
+.report-view h1 { font-size: 1rem; margin: 0 0 0.3rem; }
+.report-view h2 { font-size: 0.88rem; margin: 0.6rem 0 0.1rem; color: var(--brass); }
+.report-view h3 { font-size: 0.8rem; margin: 0.3rem 0 0.1rem; color: var(--steel); }
+.report-view p { margin: 0; color: var(--ink-soft); }
+.report-view ul { margin: 0 0 0.3rem; padding-left: 1.1rem; }
+.report-view li { margin: 0.1rem 0; }
+.report-view code { font-family: var(--font-mono); font-size: 0.78rem; background: var(--paper); padding: 0.05rem 0.3rem; border-radius: 3px; }
+.report-sublist { list-style: circle; padding-left: 1.1rem; }
+
 .chip {
   font-family: var(--font-mono);
   font-size: 0.68rem;

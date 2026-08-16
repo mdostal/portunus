@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { checkMetadataCompleteness } from "../completeness";
+import { renderReportMarkdown } from "../renderReportMarkdown";
 import type { CrawlCandidate, LeakSummary, PortunusPolicy, PortunusReference } from "../types";
 
 const SCOPE_TYPES: PortunusPolicy["scope_type"][] = ["org", "project", "env"];
@@ -127,6 +128,28 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
       URL.revokeObjectURL(url);
     } finally {
       setReportBusy(false);
+    }
+  }
+
+  // In-app view (portunus-leak-visibility Story 03) -- the report was
+  // previously download-only. Fetches the same /api/report route, just
+  // renders it instead of triggering a file download.
+  const [reportMarkdown, setReportMarkdown] = useState<string | null>(null);
+  const [reportViewBusy, setReportViewBusy] = useState(false);
+
+  async function viewReport() {
+    setReportViewBusy(true);
+    setReportError(null);
+    try {
+      const res = await fetch("/api/report");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setReportError(data.error || "report failed");
+        return;
+      }
+      setReportMarkdown(await res.text());
+    } finally {
+      setReportViewBusy(false);
     }
   }
 
@@ -268,10 +291,17 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
               Copy bundle JSON
             </button>
           )}
+          <button className="btn quiet" disabled={reportViewBusy} onClick={viewReport}>
+            {reportViewBusy ? "Generating…" : "View report"}
+          </button>
           <button className="btn quiet" disabled={reportBusy} onClick={downloadReport}>
             {reportBusy ? "Generating…" : "Download report"}
           </button>
         </div>
+
+        {reportMarkdown !== null && (
+          <div className="report-view-panel">{renderReportMarkdown(reportMarkdown)}</div>
+        )}
 
         {crawlBundle && (
           <div className="settings-hierarchy-list">
