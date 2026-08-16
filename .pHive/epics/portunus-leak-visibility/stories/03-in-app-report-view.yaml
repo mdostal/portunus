@@ -1,7 +1,7 @@
 id: 03-in-app-report-view
 epic: portunus-leak-visibility
 title: in-app rendered report view -- small custom Markdown-to-React renderer, no new dependency
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: []

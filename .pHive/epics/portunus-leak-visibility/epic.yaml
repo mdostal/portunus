@@ -39,7 +39,7 @@ stories:
     title: in-app rendered report view -- small custom Markdown-to-React renderer, no new dependency
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 04-closeout
     title: docs, version bump, live proof against the real vault
     complexity: low
