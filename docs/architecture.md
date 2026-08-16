@@ -498,6 +498,45 @@ converter rather than a markdown-parsing dependency — `ui/package.json` still 
 runtime dependencies. Unrecognized lines render as plain text rather than being dropped, so a
 future `generate_report()` change degrades gracefully instead of silently losing content.
 
+## 14. Git-repository history as a scan target, and source classification (portunus-leak-scan-git-awareness)
+
+Immediately after manually verifying (dump the portunus repo's full git history to a scratch
+file, scan it with the existing engine, delete the scratch file) that none of the real leak-scan
+findings from earlier dogfooding had ever touched the codebase, that manual technique became a
+real, built-in capability: `portunus leak-scan config add-repo <path>`.
+
+**Reuses `scan_paths()` unchanged — no second matching engine.** `_scan_repo_history()` dumps
+`git log --all -p --full-history --reverse` to a fresh temp file per scan run and feeds it
+through the exact same line-based engine §11 already established, then deletes the temp file.
+Oldest-first (`--reverse`) is deliberate, not cosmetic: with the default newest-first ordering,
+every new commit shifts every existing line's position in the dump, which would break the
+`(path, line_number)` dedup key `record_findings()` relies on and cause the escalation clock to
+keep resetting on an actively-developed repo. Findings are remapped from the (fresh-every-run)
+temp path to a stable `"<repo> (git history)"` label before persisting, so the dedup key stays
+meaningful across runs even though the literal file scanned is different every time.
+
+**Always a full re-scan per repo per run — never incremental.** Git history can be rewritten
+(rebase, force-push) in ways that make the byte-offset watermark built for append-only log files
+(§11) unsafe here; repo histories are also far smaller than the 3.4 GB corpus that motivated
+incremental scanning in the first place. A deliberate, documented tradeoff, not an oversight.
+
+**Source classification — `log` / `local` / `git-history`, plus public/private for the latter.**
+Every finding now carries `source_kind`. Plain-path findings get a soft, named heuristic
+(log-like filename/extension → `"log"`, else `"local"`) — explicitly documented as a heuristic,
+not a rigorous classifier, since getting it wrong is cosmetic, never a security gap. Git-history
+findings carry `repo_path` and `repo_visibility` (`"public"` / `"private"` / `"unknown"`),
+resolved via `gh repo view <remote>` — the SAME gh-CLI, user's-own-credential posture
+`ui/src-tauri/src/updater.rs` already established for this codebase's self-updater, never an
+embedded token. No remote, a non-GitHub remote, or `gh` unavailable all resolve to `"unknown"` —
+never a guess. Resolved ONCE per configured repo per scan run (a single secret can appear at
+dozens of locations in one repo's history — confirmed live, 48 locations for one real finding),
+not once per finding.
+
+**A public-repo finding gets the loudest UI treatment.** DetailDrawer's expandable finding
+history (§13) labels each entry by source — `"⚠ PUBLIC repo: <name>"` renders in the same
+critical-severity red used elsewhere in this codebase, distinct from private/unknown/log/local,
+because it's the single most severity-relevant fact this whole feature can surface.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference
