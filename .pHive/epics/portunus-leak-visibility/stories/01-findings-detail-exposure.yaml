@@ -1,7 +1,7 @@
 id: 01-findings-detail-exposure
 epic: portunus-leak-visibility
 title: expose per-finding location detail (path/line) for a named reference -- CLI, MCP, API
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []
