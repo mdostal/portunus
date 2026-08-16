@@ -758,11 +758,12 @@ still missing description/purpose/org, and offers a "Fetch crawl bundle" button 
 discovery bundle `portunus crawl --json` returns (sm_name, group, project, org, repo, its
 project's vault binding, its provider's rotation binding), framed honestly as **context for an
 LLM session to read**, not an automatic filler; nothing in this feature calls an LLM or writes
-metadata itself. "Download report" renders `portunus report`'s Markdown output — an org →
-project structure plus an explicit gap section — useful immediately as a real "deploy docs"
-starting point, whether or not any crawl-sourced metadata has ever been confirmed. CLI:
-`portunus crawl [--org] [--project] [--json]`, `portunus report [--org] [--project] [--out
-path]`.
+metadata itself. "View report" renders `portunus report`'s Markdown output in-app (a small
+custom renderer, no markdown-parsing dependency — the output is fully controlled and narrow);
+"Download report" still saves it as a file — an org → project structure plus an explicit gap
+section, useful immediately as a real "deploy docs" starting point, whether or not any
+crawl-sourced metadata has ever been confirmed. CLI: `portunus crawl [--org] [--project]
+[--json]`, `portunus report [--org] [--project] [--out path]`.
 
 **Leak detection — detective, not preventive.** Settings' "Leak scan" section (and `portunus
 leak-scan`) checks whether a managed secret's actual value shows up somewhere it shouldn't —
@@ -780,6 +781,14 @@ add-path/remove-path/show`, `portunus leak status [name]`, `portunus leak mark-r
 show/add_path/remove_path`, `portunus_leak_mark_rotated` — an MCP-connected agent can trigger
 a scan (explicit user decision), but only over paths a human already configured; it can never
 scan anything outside that set.
+
+**A leak flag follows the reference everywhere, not just in Settings.** A small `⚠ leak:
+<severity>` badge (hover: "leaked in N conversations" — distinct files, not raw finding count,
+since one transcript can match the same secret on many lines) renders next to a leaked
+reference in Console (with its own "Leaked" facet), Vault Map, Project Explorer, and
+DetailDrawer — the last of which also shows the full file:line history and a "Mark rotated"
+button. Independent from the rotation-requested flag (`RotationBadge`) — an agent-requested
+rotation and a leak-detected one are different facts, not the same signal.
 
 ### Scheduling leak-scan (cron / CI)
 
