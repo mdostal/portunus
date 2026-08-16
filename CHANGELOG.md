@@ -4,6 +4,17 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-08-16
+
+### Fixed
+
+- Desktop app icon had a fully opaque white background baked into its rounded corners, visible
+  as a white border/card artifact in the Dock and anywhere else the icon renders. Fixed by
+  establishing a clean master source (`ui/src-tauri/app-icon.png`) with transparent corners and
+  regenerating the full macOS/Windows icon set from it via `cargo tauri icon`. The same defect
+  in the GitHub Pages landing page's hero image and favicon/apple-touch-icon assets was fixed
+  directly on the `gh-pages` branch (not versioned with the app itself).
+
 ## [0.25.1] - 2026-08-16
 
 ### Fixed
