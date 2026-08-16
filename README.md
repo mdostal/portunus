@@ -181,6 +181,57 @@ default via Workload Identity Federation, multi-project aware (see "GCP: multi-p
 below); `PORTUNUS_BACKEND=aws` selects the AWS Secrets Manager stub (fails clearly — not yet
 implemented); `PORTUNUS_BACKEND=mock` is for tests/dry-runs.
 
+### Running in a container
+
+For most real deployments this is the actual install path — not "download the desktop app,"
+but "pull an image and run it alongside whatever you're already deploying." The `Dockerfile` at
+the repo root builds the CLI + MCP server (not the UI — see `docs/architecture.md` for why that's
+a deliberate v1 scope line); it works unchanged under Docker or Podman.
+
+```bash
+docker build -t portunus .
+docker run --rm -v portunus-home:/home/portunus/.portunus portunus resolve --exec curl \
+  -H "Authorization: Bearer {{secret:shared-anthropic}}" https://api.anthropic.com/v1/messages
+```
+
+**⚠️ `PORTUNUS_HOME` must be a real, persistent volume for the local-encrypted backend.** The
+image declares it as a `VOLUME`, so an unmounted run still gets a persistent anonymous volume —
+but if that volume is ever removed (`docker rm -v`, `docker volume rm`, an ephemeral CI runner
+that never mounts one at all), `master.key` regenerates from scratch on next start and every
+previously-stored secret becomes **permanently unrecoverable**. Always bind-mount or name a real
+volume in anything beyond a throwaway test. This risk doesn't apply if you're using the GCP
+backend only (`PORTUNUS_BACKEND=gcloud`) — there's no local ciphertext to lose.
+
+**Two real deployment shapes**, not one abstract "containerize it":
+
+- **CI/build-step**: exactly the command above — a one-shot container that resolves a secret
+  into a single command's argv, same boundary-only guarantee as running the CLI locally.
+- **Kubernetes sidecar**: Portunus's container and your app's container share one pod, so they
+  already share a network namespace and can share a volume for free. The app reaches Portunus
+  via `kubectl exec` (or Portunus starts the app itself: `resolve --exec <app-start-command>`,
+  the same pattern the CI example uses) — never a network call, never a second trust boundary.
+  This is a deliberate v1 scoping decision, not an oversight: the MCP server is stdio-only today,
+  which makes same-pod/same-host reachability the natural fit; a network-reachable *shared*
+  Portunus service many pods call would need the currently-stub-only RBAC (`roles.py`) to
+  actually be enforced — real, larger, explicitly future work.
+
+**Auth per backend, per environment:**
+
+| Environment | Local-encrypted backend | GCP backend |
+|---|---|---|
+| Local Docker/Podman dev | zero-config — self-bootstraps on first write | mount your host's `~/.config/gcloud` read-only (`-v ~/.config/gcloud:/home/portunus/.config/gcloud:ro`) so the container reuses your own already-authenticated `gcloud` identity |
+| Real Kubernetes | mount a real PersistentVolume | **GKE Workload Identity** (a k8s ServiceAccount bound to a GCP service account) — keyless, no credential ever touches the container image or a volume. This is the recommended production path, not one option among several. |
+
+**`docker-compose.yml`** at the repo root is a runnable worked example of the sidecar pattern —
+`docker compose build && docker compose run --rm portunus drop ...` — see the file's own header
+comment for the full walkthrough.
+
+**Podman note.** Podman's rootless-by-default model remaps container UIDs to an unprivileged
+host UID range, which can affect bind-mounted (not named-volume) host directory permissions
+differently than Docker. If a bind mount isn't writable as expected, try
+`podman run --userns=keep-id ...`. Named volumes (as in the examples above) sidestep this
+entirely — prefer them over host bind-mounts unless you specifically need host-path access.
+
 ## Usage
 
 ### Drop a secret into Arca (harness-side only)

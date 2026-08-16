@@ -1,0 +1,43 @@
+# Sidecar worked example -- see README.md "Running in a container" for
+# the full explanation. `portunus` and `app` share ONE named volume for
+# PORTUNUS_HOME, the same shared-volume/same-pod pattern a Kubernetes
+# sidecar container gets for free. Try it:
+#
+#   docker compose build
+#   echo -n "hello-from-portunus" | docker compose run --rm -T portunus drop demo-secret sm-demo --stdin
+#   docker compose run --rm portunus state demo-secret enabled
+#   docker compose run --rm portunus resolve --exec test -n "{{secret:demo-secret}}"; echo "exit: $?"
+#
+# That last command's argv substitution proves the secret resolved and
+# reached a real process (`test -n` exits 0 only for a non-empty string)
+# without portunus ever printing it -- exactly the same boundary-only
+# guarantee as running it locally (README.md "Honest scope": portunus
+# never leaks the value on ITS OWN paths; what a command you wrap chooses
+# to do with its own argument, e.g. `curl -H "Authorization: Bearer
+# {{secret:...}}"`, is that command's doing, matching the Quick Start's
+# own example).
+services:
+  portunus:
+    build: .
+    volumes:
+      - portunus-home:/home/portunus/.portunus
+
+  # A stand-in for whatever you're actually deploying. In a real sidecar
+  # setup (Kubernetes: two containers in one pod; Docker/Podman: two
+  # containers sharing this volume) the app container does NOT get direct
+  # filesystem access to a decrypted value -- it either (a) is started
+  # BY portunus via `resolve --exec <app-start-command>` so the value only
+  # ever touches that one process's argv/env, or (b) reads a 0600 tempfile
+  # path portunus resolved and handed off. The shared volume here carries
+  # only PORTUNUS_HOME's own encrypted vault state, never a plaintext
+  # value -- same secret-boundary invariant as running portunus locally.
+  app:
+    image: alpine:3.20
+    depends_on:
+      - portunus
+    volumes:
+      - portunus-home:/home/portunus/.portunus:ro
+    command: ["sleep", "infinity"]
+
+volumes:
+  portunus-home:

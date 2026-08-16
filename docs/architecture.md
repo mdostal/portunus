@@ -421,6 +421,52 @@ nothing to stop the next paste into a chat window. The standing project policy (
 credential pasted in chat; flag it and ask the user to rotate) remains the actual first line of
 defense — this epic is a safety net under it, not a replacement.
 
+## 12. Container deployment: CLI + MCP server, same-pod/same-host reachability (portunus-container-image)
+
+The `Dockerfile` at the repo root packages the CLI + MCP server only — not the Next.js UI/desktop
+app, which is a human-facing dashboard, not something you'd run as a k8s sidecar (§6 already
+established the desktop app is packaging, not a new component; this section makes the same call
+for the container image's scope).
+
+**Targets same-pod/same-host reachability, not a network-shared broker service.** The MCP server
+is stdio-only today (`mcp_server.py::main` calls `mcp.run()` with no transport argument, even
+though the underlying `mcp` library already supports `sse`/`streamable-http`). Rather than treat
+that as a gap to close immediately, the container epic treats it as the natural v1 boundary: a
+consumer reaches Portunus via `docker exec`/`kubectl exec`, a shared pod volume, or by having
+Portunus itself start the consumer (`resolve --exec <command>`, already the exact pattern local
+CLI usage has always used). A genuinely network-reachable shared service — one Portunus instance
+many pods call over the network — would need the currently-stub-only RBAC (`roles.py`, §9) to
+actually be enforced; that's real, separate, larger future work, not silently assumed here.
+
+**Non-root, VOLUME-declared `PORTUNUS_HOME`.** The container runs as a dedicated non-root user —
+`PORTUNUS_HOME`'s own 0600/0700 file permissions are already the real access control, so running
+as root inside the container adds no benefit and is an avoidable hardening gap for a
+secret-handling image. A real bug the epic's own live-proof pass caught before shipping: a fresh
+Docker named volume defaults to root:root ownership, which broke writes for the non-root user on
+first use. Fixed by creating and `chown`-ing `PORTUNUS_HOME` in the image BEFORE both the
+`VOLUME` instruction and the `USER` switch — Docker initializes an empty named/anonymous volume
+by copying the image's existing content/ownership at that mount path, so this is what makes the
+volume writable by the right user from first use.
+
+**The persistent-volume requirement is a real, documented hazard, not a footnote.**
+`LocalEncryptedBackend`'s master key self-bootstraps (no secret-zero problem — no human
+passphrase needed for normal operation), but that same self-bootstrapping means an unmounted or
+removed volume silently generates a NEW key on next start, making every previously-stored value
+permanently unrecoverable. This risk is specific to the local-encrypted backend; GCP-backend-only
+usage has no local ciphertext to lose.
+
+**One image, `gcloud` CLI included, not a slim/full split.** `GcloudBackend` shells out to the
+real `gcloud` binary (confirmed: no `google-cloud-*` Python SDK dependency in `pyproject.toml`),
+so GCP backend support requires the CLI baked into the image. A second, smaller local-only image
+is real future polish, deliberately not built now — image size matters little for a sidecar/CI
+image, and two images is ongoing maintenance cost for an early, unproven feature.
+
+**Auth is already solved per backend, not newly invented.** Local-encrypted: zero-config. GCP
+local dev: mount the developer's own `~/.config/gcloud` read-only, reusing today's exact ambient
+`gcloud` auth behavior. GCP real Kubernetes: GKE Workload Identity — already keyless (§ auth.py's
+`GCPWorkloadIdentityAuth`), the recommended production path, not a new capability this epic had
+to build.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference
