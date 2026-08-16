@@ -1,7 +1,7 @@
 id: 02-source-classification
 epic: portunus-leak-scan-git-awareness
 title: source classification on findings -- log/local/git-history, public/private via gh
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [01-git-repo-scan-targets]

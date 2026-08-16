@@ -31,7 +31,7 @@ stories:
     title: source classification on findings -- log/local/git-history, public/private via gh
     complexity: medium
     depends_on: [01-git-repo-scan-targets]
-    status: pending
+    status: shipped
   - id: 03-ui-surfacing
     title: surface classification in LeakBadge tooltip + DetailDrawer's finding history
     complexity: low
