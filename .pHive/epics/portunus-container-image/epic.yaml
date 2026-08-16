@@ -38,4 +38,4 @@ stories:
     title: docs, version bump, live proof (build + run via real Docker)
     complexity: low
     depends_on: [02-compose-example-and-sidecar-docs]
-    status: pending
+    status: shipped

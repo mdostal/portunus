@@ -1,7 +1,7 @@
 id: 03-closeout
 epic: portunus-container-image
 title: docs, version bump, live proof (build + run via real Docker)
-status: pending
+status: shipped
 complexity: low
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [02-compose-example-and-sidecar-docs]
