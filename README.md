@@ -398,7 +398,7 @@ behavior unchanged. Two references can point at two different GCP projects and e
 against its own binding in the same process.
 
 ```bash
-portunus auth gcp --project personalsites-487021   # mint + report identity/scope/expiry only
+portunus auth gcp --project my-project-12345   # mint + report identity/scope/expiry only
 ```
 
 **Multiple GCP accounts at once.** `gcloud` already stores multiple credentialed accounts
@@ -411,10 +411,10 @@ project — a minted access token already carries identity.)
 
 ```bash
 portunus bindings set ffe-cicd --account work@example.com
-portunus bindings set personalsites-487021 --account personal@example.com
+portunus bindings set my-project-12345 --account personal@example.com
 portunus bindings show                          # real values -- a local CLI reading your own 0600 config
 portunus discover --provider gcp --project ffe-cicd            # uses work@example.com
-portunus discover --provider gcp --project personalsites-487021  # uses personal@example.com
+portunus discover --provider gcp --project my-project-12345  # uses personal@example.com
 # both work in the same session, regardless of which account gcloud currently considers active
 ```
 
@@ -424,15 +424,15 @@ reference to any backend's `access()` method at all) so you register real secret
 re-creating them blind. Worked example, against a real project:
 
 ```bash
-$ portunus discover --provider gcp --project personalsites-487021
+$ portunus discover --provider gcp --project my-project-12345
 not-registered  AUTH_SECRET
 not-registered  SANITY_API_ADMIN_TOKEN labels={'project': 'dafshiq1', 'scope': 'admin', 'service': 'sanity', ...}
 not-registered  dostal-shared-gemini labels={'app': 'dostal-swarm', 'kind': 'gemini', 'scope': 'shared'}
 ... (19 secrets total)
 
-$ portunus discover --provider gcp --project personalsites-487021 --register
-registered  personalsites-487021-auth_secret (state=requested)
-registered  personalsites-487021-sanity_api_admin_token (state=requested)
+$ portunus discover --provider gcp --project my-project-12345 --register
+registered  my-project-12345-auth_secret (state=requested)
+registered  my-project-12345-sanity_api_admin_token (state=requested)
 ...
 ```
 
@@ -453,12 +453,12 @@ actually bound to — **not** one global `PORTUNUS_BACKEND` choice for the whole
 levels of precedence: a reference's own `backend` override (set via `portunus_drop`/`reg add`/
 `retag --backend {local,gcp,aws}`) wins outright; else the project's `VaultBinding.backend`
 (`portunus bindings set <project> --backend ...`); else today's global `PORTUNUS_BACKEND`
-env var, unchanged, as the final fallback. This means `personalsites-487021` and `ffe-cicd` can
+env var, unchanged, as the final fallback. This means `my-project-12345` and `ffe-cicd` can
 resolve correctly in the *same process* without ever setting `PORTUNUS_BACKEND=gcloud` by hand.
 
 ```bash
 portunus bindings set gig-tracker --backend local              # everything in this project stays local
-portunus bindings set personalsites-487021 --backend gcp --sync-mode cached
+portunus bindings set my-project-12345 --backend gcp --sync-mode cached
 portunus bindings show                                          # backend + sync_mode per project
 ```
 
@@ -471,9 +471,9 @@ this check explicitly — useful for a deploy that wants to materialize a fresh 
 rather than a live Secret Manager round-trip per secret per instance:
 
 ```bash
-$ portunus sync personalsites-487021
-  synced        personalsites-487021-resend_audience_id
-  already-fresh personalsites-487021-google_generative_ai_api_key
+$ portunus sync my-project-12345
+  synced        my-project-12345-resend_audience_id
+  already-fresh my-project-12345-google_generative_ai_api_key
 ```
 
 Config lives in `PORTUNUS_HOME/vault-bindings.json` (0600) — the successor to the earlier
@@ -631,7 +631,7 @@ reading a `resolve_to_tempfile` path back into its own output.
 ```python
 portunus_resolve_exec(
     argv=["curl", "-s", "https://generativelanguage.googleapis.com/v1beta/models?key={{secret}}"],
-    name="personalsites-487021-google_generative_ai_api_key",
+    name="my-project-12345-google_generative_ai_api_key",
 )
 # -> {"stdout": "{...real model list JSON...}", "stderr": "", "returncode": 0}
 # the key itself never appears in the tool's return value, this call's own output, or any log.
