@@ -1,7 +1,7 @@
 id: 04-closeout
 epic: portunus-leak-visibility
 title: docs, version bump, live proof against the real vault
-status: pending
+status: shipped
 complexity: low
 methodology: tdd-for-python-live-proof-for-ui
 depends_on: [02-leak-badge-across-ui, 03-in-app-report-view]

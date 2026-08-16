@@ -44,4 +44,4 @@ stories:
     title: docs, version bump, live proof against the real vault
     complexity: low
     depends_on: [02-leak-badge-across-ui, 03-in-app-report-view]
-    status: pending
+    status: shipped
