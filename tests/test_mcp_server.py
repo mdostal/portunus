@@ -921,6 +921,28 @@ def test_portunus_leak_status_with_no_name_lists_all_active(home):
     assert ref_names == ["x", "y"]
 
 
+def test_portunus_leak_status_detail_includes_findings_and_distinct_files(home):
+    from portunus import mcp_server
+    from portunus.leakscan import Finding, record_findings
+
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=0.0)
+    record_findings([Finding("x", "/var/log/a.log", 9, 0)], now=0.0)
+    result = mcp_server.portunus_leak_status(name="x", detail=True)
+    assert result["finding_count"] == 2
+    assert result["distinct_files"] == 1
+    assert len(result["findings"]) == 2
+
+
+def test_portunus_leak_status_without_detail_matches_prior_shape(home):
+    from portunus import mcp_server
+    from portunus.leakscan import Finding, record_findings
+
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=0.0)
+    result = mcp_server.portunus_leak_status(name="x")
+    assert "findings" not in result
+    assert "distinct_files" not in result
+
+
 def test_portunus_leak_status_never_calls_backend_access_or_scan_source_check():
     """AST-level: this tool must never be able to reach Backend.access()
     or the scan-triggering function -- a structural proof it cannot cause

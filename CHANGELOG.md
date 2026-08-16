@@ -4,6 +4,24 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-16
+
+### Added
+
+- **LeakBadge across the UI.** A `⚠ leak: <severity>` badge now follows a leaked reference
+  everywhere its name renders -- Console (plus a new "Leaked" facet), Vault Map, Project
+  Explorer, and DetailDrawer (with a full expandable file:line history and a working "Mark
+  rotated" action). Hover shows "leaked in N conversations" -- distinct files, not raw finding
+  count. Independent from the existing rotation-requested flag -- an agent-requested rotation
+  and a leak-detected one are different facts, not the same signal.
+- **In-app report view.** Settings gains a "View report" button rendering `portunus report`'s
+  Markdown output in-app via a small custom renderer (no new dependency -- `ui/package.json`
+  stays at 3 runtime dependencies); "Download report" still saves it as a file.
+- `summarize(..., detail=True)` (leakscan.py) exposes per-finding path/line detail and a
+  distinct-files count for a named reference -- wired through `portunus leak status --detail`,
+  `portunus_leak_status(detail=True)`, and `/api/leak-status?name=`. `detail` defaults to False,
+  so no existing caller's output changes.
+
 ## [0.23.1] - 2026-08-16
 
 ### Added

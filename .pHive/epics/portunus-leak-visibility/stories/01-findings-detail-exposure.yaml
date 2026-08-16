@@ -1,0 +1,81 @@
+id: 01-findings-detail-exposure
+epic: portunus-leak-visibility
+title: expose per-finding location detail (path/line) for a named reference -- CLI, MCP, API
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  leak-status.json already stores path/line_number/first_detected_at/last_detected_at per
+  finding (Story 01 of portunus-leak-scan) -- nothing new to compute. The only gap: every
+  existing consumer (summarize(), `portunus leak status`, portunus_leak_status,
+  /api/leak-status) returns only the AGGREGATE (severity/finding_count/timestamps), never the
+  per-finding list, when queried for one specific reference. New: a `detail` flag/param that
+  includes the raw findings list (never a value, same Finding shape as always) when querying by
+  name, plus a `distinct_files` count (design-discussion.md §3 -- "leaked in N conversations"
+  means distinct file paths, not raw finding count, which double-counts a secret appearing on
+  multiple lines of the same transcript).
+
+acceptance_criteria:
+  - "Given `portunus leak status <name> --json --detail`, when a reference has findings, then the output includes a findings array (path, line_number, first_detected_at, last_detected_at) and a distinct_files count"
+  - "Given `portunus leak status <name> --json` WITHOUT --detail, when run, then the output is byte-identical to before this story -- no accidental behavior change for existing scripts/automation"
+  - "Given a reference whose findings span the same file at multiple lines, when distinct_files is computed, then it counts unique paths, not raw finding count"
+  - "Given `/api/leak-status?name=<ref>`, when called, then it returns the same detailed shape"
+  - "Given `portunus_leak_status(name=<ref>, detail=True)`, when called, then it returns the same detailed shape -- optional param, default False preserves the existing return shape"
+  - "Given the detail-exposing code paths, when AST-inspected, then they never reference a value -- only path/line_number/timestamps, matching every prior structural check in this codebase"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the detail flag/param at each layer (leakscan.py, CLI, MCP, API) and the distinct_files computation.
+    agent: tester
+  - id: implement
+    description: Extend summarize() or add a sibling function; wire --detail through CLI/MCP/API.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/leakscan.py
+      purpose: summarize() -- the existing aggregate-only function this story extends without breaking its default shape
+    - path: src/portunus/cli.py
+      purpose: cmd_leak_status -- gains the --detail flag
+    - path: src/portunus/mcp_server.py
+      purpose: portunus_leak_status -- gains the optional detail param
+    - path: ui/app/api/leak-status/route.ts
+      purpose: GET handler -- gains ?name= support returning the detailed shape
+
+files_to_modify:
+  - file: src/portunus/leakscan.py
+    change: detail-exposing function alongside summarize()
+  - file: src/portunus/cli.py
+    change: --detail flag on `leak status`
+  - file: src/portunus/mcp_server.py
+    change: detail param on portunus_leak_status
+  - file: ui/app/api/leak-status/route.ts
+    change: ?name= query param support
+
+design_decisions:
+  - decision: distinct_files, not raw finding count, is the headline "leaked in N" number
+    rationale: "design-discussion.md §3 -- a transcript can match the same secret on multiple lines; raw count overstates exposure relative to what the user actually asked to see"
+  - decision: --detail/detail param defaults to off, preserving the existing aggregate-only shape
+    rationale: "no accidental behavior change for any existing script/automation already parsing portunus leak status's current JSON shape"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The exposed detail is exactly the same Finding fields (path/line_number/timestamps) already proven never to hold a value in portunus-leak-scan Story 01 -- no new invariant risk, just a wider read of already-safe data"
+
+risks:
+  - severity: low
+    description: A caller might confuse distinct_files with finding_count and misreport severity
+    mitigation: "Both fields are returned together, clearly named, in the same response -- no caller has to guess which one means what"
+
+references:
+  - path: .pHive/epics/portunus-leak-visibility/docs/design-discussion.md
+    relevant_excerpt: "§2, §3"

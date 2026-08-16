@@ -14,6 +14,7 @@ from portunus.leakscan import (
     mark_rotated,
     record_findings,
     severity,
+    summarize,
 )
 
 DAY = 86400.0
@@ -151,3 +152,53 @@ def test_leakstatus_store_never_persists_a_value(home):
     record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=1000.0)
     raw = (home / "leak-status.json").read_text()
     assert "a-real-secret-value" not in raw
+
+
+# ---------------------------------------------------------------------------
+# summarize()'s detail param (portunus-leak-visibility Story 01)
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_without_detail_is_byte_identical_to_before(home):
+    """No accidental behavior change for existing callers -- detail=False
+    (the default) must preserve the exact prior shape."""
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=1000.0)
+    status = load_leak_status()["x"]
+    assert summarize(status, now=2000.0) == {
+        "ref_name": "x",
+        "severity": "warn",
+        "finding_count": 1,
+        "first_detected_at": 1000.0,
+        "last_detected_at": 1000.0,
+    }
+
+
+def test_summarize_detail_includes_findings_list_and_distinct_files(home):
+    record_findings([Finding("x", "/var/log/a.log", 3, 0)], now=1000.0)
+    record_findings([Finding("x", "/var/log/a.log", 9, 0)], now=1000.0)
+    record_findings([Finding("x", "/var/log/b.log", 1, 0)], now=1000.0)
+    status = load_leak_status()["x"]
+    result = summarize(status, now=2000.0, detail=True)
+    assert result["finding_count"] == 3
+    assert result["distinct_files"] == 2
+    assert len(result["findings"]) == 3
+    assert {f["path"] for f in result["findings"]} == {"/var/log/a.log", "/var/log/b.log"}
+
+
+def test_summarize_detail_distinct_files_not_raw_finding_count(home):
+    """The headline number is distinct FILES, not raw findings -- a
+    transcript can match the same secret on many lines without that
+    meaning 'leaked in many conversations.'"""
+    for line in range(1, 6):
+        record_findings([Finding("x", "/var/log/same-file.log", line, 0)], now=1000.0)
+    status = load_leak_status()["x"]
+    result = summarize(status, now=2000.0, detail=True)
+    assert result["finding_count"] == 5
+    assert result["distinct_files"] == 1
+
+
+def test_summarize_detail_no_findings_is_empty_not_an_error(home):
+    status = LeakStatus(ref_name="never-leaked")
+    result = summarize(status, now=1000.0, detail=True)
+    assert result["findings"] == []
+    assert result["distinct_files"] == 0

@@ -215,21 +215,31 @@ def portunus_crawl_candidates(org: str = "", project: str = "") -> dict:
 
 
 @mcp.tool()
-def portunus_leak_status(name: str = "") -> dict:
+def portunus_leak_status(name: str = "", detail: bool = False) -> dict:
     """Read-only leak-scan status: severity (warn/urgent/critical),
     finding count, and first/last-detected timestamps for one reference
     (name set) or every reference with active findings (name omitted).
     NEVER a file path's content, NEVER a value, NEVER a match excerpt --
     only already-computed status. This specific tool never triggers a scan
-    itself -- see portunus_run_leak_scan for the tool that does."""
+    itself -- see portunus_run_leak_scan for the tool that does.
+
+    `detail=True` additionally includes `findings` (path/line_number/
+    timestamps per occurrence -- still never a value) and `distinct_files`
+    (unique file count, not raw finding count -- the same secret can match
+    many lines of one transcript without that meaning many separate
+    leaks)."""
     statuses = load_leak_status()
     if name:
         status = statuses.get(name)
         if status is None:
-            return {"ref_name": name, "severity": None, "finding_count": 0,
-                     "first_detected_at": None, "last_detected_at": None}
-        return summarize(status)
-    return {"statuses": [summarize(s) for s in statuses.values() if s.findings]}
+            result = {"ref_name": name, "severity": None, "finding_count": 0,
+                       "first_detected_at": None, "last_detected_at": None}
+            if detail:
+                result["findings"] = []
+                result["distinct_files"] = 0
+            return result
+        return summarize(status, detail=detail)
+    return {"statuses": [summarize(s, detail=detail) for s in statuses.values() if s.findings]}
 
 
 @mcp.tool()

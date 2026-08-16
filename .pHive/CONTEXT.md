@@ -237,6 +237,22 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   every secret); GCP-backend-only usage is unaffected. GKE Workload Identity is the recommended
   production auth path (already keyless). One image ships with the `gcloud` CLI included rather
   than a slim/full split — a deliberate v1 tradeoff, not an oversight.
+- **`LeakBadge` / leak visibility across the UI** (`portunus-leak-visibility`) — an independent
+  signal from `RotationBadge`/`tags.rotation_requested` (design decision: reusing that tag would
+  mean leak-scan calling `retag()` on every new finding, a write path the engine was never
+  designed for, and would collapse "agent asked to rotate" and "leak detected" into one
+  indistinguishable boolean). Driven by a `ref_name -> LeakSummary` map fetched once per page
+  load, rendered next to `RotationBadge`/`CompletenessBadge` wherever a reference's name already
+  appears (Console + a "Leaked" facet, Vault Map, Project Explorer, DetailDrawer's full
+  expandable history + Mark rotated action). `summarize(..., detail=True)` (leakscan.py) is the
+  backend extension this all sits on — adds `findings` (raw path/line list) and `distinct_files`
+  (unique file count, the "leaked in N conversations" headline number — NOT raw finding count,
+  since one transcript can match the same secret on many lines) to the existing aggregate-only
+  shape, `detail` defaulting to False so no existing caller's output changes.
+- **`renderReportMarkdown.tsx`** — a small custom Markdown-to-React renderer for
+  `generate_report()`'s exact, narrow output shape, not a markdown-parsing dependency
+  (`ui/package.json` stays at 3 runtime dependencies). Settings' "View report" button renders
+  the report in-app; "Download report" still saves it as a file.
 
 ## Key paths
 

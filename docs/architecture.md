@@ -467,6 +467,37 @@ local dev: mount the developer's own `~/.config/gcloud` read-only, reusing today
 `GCPWorkloadIdentityAuth`), the recommended production path, not a new capability this epic had
 to build.
 
+## 13. Leak visibility across the UI, and an in-app report view (portunus-leak-visibility)
+
+Immediately after dogfooding leak-scan against the real vault (83 genuine findings, including a
+Google Generative AI key leaked into 48 locations), the UI needed to actually surface what the
+engine had already found — Settings' own "Leak scan" section (§11) was the only place any of it
+was visible.
+
+**`LeakBadge` is a new, independent signal — not a write into `RotationBadge`'s
+`tags.rotation_requested`.** Reusing that tag would mean leak-scan calling `retag()` on every
+new finding, a real write path the engine was never designed for (§11's own advisory-only proof
+covers `check_injectable()`/`resolve()`, not a hypothetical registry write from the scan engine
+itself), and it would collapse two different facts — an agent-requested rotation and a
+leak-detected one — into one indistinguishable boolean. `LeakBadge` is driven directly by
+leak-status data (fetched once per page load into a `ref_name -> LeakSummary` map in
+`page.tsx`, passed down — not a per-row fetch), rendered next to `RotationBadge`/
+`CompletenessBadge` wherever a reference's name already appears: Console (plus a new "Leaked"
+facet, matching the existing Metadata facet's pattern exactly), Vault Map, Project Explorer, and
+DetailDrawer (the richest surface — a full expandable finding history and a working "Mark
+rotated" action, fetched per-reference only when the drawer is open for a leaked one).
+
+**"Leaked in N conversations" counts distinct files, not raw finding count.** A `.claude`
+transcript can match the same secret on many lines — confirmed live during the real-vault
+dogfooding pass — so the headline number a human sees is unique file paths
+(`summarize(..., detail=True)`'s new `distinct_files` field), not an inflated raw count.
+
+**The report gained a real in-app view, not just a download.** `generate_report()`'s Markdown
+output is narrow and fully controlled, so `ui/app/renderReportMarkdown.tsx` is a small custom
+converter rather than a markdown-parsing dependency — `ui/package.json` still has exactly 3
+runtime dependencies. Unrecognized lines render as plain text rather than being dropped, so a
+future `generate_report()` change degrades gracefully instead of silently losing content.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

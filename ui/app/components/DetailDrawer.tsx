@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AuditEntry, PortunusReference, PortunusView } from "../types";
+import type { AuditEntry, LeakSummary, PortunusReference, PortunusView } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
+import LeakBadge from "./LeakBadge";
 import InjectControls from "./InjectControls";
 
 /** {a: "1", b: "2"} -> "a=1,b=2" -- the same k=v,k2=v2 convention tags/
@@ -20,6 +21,8 @@ function dictToKvString(dict: Record<string, string> | undefined): string {
 export default function DetailDrawer({
   reference,
   allRefs,
+  leakSummary,
+  onLeakStatusChanged,
   onClose,
   onRotate,
   onMoved,
@@ -27,11 +30,54 @@ export default function DetailDrawer({
 }: {
   reference: PortunusReference;
   allRefs: PortunusReference[];
+  leakSummary?: LeakSummary;
+  onLeakStatusChanged?: () => void;
   onClose: () => void;
   onRotate: (ref: PortunusReference) => void;
   onMoved: () => void;
   onSelectRelated: (ref: PortunusReference) => void;
 }) {
+  // The compact leakMap the parent passes down only has the aggregate
+  // (severity/finding_count) -- the full path/line history (design-
+  // discussion.md §5, "show the history") is fetched here, per-reference,
+  // only when the drawer is actually open for a leaked reference. Not a
+  // per-row fetch anywhere else -- this is the one surface rich enough to
+  // justify it.
+  const [leakDetail, setLeakDetail] = useState<LeakSummary | null>(null);
+  const [markRotatedBusy, setMarkRotatedBusy] = useState(false);
+
+  function refreshLeakDetail() {
+    if (!leakSummary?.severity) {
+      setLeakDetail(null);
+      return;
+    }
+    fetch(`/api/leak-status?name=${encodeURIComponent(reference.name)}`)
+      .then((r) => r.json())
+      .then((data: LeakSummary) => setLeakDetail(data))
+      .catch(() => setLeakDetail(null));
+  }
+
+  useEffect(() => {
+    refreshLeakDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reference.name, leakSummary?.severity]);
+
+  async function markLeakRotated() {
+    setMarkRotatedBusy(true);
+    try {
+      const res = await fetch("/api/leak-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: reference.name }),
+      });
+      if (res.ok) {
+        setLeakDetail(null);
+        onLeakStatusChanged?.();
+      }
+    } finally {
+      setMarkRotatedBusy(false);
+    }
+  }
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -226,6 +272,31 @@ export default function DetailDrawer({
       <StatePill state={reference.state} />
       <RotationBadge reference={reference} prominent />
       <CompletenessBadge reference={reference} prominent />
+      <LeakBadge summary={leakSummary} prominent />
+
+      {leakDetail?.severity && (
+        <div className="leak-history">
+          <p className="stub-banner">
+            Detective, not preventive -- this reference's actual value was found in{" "}
+            {leakDetail.distinct_files ?? leakDetail.finding_count} conversation
+            {(leakDetail.distinct_files ?? leakDetail.finding_count) === 1 ? "" : "s"}. Mark
+            rotated only after you've actually rotated the credential yourself -- Portunus can't
+            verify that independently.
+          </p>
+          <div className="settings-hierarchy-list">
+            {(leakDetail.findings || []).map((f, i) => (
+              <div className="settings-hierarchy-row" key={`${f.path}:${f.line_number}:${i}`}>
+                <span title={f.path}>{f.path.split("/").pop()}</span>
+                <span>line {f.line_number}</span>
+              </div>
+            ))}
+          </div>
+          <button className="btn quiet" disabled={markRotatedBusy} onClick={markLeakRotated}>
+            {markRotatedBusy ? "Marking…" : "Mark rotated"}
+          </button>
+        </div>
+      )}
+
       <div className="tags-row">
         {reference.org && <span className="chip">org={reference.org}</span>}
         {reference.provider && <span className="chip">provider={reference.provider}</span>}

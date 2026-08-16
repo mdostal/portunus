@@ -1,22 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { PortunusReference, PortunusView } from "../types";
+import type { LeakSummary, PortunusReference, PortunusView } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
+import LeakBadge from "./LeakBadge";
 import { checkMetadataCompleteness } from "../completeness";
 
 export default function Console({
   refs,
   onSelect,
+  leakMap = {},
 }: {
   refs: PortunusReference[];
   onSelect: (ref: PortunusReference) => void;
+  leakMap?: Record<string, LeakSummary>;
 }) {
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<string | null>(null);
   const [completenessFilter, setCompletenessFilter] = useState<"complete" | "missing" | null>(null);
+  const [leakedFilter, setLeakedFilter] = useState(false);
 
   // Custom views (portunus-vault-trust-and-access Slice 4) -- task-shaped
   // clustering ("everything for the Shindig deploy"), orthogonal to the
@@ -91,11 +95,17 @@ export default function Console({
 
   const activeViewRefNames = viewFilter ? new Set(views[viewFilter]?.ref_names || []) : null;
 
+  const leakedCount = useMemo(
+    () => refs.filter((r) => leakMap[r.name]?.severity).length,
+    [refs, leakMap],
+  );
+
   const filtered = refs.filter(
     (r) =>
       (!providerFilter || (r.provider || "(none)") === providerFilter) &&
       (!stateFilter || r.state === stateFilter) &&
       matchesCompletenessFilter(r) &&
+      (!leakedFilter || Boolean(leakMap[r.name]?.severity)) &&
       (!activeViewRefNames || activeViewRefNames.has(r.name)),
   );
 
@@ -128,6 +138,18 @@ export default function Console({
             </button>
           ))}
         </div>
+        {leakedCount > 0 && (
+          <div className="rail-group">
+            <span className="k">Leaked</span>
+            <button
+              className={`rail-facet ${leakedFilter ? "active" : ""}`}
+              onClick={() => setLeakedFilter((v) => !v)}
+            >
+              <span>⚠ leaked</span>
+              <span>{leakedCount}</span>
+            </button>
+          </div>
+        )}
         {completenessCounts.missing > 0 && (
           <div className="rail-group">
             <span className="k">Metadata</span>
@@ -196,6 +218,7 @@ export default function Console({
               <StatePill state={r.state} />
               <RotationBadge reference={r} />
               <CompletenessBadge reference={r} />
+              <LeakBadge summary={leakMap[r.name]} />
             </span>
           </button>
         ))}

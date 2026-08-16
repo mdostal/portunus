@@ -1,0 +1,47 @@
+name: portunus-leak-visibility
+title: surface leak-scan findings across the UI -- badges with why-info, and an in-app report view
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd-for-python-live-proof-for-ui
+version_bump: minor
+
+description: |
+  Immediately after dogfooding leak-scan against the real vault (83 real findings surfaced,
+  including a Google Generative AI key leaked into 48 locations across real .claude
+  conversation history), the user asked for: an in-app report VIEW (not just a download), a
+  visible flag on a reference wherever it renders explaining WHY it's flagged ("leaked in 3
+  conversations"), and that flag showing up consistently across every surface a reference
+  appears, not just Settings' own Leak scan section.
+
+  Real design decision: a NEW, independent LeakBadge -- not a write into the existing
+  RotationBadge's tags.rotation_requested tag. Reusing that tag would mean leak-scan starting
+  to call retag() on every new finding, a real new write path this feature was never designed
+  for, and it would lose the "why" (an agent-requested rotation and a leak-detected rotation are
+  different facts a human should be able to tell apart). LeakBadge is driven directly by
+  leak-status data, visually adjacent to RotationBadge, not sharing its state -- explicitly
+  deferred: whether/how the two signals should ever unify.
+
+  "Leaked in N conversations" counts DISTINCT FILES, not raw finding count -- a transcript can
+  match the same secret on many lines, and the raw count would overstate exposure relative to
+  what the user actually asked to see.
+
+stories:
+  - id: 01-findings-detail-exposure
+    title: expose per-finding location detail (path/line) for a named reference -- CLI, MCP, API
+    complexity: medium
+    depends_on: []
+    status: shipped
+  - id: 02-leak-badge-across-ui
+    title: LeakBadge component -- wired into Console, DetailDrawer, Vault Map, Project Explorer
+    complexity: medium
+    depends_on: [01-findings-detail-exposure]
+    status: shipped
+  - id: 03-in-app-report-view
+    title: in-app rendered report view -- small custom Markdown-to-React renderer, no new dependency
+    complexity: medium
+    depends_on: []
+    status: shipped
+  - id: 04-closeout
+    title: docs, version bump, live proof against the real vault
+    complexity: low
+    depends_on: [02-leak-badge-across-ui, 03-in-app-report-view]
+    status: shipped
