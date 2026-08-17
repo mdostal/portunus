@@ -32,6 +32,8 @@ acceptance_criteria:
   - "Given the full existing pytest suite including test_check_injectable_and_retag_are_byte_identical_with_or_without_roles_configured, when this story's change lands, then it still passes -- extended, not broken, per design-discussion.md §6 Story 02"
   - "Given AST-inspection of roles.evaluate() and its call site inside check_injectable(), when checked, then no code path raises an exception based on decision.allow -- this story is audit-only by construction, verified structurally not just by test coverage"
   - "Given the Settings UI's roles form, when a policy is configured, then the UI displays a visible note that policies are not yet enforced (Story 03 activates enforcement)"
+  - "Given check_injectable() and every CLI/MCP call site touched by this story, when AST-inspected, then none of them contain any scope-matching or precedence logic of their own -- all such logic lives inside roles.evaluate() alone, so a future precedence model (most-specific-wins, or an adopted engine) is a change to that one function, not a multi-file rewrite (design-discussion.md §3, user-confirmed expectation of 'fancier rule systems' later)"
+  - "Given roles.evaluate()'s docstring, when read, then it documents the current flat-OR precedence AS a deliberate v1 choice and names this single-seam property explicitly, matching roles.py's existing convention of documenting forward-looking intent inline"
 
 methodology: tdd
 steps:
@@ -78,6 +80,8 @@ design_decisions:
     rationale: "design-discussion.md §2 self-grill addition -- without this, setting a policy for one principal silently overwrites a different principal's policy under the same scope+role, exactly the crossing-over bug this epic exists to prevent"
   - decision: audit-only, never raises, in this story
     rationale: "design-discussion.md §6 Story 02 -- makes the evaluator's real-world behavior observable against the live 393-reference vault before enforcement can ever block something real, matching this project's own staged-activation precedent"
+  - decision: "roles.evaluate() is the ONLY place scope/precedence logic may live"
+    rationale: "design-discussion.md §3 -- user confirmed flat-OR is fine for v1 but wants the code to expect 'fancier rule systems' later; keeping every call site free of matching/precedence logic of its own means that future work is a change to one function's internals, not a rewrite -- no new abstraction added now, just a discipline enforced by this story's own AST-inspection acceptance criterion"
 
 cross_cutting:
   - concern: secret-boundary-invariant

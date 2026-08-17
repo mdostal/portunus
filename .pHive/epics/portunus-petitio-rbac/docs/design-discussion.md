@@ -91,8 +91,23 @@ wins). This is deliberately the more permissive reading. A most-specific-wins/na
 (where a repo-level policy can *restrict* what an org-level policy grants) is real and useful,
 but adds a second axis of complexity — precedence ordering across four scope types — that
 doesn't have a forcing real-world case yet in a vault where zero principal-scoped policies exist
-today. Ship the simple OR model; revisit if real usage produces an actual case that needs
-narrowing (see Open Questions).
+today. **Confirmed by the user:** ship the flat-OR model now — "we'll get some fancier rule
+systems built in, so make sure we code for the expectation of that, but for now that is fine."
+
+**Coding for that expectation, without building it yet:** the only thing this requires today is
+keeping `roles.evaluate()` the SINGLE place any scope/precedence logic lives. `check_injectable()`
+and the CLI must only ever call `roles.evaluate(policies, requester, ref)` and act on its
+`Decision` — neither may reimplement or shortcut any part of the matching/precedence logic
+themselves. That single-seam discipline is what makes a later swap (most-specific-wins
+narrowing, or even swapping the whole function body for a call into an adopted engine like
+Casbin — research-brief.md §3's documented fallback) a change to one function's internals, not a
+multi-file rewrite. This is not new abstraction for this story — it's the design's existing
+shape (§3 already put all matching logic in one function); it just means Story 02 should say so
+explicitly in `roles.evaluate()`'s own docstring, matching this module's existing convention of
+documenting forward-looking intent inline (`roles.py`'s current module docstring already does
+exactly this for the whole file: "consumed by NOTHING today... a future policy engine will
+read"). No speculative code, no pluggable-engine interface, no config-driven precedence mode —
+just: don't let precedence logic leak out of this one function.
 
 ## 4. Where the check lives
 
@@ -172,13 +187,13 @@ discipline (already proven once for `roles.py` itself).
   enforcement here only gates the actual `resolve`/inject path, not read-only metadata
   enumeration. A natural Story 05 for a follow-up epic once enforcement itself is proven.
 
-## Open Questions
+## Open Questions — resolved
 
-1. Most-specific-wins scope precedence (§3) is deferred rather than built — confirm this is the
-   right v1 call, or whether a narrowing model should ship now instead of later.
-2. Story 03's `portunus roles enforce` — confirm the command name/shape before Story 03 starts;
-   `on|off|status` mirrors `portunus vault status`-style existing CLI conventions but hasn't been
-   checked against every other `roles` subcommand for naming consistency.
+1. ~~Most-specific-wins scope precedence deferred vs. built now~~ — **resolved**: ship flat-OR
+   now (§3), keep `roles.evaluate()` the single seam so precedence/engine changes stay a
+   one-function change later. User-confirmed.
+2. ~~`portunus roles enforce on|off|status` naming~~ — **resolved**: proceeding with this name as
+   proposed; no objection raised.
 
 ## Scale assessment
 
