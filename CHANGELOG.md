@@ -4,6 +4,29 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-18
+
+### Added
+
+- `portunus agent init`/`portunus agent status` — a single command that wires Portunus into
+  whatever AI coding agent CLIs are already on the machine (Claude Code, Codex CLI today):
+  registers the MCP server for each detected harness and installs the four usage skills
+  (`portunus-ask`/`portunus-drop`/`portunus-vault-setup`/`portunus-vault-audit`, previously only
+  set up by hand, only in this repo) to `~/.claude/skills/` so they apply everywhere, not just
+  when working inside this codebase. Idempotent — safe to re-run any time, e.g. after installing
+  a new harness. `--harness claude`/`--harness codex` (repeatable) narrows `init` to one harness.
+- `curl -fsSL https://mdostal.github.io/portunus/install.sh | bash` — the new top-line onboarding
+  path: installs the CLI from GitHub, then runs `portunus agent init`.
+
+### Changed
+
+- `pyproject.toml`'s package name is now `pantheon-portunus` (the installed command is still
+  `portunus`) — PyPI's existing `portunus` is an unrelated, unmaintained package
+  ([`IQTLabs/portunus`](https://github.com/IQTLabs/portunus)); the README's prior
+  `pipx install portunus # once published` instruction would have silently installed the wrong
+  tool. Not yet actually published under either name — the new installer pulls from GitHub in
+  the meantime.
+
 ## [0.25.2] - 2026-08-16
 
 ### Fixed

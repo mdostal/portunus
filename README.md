@@ -17,6 +17,19 @@ raw value ever landing in the model's context, logs, or tool output.
 
 *(Portunus — the Roman god of keys and doors. Fitting.)*
 
+## Get your agent using it in one command
+
+```bash
+curl -fsSL https://mdostal.github.io/portunus/install.sh | bash
+```
+
+Installs the CLI, wires the MCP server into whatever AI coding agent CLIs are already on the
+machine (Claude Code, Codex CLI today), and drops in the usage skills — so an agent gets the
+*boundary-only* usage conventions immediately, not just a raw tool list. Already have portunus
+installed? Just run `portunus agent init` — same thing, idempotent, safe to re-run any time
+(e.g. after installing a new harness). `portunus agent status` shows what's currently wired
+without changing anything.
+
 **[portunus site →](https://mdostal.github.io/portunus/)** — landing page, install snippets, and
 the component-model pitch in one place.
 
@@ -168,10 +181,15 @@ links its Vault tab; agents call the `portunus` tool.
 ## Install
 
 ```bash
-pipx install portunus         # once published
+curl -fsSL https://mdostal.github.io/portunus/install.sh | bash   # CLI + MCP + agent skills, one shot
 # or, from a clone:
 pip install -e ".[test]"
 ```
+
+Not on PyPI under this name yet — `portunus` there is an unrelated, unmaintained package
+([`IQTLabs/portunus`](https://github.com/IQTLabs/portunus)); this project's own PyPI name is
+`pantheon-portunus` (the installed command is still just `portunus`) once a real release ships.
+The installer above pulls straight from GitHub in the meantime.
 
 Requires Python ≥ 3.9. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
 `cryptography`'s Fernet recipe — AES-128-CBC + HMAC-SHA256; we never hand-roll a cipher). The master key
@@ -629,8 +647,23 @@ key. Same package, same process, no subprocess boundary — the server calls `Re
 `Broker` in-process, the same way `cli.py` does.
 
 ```bash
+portunus agent init          # registers it (+ Codex CLI's mcp add, + the usage skills below)
+# or by hand, same effect for Claude Code specifically:
 claude mcp add --scope user portunus -- portunus mcp
 ```
+
+`portunus agent init` detects whichever of Claude Code / Codex CLI are actually on the machine
+and wires each one — idempotent, so re-running after installing a new harness is always safe.
+`portunus agent status` reports what's currently registered without changing anything;
+`--harness claude`/`--harness codex` (repeatable) narrows `init` to just one.
+
+**Usage skills, not just tools.** `portunus agent init` also installs four Claude Code skills
+(`portunus-ask`, `portunus-drop`, `portunus-vault-setup`, `portunus-vault-audit`) to
+`~/.claude/skills/` — the same ones this repo's own `.claude/skills/` ships for working *in* this
+codebase, now available to any Claude Code session on the machine, in any project. They carry
+the actual usage conventions (when to use `ask` vs. `drop`, the fail-closed-means-don't-guess
+discipline, never echoing a value back after a successful store) that the raw MCP tool table
+below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 
 **Tools:**
 

@@ -537,6 +537,51 @@ history (§13) labels each entry by source — `"⚠ PUBLIC repo: <name>"` rende
 critical-severity red used elsewhere in this codebase, distinct from private/unknown/log/local,
 because it's the single most severity-relevant fact this whole feature can surface.
 
+## 15. One-command agent onboarding (`portunus agent init`)
+
+`portunus mcp` (§1) and this repo's own `.claude/skills/` had both existed for a while, but only
+by hand: registering the MCP server and copying the skill files to `~/.claude/skills/` was a
+manual, one-machine, one-repo affair. `portunus agent init` packages both into one idempotent
+command, and the new `scripts/install.sh` (published to the gh-pages site root) chains it after
+a fresh install — `curl -fsSL https://mdostal.github.io/portunus/install.sh | bash` end to end.
+
+**Detection, not configuration.** `detect_harnesses()` checks `shutil.which("claude")`/
+`shutil.which("codex")` — no config file names which harnesses to support; a harness is "in
+scope" purely by being present on the machine. `--harness` (repeatable) narrows an explicit run
+to fewer than all detected.
+
+**A real-world timing finding changed the registration check.** The first cut of
+`mcp_registered()` shelled out to `claude mcp list` and checked for "portunus" in the output —
+correct in principle, but `claude mcp list` health-checks *every* registered MCP server, not
+just the one being asked about. On a machine with several servers configured (one dev machine's
+own: 11), one slow/unreachable server alone can eat a 30-second timeout, making the check
+unreliably slow under any short timeout. Fixed by using `claude mcp get portunus` instead — a
+fast, targeted lookup for exactly one server, no fleet-wide health check. Codex CLI's own
+`mcp list` has no equivalent per-server health check and stays fine as-is.
+
+**Skills ship as real package data, not read from the repo at install time.** The canonical
+skill content lives at `src/portunus/agent_skills/<name>/SKILL.md` inside the Python package
+itself (declared in `pyproject.toml`'s `[tool.setuptools.package-data]`, backed by
+`MANIFEST.in`) — confirmed to actually land in site-packages via a real `pipx install` of this
+project, not just assumed from the config. This repo's own `.claude/skills/<name>/SKILL.md`
+(what Claude Code loads when working in this codebase) is a second, independently-maintained
+copy of the same content; `tests/test_agent_setup.py::test_packaged_skills_match_repo_dotclaude_copies`
+guards against the two drifting apart, byte-for-byte, rather than trusting manual diligence.
+
+**Zero secret-boundary surface, structurally enforced.** This whole feature is local agent-CLI
+config plumbing — MCP registration, copying markdown files — and has no legitimate reason to
+import `Registry`/`Broker`/`Resolver`/`SecretBackend` at all. `tests/test_cli_agent.py` asserts
+that via AST inspection of the actual imports, not just by the module's own description.
+
+**PyPI naming, decided while this feature was built.** PyPI's existing `portunus` project is an
+unrelated, unmaintained package ([`IQTLabs/portunus`](https://github.com/IQTLabs/portunus)) —
+the README previously said `pipx install portunus # once published`, which would have silently
+installed the wrong tool the day that line was ever acted on. `pyproject.toml`'s `name` is now
+`pantheon-portunus` (confirmed unclaimed on PyPI); `[project.scripts]` keeps the installed
+command as plain `portunus`, unaffected. Not yet actually published under either name —
+`scripts/install.sh` installs straight from GitHub (`pipx install git+https://...`) until a real
+release ships.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference
