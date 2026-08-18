@@ -34,13 +34,19 @@ pub fn is_newer(current: &str, latest_tag: &str) -> Result<bool, String> {
     Ok(latest_v > current_v)
 }
 
-/// `gh release view --repo <repo> latest --json tagName --jq .tagName` --
-/// the user's own already-authenticated gh CLI, never a token this app
-/// holds itself.
+/// `gh release view --repo <repo> --json tagName --jq .tagName` -- the
+/// user's own already-authenticated gh CLI, never a token this app holds
+/// itself. Deliberately NO tag argument: `gh release view <tag>` treats
+/// `<tag>` as a literal release tag to look up, so a literal `latest`
+/// fails with "release not found" unless a release happens to be tagged
+/// exactly that (a real bug this app shipped with -- confirmed live: this
+/// command always failed, silently, since the background checker only
+/// logs a warning on error). Omitting the argument is what actually means
+/// "show the latest release."
 fn check_latest_release_tag() -> Result<String, String> {
     let output = Command::new("gh")
         .args([
-            "release", "view", "--repo", REPO, "latest",
+            "release", "view", "--repo", REPO,
             "--json", "tagName", "--jq", ".tagName",
         ])
         .output()

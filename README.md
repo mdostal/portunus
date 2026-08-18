@@ -30,6 +30,14 @@ installed? Just run `portunus agent init` — same thing, idempotent, safe to re
 (e.g. after installing a new harness). `portunus agent status` shows what's currently wired
 without changing anything.
 
+Since this runs standalone often — a local key-value store on its own, not just a plugin — it
+keeps itself current too: `portunus update check` (read-only) / `portunus update run` (installs,
+with either an interactive confirm or `--yes`) walk the same "your own already-authenticated `gh`
+CLI, pinned to an exact release tag, never a silent unattended swap" posture as the desktop app's
+updater. A one-line stderr heads-up ("portunus vX.Y.Z is available…") shows up on its own,
+throttled to once a day, never installs anything by itself — opt out any time with
+`PORTUNUS_NO_UPDATE_CHECK=1`.
+
 **[portunus site →](https://mdostal.github.io/portunus/)** — landing page, install snippets, and
 the component-model pitch in one place.
 
