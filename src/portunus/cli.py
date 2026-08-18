@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import __version__
+from . import agent_setup
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import (
@@ -1760,6 +1761,52 @@ def cmd_mcp(args) -> int:
     return 0
 
 
+def cmd_agent_init(args) -> int:
+    """Wire the MCP server + usage skills into every detected (or
+    explicitly --harness'd) agent CLI on this machine. Idempotent -- safe to
+    re-run any time, e.g. after installing a new harness."""
+    only = args.harness or None
+    result = agent_setup.agent_init(only=only)
+    if args.json:
+        print(json.dumps(result))
+        return 0
+    for name, present in result["harnesses"].items():
+        if only is not None and name not in only:
+            continue
+        if not present:
+            print(f"{name}: not found on this machine, skipped")
+            continue
+        registered = result["mcp_registered"].get(name)
+        print(f"{name}: MCP server {'registered' if registered else 'FAILED to register'}")
+    if result["skills_installed"]:
+        print(f"skills installed/updated: {', '.join(result['skills_installed'])}")
+    elif "claude" in result["requested"]:
+        print("skills: already up to date")
+    return 0
+
+
+def cmd_agent_status(args) -> int:
+    """Report which agent CLIs are present, which have the MCP server
+    registered, and which usage skills are installed -- never mutates
+    anything (use `agent init` for that)."""
+    status = agent_setup.agent_status()
+    if args.json:
+        print(json.dumps(status))
+        return 0
+    for name, present in status["harnesses"].items():
+        if not present:
+            print(f"{name}: not found on this machine")
+            continue
+        registered = status["mcp_registered"].get(name)
+        print(f"{name}: present, MCP server {'registered' if registered else 'NOT registered'}")
+    installed = [name for name, ok in status["skills"].items() if ok]
+    missing = [name for name, ok in status["skills"].items() if not ok]
+    print(f"skills installed: {', '.join(installed) if installed else '(none)'}")
+    if missing:
+        print(f"skills missing: {', '.join(missing)}")
+    return 0
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -2250,6 +2297,27 @@ def build_parser() -> argparse.ArgumentParser:
         "mcp", help="start the Portunus MCP stdio server (for other agents/harnesses)",
     )
     mcp_p.set_defaults(func=cmd_mcp)
+
+    ag = sub.add_parser(
+        "agent",
+        help="wire the MCP server + usage skills into agent CLIs already on this machine "
+             "(Claude Code, Codex CLI today) -- the single-command onboarding path",
+    )
+    ag_sub = ag.add_subparsers(dest="action", required=True)
+
+    ag_init = ag_sub.add_parser(
+        "init", help="register the MCP server and install usage skills -- idempotent, safe to re-run",
+    )
+    ag_init.add_argument(
+        "--harness", action="append", choices=("claude", "codex"), default=None,
+        help="limit to this harness (repeatable); default: every harness detected on this machine",
+    )
+    ag_init.add_argument("--json", action="store_true")
+    ag_init.set_defaults(func=cmd_agent_init)
+
+    ag_status = ag_sub.add_parser("status", help="show what's currently wired -- never mutates anything")
+    ag_status.add_argument("--json", action="store_true")
+    ag_status.set_defaults(func=cmd_agent_status)
 
     return p
 

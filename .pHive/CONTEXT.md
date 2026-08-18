@@ -281,6 +281,9 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/views.py` — custom views (`PORTUNUS_HOME/views.json`), locked from day one.
 - `src/portunus/roles.py` — STUB role/policy schema (`PORTUNUS_HOME/roles.json`) — persists for
   real, consumed by nothing.
+- `src/portunus/agent_setup.py` — `portunus agent init`/`status`: MCP registration + usage-skill
+  install for whatever agent CLIs are on the machine. Zero secret-boundary surface by
+  construction (no `Registry`/`Broker`/`Resolver` import) — local agent-CLI config plumbing only.
 - `ui/` — the standalone localhost-only UI (Console / Vault Map / Ask Bar). Every API route
   under `ui/app/api/` shells out to the same gated `portunus` console script rather than
   reimplementing any gating logic in TypeScript — see `ui/lib/portunus.ts`. Also runnable as a
@@ -294,8 +297,12 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   the source those facts are drawn from.
 - `.claude/skills/` — thin Claude skills wrapping the CLI/MCP surface for agent use:
   `portunus-ask` (fetch/inject by description), `portunus-drop` (create a secret, single/bulk),
-  `portunus-vault-setup` (configure/check a project's backend + sync mode). Also installed at
-  Claude Code's user scope (`~/.claude/skills/`) so any session on the machine sees them.
+  `portunus-vault-setup` (configure/check a project's backend + sync mode), `portunus-vault-audit`
+  (crawl/report/leak-scan). The canonical, packaged copy lives at `src/portunus/agent_skills/`
+  (real package data, ships in the installed wheel) — `portunus agent init` installs it to
+  Claude Code's user scope (`~/.claude/skills/`) on any machine, not just this repo.
+  `src/portunus/agent_setup.py` also registers the MCP server for any detected agent CLI
+  (Claude Code, Codex CLI today). See `docs/architecture.md` §15.
 - `.pHive/epics/` — in-flight Hive epics/stories for this repo.
 - `docs/architecture.md` — adopter-facing reference (component diagram, ARCA backend-selection
   precedence, Petitio today-vs-tomorrow, request/resolve sequence) — distinct from `.pHive/`,
