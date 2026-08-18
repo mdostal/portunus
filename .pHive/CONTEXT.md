@@ -284,6 +284,11 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/agent_setup.py` — `portunus agent init`/`status`: MCP registration + usage-skill
   install for whatever agent CLIs are on the machine. Zero secret-boundary surface by
   construction (no `Registry`/`Broker`/`Resolver` import) — local agent-CLI config plumbing only.
+- `src/portunus/update.py` — `portunus update check`/`run`: CLI self-update via the user's own
+  `gh` CLI, pinned to an exact release tag, never a silent unattended install. The passive
+  per-invocation check (`maybe_notify()`, wired into `cli.py::main()`) can only ever notify —
+  structurally incapable of calling `apply_update()`. Same zero-secret-boundary-import
+  discipline as `agent_setup.py`. See `docs/architecture.md` §16.
 - `ui/` — the standalone localhost-only UI (Console / Vault Map / Ask Bar). Every API route
   under `ui/app/api/` shells out to the same gated `portunus` console script rather than
   reimplementing any gating logic in TypeScript — see `ui/lib/portunus.ts`. Also runnable as a

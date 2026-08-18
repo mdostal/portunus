@@ -582,6 +582,62 @@ command as plain `portunus`, unaffected. Not yet actually published under either
 `scripts/install.sh` installs straight from GitHub (`pipx install git+https://...`) until a real
 release ships.
 
+## 16. CLI self-update (`portunus update`), and the security posture behind it
+
+The desktop app has had a real, working auto-updater for a while (`ui/src-tauri/src/
+updater.rs`, §1). The CLI didn't — worth closing, not just for parity, but because the CLI is
+the piece most likely to run standalone and often: a local key-value store on its own machine,
+not only a plugin invoked occasionally by an agent. That framing raises the stakes, not lowers
+them — this tool already holds real vault access, so its own update path gets treated with at
+least as much care as anything it protects.
+
+**Two paths, deliberately unequal in what they're allowed to do.** A passive check runs once per
+CLI invocation (`update.maybe_notify()`, called from `cli.py::main()` for every command except
+`mcp` and `update` itself): throttled to once per 24 hours via a cache file
+(`PORTUNUS_HOME/update-check.json`), it spawns a detached, non-blocking subprocess to do a live
+check and prints at most one line to **stderr** (never stdout — would corrupt scripted/`--json`
+output) if a previously-cached check found something newer. It is structurally incapable of
+installing anything — `apply_update()` (the one function that ever mutates the install) is never
+referenced anywhere in `maybe_notify()`'s call graph, verified by an AST check on the function's
+own source, not just by convention. Only `portunus update run` — an explicit command requiring
+either an interactive confirm or `--yes` — may ever call it. Same "never a silent unattended
+swap" rule the desktop app's dialog-based confirm already encodes, applied to a headless context
+where there's no dialog to show.
+
+**Every real check is live, never cached.** `update.check_now()` is what both `update check` and
+`update run` actually call — it always shells out fresh; the cache file exists purely so *other*
+invocations' passive notice has something to read, never as a substitute for `run`'s own
+decision about whether there's something to install.
+
+**Installs are pinned, never a floating `main`.** `apply_update(tag)` installs
+`git+https://github.com/mdostal/portunus.git@{tag}` — the *exact* release tag `check_now()`
+resolved, not the default branch's current HEAD. What lands on disk is always one specific,
+auditable commit, decided once and used unchanged for that install, not two separate reads
+(check, then install) that could observe different code if `main` moved in between.
+
+**Refuses to touch a dev checkout.** `is_dev_checkout()` walks upward from the installed
+package's own path looking for a `.git` directory; if found, `update run` refuses outright and
+points at `git pull` instead. A real pipx/pip install's `site-packages` never lives inside a git
+working tree, so this is a clean, dependency-free signal — confirmed directly against a real
+`pipx install` during development (§15 established the same verification discipline for
+`agent_setup.py`'s packaged skills).
+
+**Zero secret-boundary surface, by construction.** `update.py` has no legitimate reason to
+import `Registry`/`Broker`/`Resolver`/`SecretBackend` at all — verified structurally (an AST scan
+of the module's actual imports), the same discipline `agent_setup.py` already established (§15).
+The update path is exactly the part of this codebase an attacker would most want to compromise,
+so it's exactly the part with the least code, and the least ability, to reach a secret.
+
+**A real bug found and fixed while building this.** The `gh` invocation this whole feature
+started from (`updater.rs`'s own `check_latest_release_tag()`) passed a literal `latest` as the
+release-tag argument to `gh release view`. That's wrong: `gh release view <tag>` treats `<tag>`
+as a tag name to look up, not a keyword meaning "the latest one" — omitting the argument
+entirely is what actually does that. Confirmed live against the real repo (`gh release view
+--repo mdostal/portunus latest ...` → `release not found`; the same command without `latest` →
+the real current tag). This means the desktop app's auto-updater has likely never successfully
+detected an update in production — the background timer only logs a warning on failure, so
+nothing ever surfaced it. Fixed in both `updater.rs` and `update.py` in the same pass.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

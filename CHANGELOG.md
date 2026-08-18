@@ -17,6 +17,26 @@ All notable changes to Portunus are documented in this file.
   a new harness. `--harness claude`/`--harness codex` (repeatable) narrows `init` to one harness.
 - `curl -fsSL https://mdostal.github.io/portunus/install.sh | bash` — the new top-line onboarding
   path: installs the CLI from GitHub, then runs `portunus agent init`.
+- **`portunus update check`/`portunus update run`** — CLI self-update. `check` is a live,
+  read-only lookup against GitHub releases (via the user's own `gh` CLI, same posture as the
+  desktop app — never a token this tool holds itself). `run` always re-checks live, refuses on a
+  dev/editable install (run `git pull` instead), and requires an interactive confirm or `--yes`
+  before installing — never a silent unattended swap. Installs are pinned to the exact resolved
+  release tag (`git+...@vX.Y.Z`), never a floating `main` HEAD. A lightweight passive check also
+  runs once per CLI invocation (throttled to once per 24h, fully detached/non-blocking, disabled
+  during tests and via `PORTUNUS_NO_UPDATE_CHECK=1`) and prints at most one line to stderr when a
+  previously-cached check found something newer — it can never install anything itself, only
+  `update run` can, verified structurally. Given this tool holds real vault access, the update
+  path was deliberately built with zero legitimate reason to import any vault machinery at all.
+
+### Fixed
+
+- The desktop app's own auto-updater (`updater.rs`) had a real bug found while building the CLI
+  version above: `gh release view --repo <repo> latest ...` treats `latest` as a literal release
+  tag to look up, which fails with "release not found" unless a release happens to be tagged
+  exactly `latest` — it never was, so the desktop updater's `gh` call had been failing on every
+  check since it shipped, silently (the background timer only logs a warning on error). Fixed by
+  omitting the tag argument entirely, which is what actually means "show the latest release."
 
 ### Changed
 

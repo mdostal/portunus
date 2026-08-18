@@ -21,6 +21,7 @@ from typing import Dict, List, Optional
 
 from . import __version__
 from . import agent_setup
+from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import (
@@ -1807,6 +1808,59 @@ def cmd_agent_status(args) -> int:
     return 0
 
 
+def cmd_update_check(args) -> int:
+    """Live, read-only check against GitHub releases -- never installs
+    anything. Always fresh; ignores any cached result from a background
+    check."""
+    result = update_mod.check_now()
+    if args.json:
+        print(json.dumps(result))
+        return 0
+    if result["error"]:
+        print(f"couldn't check for updates: {result['error']}")
+        return 1
+    if result["update_available"]:
+        print(f"portunus {result['latest']} is available (you have {result['current']})")
+        print("run `portunus update run` to upgrade")
+    else:
+        print(f"up to date (v{result['current']})")
+    return 0
+
+
+def cmd_update_run(args) -> int:
+    """The one mutating path in this whole feature. Always re-checks live
+    first (never trusts a stale cache to decide whether to install
+    something), refuses on a dev/editable checkout, and requires either an
+    interactive confirmation or --yes before ever calling apply_update --
+    never a silent unattended swap, same posture as the desktop app."""
+    if update_mod.is_dev_checkout():
+        print("this looks like a dev/editable install (inside a git checkout) -- "
+              "run `git pull` instead, `update run` refuses to touch it")
+        return 1
+    result = update_mod.check_now()
+    if result["error"]:
+        print(f"couldn't check for updates: {result['error']}")
+        return 1
+    if not result["update_available"]:
+        print(f"already up to date (v{result['current']})")
+        return 0
+    tag = result["latest"]
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(f"{tag} is available (you have {result['current']}) -- re-run with --yes to install non-interactively")
+            return 1
+        answer = input(f"{tag} is available (you have {result['current']}). Install now? [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            print("not updating")
+            return 0
+    ok = update_mod.apply_update(tag)
+    if not ok:
+        print(f"update to {tag} failed")
+        return 1
+    print(f"updated to {tag}")
+    return 0
+
+
 # --- parser --------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
@@ -2319,14 +2373,38 @@ def build_parser() -> argparse.ArgumentParser:
     ag_status.add_argument("--json", action="store_true")
     ag_status.set_defaults(func=cmd_agent_status)
 
+    up = sub.add_parser(
+        "update",
+        help="self-update the CLI -- checks GitHub releases via `gh`, never a silent unattended install",
+    )
+    up_sub = up.add_subparsers(dest="action", required=True)
+
+    up_check = up_sub.add_parser("check", help="live, read-only check -- never installs anything")
+    up_check.add_argument("--json", action="store_true")
+    up_check.set_defaults(func=cmd_update_check)
+
+    up_run = up_sub.add_parser(
+        "run", help="check, then install if newer -- requires an interactive confirm or --yes",
+    )
+    up_run.add_argument("--yes", action="store_true", help="install without prompting (for scripts/cron)")
+    up_run.set_defaults(func=cmd_update_run)
+
     return p
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # `mcp` is a long-running stdio server (a passive-check subprocess/stderr
+    # write would be pointless at best, protocol-adjacent noise at worst);
+    # `update` already does its own live check -- a stale passive notice on
+    # top of it would be confusing, not helpful.
+    skip_notify = args.cmd in ("mcp", "update")
     if not args.home:
-        return args.func(args)
+        rc = args.func(args)
+        if not skip_notify:
+            update_mod.maybe_notify()
+        return rc
 
     # --home overrides PORTUNUS_HOME for this invocation only. paths.home()
     # reads the env fresh on every call, so setting it here (and restoring
@@ -2336,7 +2414,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     prior = os.environ.get("PORTUNUS_HOME")
     os.environ["PORTUNUS_HOME"] = args.home
     try:
-        return args.func(args)
+        rc = args.func(args)
+        if not skip_notify:
+            update_mod.maybe_notify()
+        return rc
     finally:
         if prior is None:
             os.environ.pop("PORTUNUS_HOME", None)
