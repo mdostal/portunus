@@ -25,7 +25,7 @@ graph TD
     end
 
     subgraph Petitio["Petitio — the approval-gate wrapper"]
-        Broker["Broker.check_injectable()<br/>(broker.py)<br/>lifecycle guard + approval gate<br/>Identity/requester: wired, not yet enforced"]
+        Broker["Broker.check_injectable()<br/>(broker.py)<br/>lifecycle guard + approval gate<br/>+ Identity/requester policy check (opt-in enforcement, §3)"]
     end
 
     subgraph ARCA["ARCA — the vault store (per-reference/per-project router)"]
@@ -89,47 +89,67 @@ detail view next to the Auto-rotate button (`POST /api/rotation-status`, new). I
 from the UI — the handler never reads a `status` field off the request body at all, so a UI
 control can never make a stub provider look real.
 
-## 3. Petitio: today vs. the designed future
+## 3. Petitio: real, opt-in per-agent access control (portunus-petitio-rbac)
 
-`Identity` and `check_injectable`'s `requester` parameter exist today as a deliberately inert
-seam — every caller is currently allowed regardless of who's asking. The state machine below
-is the *designed target*, not yet built; no `PolicyStore`/`EscalationRequest` code exists yet.
+`Identity`/`requester` are no longer inert. Every `check_injectable()` call with a real
+`requester` gets evaluated against `roles.py`'s `PolicyRecord` store via `roles.evaluate()` --
+every resolve gets a `would-allow`/`would-deny` audit line regardless of enforcement state, but
+that decision only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been
+explicitly run for that vault. Default: off. Even with enforcement globally on, a scope with
+zero configured policies always stays fully open -- enforcement only ever narrows behavior for
+a scope that has at least one policy record, for a principal not named there.
 
 ```mermaid
 graph TD
-    accTitle: Petitio today versus the designed future
-    accDescr: Today, check_injectable only checks lifecycle state and approval, ignoring the requester entirely. The designed future adds a policy check and an escalation request-review-grant flow before falling back to deny.
+    accTitle: Petitio's real access-control flow
+    accDescr: check_injectable checks lifecycle state and approval first, same as always, then evaluates a policy decision that is always audited but only enforced (raised) when the opt-in enforcement flag is on.
 
-    subgraph Today["Today — real, shipped"]
-        T1["check_injectable(name, requester=None)"] --> T2{"lifecycle state<br/>enabled/locked?"}
-        T2 -->|no| T3["NotInjectable<br/>(fail closed)"]
-        T2 -->|yes| T4{"approval gate<br/>required?"}
-        T4 -->|yes, no valid approval| T5["ApprovalRequired"]
-        T4 -->|no, or valid approval| T6["Allowed<br/>(requester is never consulted)"]
-    end
-
-    subgraph Future["Designed, not yet built"]
-        F1["requester has a<br/>PolicyStore grant?"] -->|yes| T6
-        F1 -->|no| F2["EscalationRequest: pending"]
-        F2 --> F3{"approver decision"}
-        F3 -->|approved, within TTL| T6
-        F3 -->|denied| F4["Denied (terminal)"]
-        F3 -->|TTL lapses| F5["Expired"]
-    end
-
-    T6 -.->|future wiring point| F1
+    T1["check_injectable(name, requester)"] --> T2{"lifecycle state<br/>enabled/locked?"}
+    T2 -->|no| T3["NotInjectable<br/>(fail closed)"]
+    T2 -->|yes| T4{"approval gate<br/>required?"}
+    T4 -->|yes, no valid approval| T5["ApprovalRequired"]
+    T4 -->|no, or valid approval| T6{"requester given?"}
+    T6 -->|no| T10["Allowed<br/>(nothing to evaluate)"]
+    T6 -->|yes| T7["roles.evaluate(policies, requester, ref)<br/>the ONE seam for all scope/precedence logic"]
+    T7 --> T8{"decision.allow?"}
+    T8 -->|yes| T9A["Audit: would-allow:&lt;reason&gt;<br/>Allowed"]
+    T8 -->|no| T9B{"roles.enforcement_is_on()?"}
+    T9B -->|off, the default| T9C["Audit: would-deny:&lt;reason&gt;<br/>Allowed anyway"]
+    T9B -->|on, opt-in| T9D["Audit: would-deny:&lt;reason&gt;<br/>NotAuthorized (fail closed)"]
 ```
+
+**Precedence today, a deliberate v1 choice:** a flat OR across every matching `PolicyRecord` --
+any one matching, allowing policy is sufficient (no most-specific-wins narrowing yet). This is
+intentionally the only place matching/precedence logic lives: `check_injectable()` and every
+CLI/MCP caller only ever call `roles.evaluate()` and act on its `Decision`, never reimplement
+matching themselves -- so a future precedence model (most-specific-wins, or adopting an engine
+like Casbin, the documented fallback from this epic's research) is a change to that one
+function's internals, not a rewrite across every call site.
+
+**What's still not scope-aware, by explicit, named decision (not oversight):** the `list`/
+`tree` MCP tools return full-vault metadata regardless of the caller's own access scope --
+only the actual `resolve`/inject path is gated. `Broker.approve()`'s token is scoped to a
+reference name only, not the requesting identity, so a different concurrently-running agent can
+walk through the same approval window. Both are real findings from this epic's own research and
+self-grill, deliberately deferred rather than silently missed -- see README's Roadmap.
+
+**Threat model, in one sentence:** this defends against honest mistakes and prompt-injected
+instructions (an agent resolving something outside its actual task), not a genuinely
+adversarial co-resident process -- a self-reported `DOSTAL_AGENT` identity can't defeat that,
+and `--home` (full vault isolation) is the correct tool for a known-untrusted caller instead.
 
 ## 4. Request/resolve sequence
 
-The invariant this diagram exists to make legible: **the approver (today: nobody, since
-there's no enforcement yet) never touches the plaintext.** Only the resolver's own boundary
-sink (env var, file, or exec argv) ever holds the value, and it's never returned up the stack.
+The invariant this diagram exists to make legible: **the value never flows through Petitio at
+all** -- `check_injectable()` (lifecycle + approval + policy evaluation, §3) returns metadata
+only, and only the resolver's own boundary sink (env var, file, or exec argv) ever holds the
+plaintext. It's never returned up the stack, including through the access-control decision
+itself.
 
 ```mermaid
 sequenceDiagram
     accTitle: Portunus request/resolve sequence
-    accDescr: A caller resolves a placeholder through OSTIARIUS, Petitio checks injectability, ARCA fetches the value, and the resolver injects it at the boundary sink without ever returning it.
+    accDescr: A caller resolves a placeholder through OSTIARIUS, Petitio checks injectability (lifecycle, approval, and policy), ARCA fetches the value, and the resolver injects it at the boundary sink without ever returning it.
 
     participant Caller as Caller (CLI/UI/MCP)
     participant Resolver as OSTIARIUS (Resolver)
@@ -139,14 +159,19 @@ sequenceDiagram
     participant Sink as Boundary sink<br/>(env var / file / exec argv)
 
     Caller->>Resolver: resolve {{secret:NAME}}
-    Resolver->>Broker: check_injectable(name)
-    Broker->>Broker: lifecycle + approval check<br/>(requester param: inert today)
-    alt not injectable
+    Resolver->>Broker: check_injectable(name, requester)
+    Broker->>Broker: lifecycle + approval check,<br/>then roles.evaluate() (§3)
+    alt not injectable / needs approval
         Broker-->>Resolver: raise NotInjectable / ApprovalRequired
         Broker->>Audit: append(denied-*)
         Resolver-->>Caller: error (never a value)
-    else injectable
+    else denied by policy AND enforcement is on
+        Broker-->>Resolver: raise NotAuthorized
+        Broker->>Audit: append(would-deny:reason)
+        Resolver-->>Caller: error (never a value)
+    else injectable (incl. would-deny with enforcement off)
         Broker-->>Resolver: Reference (metadata only)
+        Broker->>Audit: append(would-allow/would-deny:reason)
         Resolver->>ARCA: backend.access(sm_name, project)
         ARCA-->>Resolver: plaintext value
         Resolver->>Sink: inject value directly
@@ -292,16 +317,18 @@ race in the first place, proven with a real multi-process concurrent-write test.
 over fields the UI already fetches — no new stored field, nothing to drift out of sync with
 what it's computed from.
 
-**Role/policy schema — built as a stub, deliberately not enforced.** `roles.py` persists
-`PolicyRecord(scope_type: org|project|env, scope_value, role, actions[])` to `PORTUNUS_HOME/
-roles.json` for real — `portunus roles set/delete/show` and the Settings page both genuinely
-read and write it — but `check_injectable()`/`retag()` never consume it.
-`tests/test_roles.py::test_check_injectable_and_retag_are_byte_identical_with_or_without_
-roles_configured` is the defining test: byte-identical behavior with or without policies
-configured, not just "defaults to permissive" (a materially weaker guarantee a future edit
-could silently erode). Building on `Identity`/`check_injectable`'s already-inert `requester`
-seam (§3) in SHAPE, extended to hierarchy-scoped actions — the evaluation function itself
-(most-specific-scope-wins? explicit deny beats allow?) is real, unresolved future work.
+**Role/policy schema — shipped here as a deliberate stub, since activated (§3).** At the time
+this epic shipped, `roles.py` persisted `PolicyRecord(scope_type: org|project|env, scope_value,
+role, actions[])` to `PORTUNUS_HOME/roles.json` for real — `portunus roles set/delete/show` and
+the Settings page both genuinely read and wrote it — but `check_injectable()`/`retag()` never
+consumed it. `tests/test_roles.py::test_check_injectable_and_retag_are_byte_identical_with_or_
+without_roles_configured` was the defining test proving that: byte-identical behavior with or
+without policies configured, not just "defaults to permissive" (a materially weaker guarantee a
+future edit could silently erode) — and it still passes today, unmodified, extended rather than
+broken by the epic that activated this seam. **portunus-petitio-rbac (§3, §17) built directly on
+this exact stub**: `PolicyRecord` gained `principal` + a `repo` scope type, `roles.evaluate()`
+became the real evaluation function this section once flagged as unresolved (flat-OR precedence,
+a deliberate v1 choice — see §3), and `portunus roles enforce on` is the real, opt-in activation.
 
 **LLM-suggests, human-confirms metadata.** `Reference.suggested` is a sidecar dict
 (`{field_name: {value, by, at}}`), written only by `Registry.suggest_metadata()` (and the MCP
@@ -316,7 +343,9 @@ confirmed an agent's proposal.
 
 **Settings, the setup wizard, and About are UI-only additions** with no new backend concepts
 beyond what's already described above: Settings surfaces the org/project hierarchy (read-only
-summary) and roles.json (genuinely editable, always visibly labeled "not yet enforced");
+summary) and roles.json (genuinely editable; the enforcement state itself is a separate,
+explicit `portunus roles enforce on|off|status` toggle, §3/§17 -- Settings never implies a
+policy is enforced just because it's configured);
 `SetupWizard` is a first-run-only flow (`portunus vault status` detects an uninitialized
 `PORTUNUS_HOME` — absence of BOTH `registry.json` and `vault-bindings.json`) that walks through
 backend choice and an in-UI trigger for `gcloud auth login` (the real, unmodified gcloud OAuth
@@ -435,8 +464,10 @@ that as a gap to close immediately, the container epic treats it as the natural 
 consumer reaches Portunus via `docker exec`/`kubectl exec`, a shared pod volume, or by having
 Portunus itself start the consumer (`resolve --exec <command>`, already the exact pattern local
 CLI usage has always used). A genuinely network-reachable shared service — one Portunus instance
-many pods call over the network — would need the currently-stub-only RBAC (`roles.py`, §9) to
-actually be enforced; that's real, separate, larger future work, not silently assumed here.
+many pods call over the network — would need real network-level authentication between caller
+and broker (today's access control, §3/§17, assumes a trusted local-process caller, same as
+every other same-host boundary in this design); that's real, separate, larger future work, not
+silently assumed here.
 
 **Non-root, VOLUME-declared `PORTUNUS_HOME`.** The container runs as a dedicated non-root user —
 `PORTUNUS_HOME`'s own 0600/0700 file permissions are already the real access control, so running
@@ -637,6 +668,56 @@ entirely is what actually does that. Confirmed live against the real repo (`gh r
 the real current tag). This means the desktop app's auto-updater has likely never successfully
 detected an update in production — the background timer only logs a warning on failure, so
 nothing ever surfaced it. Fixed in both `updater.rs` and `update.py` in the same pass.
+
+## 17. portunus-petitio-rbac closeout: new-vault default, live proof, deferred follow-ups
+
+**Default-on for genuinely brand-new vaults only, never retroactive.** `paths.py::home()` is the
+one place in the whole codebase that can reliably tell "this `PORTUNUS_HOME` directory never
+existed before" apart from "an existing vault that just hasn't been touched today" -- checking
+`registry.json`/`roles.json` for that signal doesn't work, since by the time `check_injectable()`
+ever runs, a real registry entry (and therefore `registry.json`) already exists. `home()` checks
+`path.exists()` *before* its own `mkdir()` call and, only on a genuine first-creation, stamps
+`roles-enforce.json` to `on` right then (a deferred import into `roles.py` to avoid a cycle).
+Flipping an *existing* vault's default would have been this project's first-ever breaking
+upgrade behavior -- this story deliberately avoids that. Since a fresh vault also starts with
+zero configured `PolicyRecord`s, permissive-if-unconfigured (§3) means the new default is
+behaviorally invisible until the operator configures their first scoped policy -- no friction
+added to the actual first-run/setup-wizard flow.
+
+**Live-verified against the real vault, not a synthetic fixture.** A throwaway `--home` was
+seeded with a direct copy of the real `~/.portunus/registry.json` (410 real references at the
+time -- metadata only, `registry.json` structurally has no value field, so this is exactly as
+safe to copy as any other read of it) -- never the real backend's stored values, never the real
+live `PORTUNUS_HOME` itself. One real scoped policy was configured for one real project
+(`personalsites-487021`); enforcement turned on for the throwaway copy only. Result: the matching
+principal resolved successfully, a non-matching principal was genuinely denied
+(`NotAuthorized`), and — checked against all 410 real references, not just the one under test —
+every reference outside that one configured project's scope stayed fully resolvable for an
+entirely unconfigured, random requester identity. Permissive-if-unconfigured holds at real scale,
+confirmed directly, not just asserted from unit tests.
+
+**A real, separate bug found and fixed while shipping Story 03.** `NotAuthorized` wasn't caught
+anywhere `NotInjectable`/`ApprovalRequired` already were. `cmd_resolve` would have shown a raw
+Python traceback instead of a clean CLI error. Worse: `cmd_sync`/`portunus_sync`/
+`leakscan.get_values()` all `continue` past `NotInjectable`/`ApprovalRequired` to skip one
+inaccessible reference and keep processing the rest -- `NotAuthorized` wasn't in those `except`
+clauses either, so the *first* policy-denied reference in a sync or leak-scan run would have
+crashed the entire loop instead of being skipped like every other inaccessible reference already
+is. Fixed at all four sites; `NotAuthorized` also now exported from `portunus/__init__.py`
+alongside `NotInjectable`/`ApprovalRequired`.
+
+**Explicitly deferred, not silently missed** (§3 already names these; repeated here since this
+is the epic's own closeout record): scope-aware `list`/`tree` MCP tools, and identity-scoped
+approval tokens (`Broker.approve()`'s token is keyed on a reference name only today). Both
+surfaced by this epic's own research and self-grill pass, both real, neither built here --
+tracked in README's Roadmap for whoever picks them up next.
+
+**Research provenance.** This epic is grounded in a 13-agent, multi-provider research pass
+(Gemini API / Codex CLI / native Claude, 4 topics × 3 providers + 1 synthesis judge) surveying
+existing access-control systems (OPA, Cedar, Casbin, the Zanzibar family, SPIFFE/SPIRE, and
+more) before concluding a hand-rolled evaluator was the right-sized v1 for this project's actual
+shape -- full raw output at `.pHive/research/petitio-rbac-synthesis.md`, distilled at
+`.pHive/epics/portunus-petitio-rbac/docs/research-brief.md`.
 
 ## See also
 

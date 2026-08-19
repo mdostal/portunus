@@ -4,30 +4,28 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
-### Added
-
-- `SECURITY.md` (private vulnerability reporting via GitHub Security Advisories) and
-  `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1) — `CONTRIBUTING.md` referenced a code of
-  conduct that didn't actually exist. `pyproject.toml` gains PyPI classifiers and `Repository`/
-  `Issues`/`Changelog` project URLs. `.github/PULL_REQUEST_TEMPLATE.md` added.
-
-### Changed
-
-- Pre-release scrub: real GCP project IDs (`personalsites-487021`, `ffe-cicd`) and real personal
-  email addresses used as worked examples throughout README/CHANGELOG/`.pHive/epics/**` (from
-  real dogfooding sessions) replaced with placeholders (`demo-project-483920`, `demo-cicd`,
-  `personal@example.com`, `work@example.com`) — 242 substitutions across 56 files, so the public
-  history doesn't point at any real live infrastructure. Author name/company/site were left
-  untouched (already public). The `.pHive/epics/` paper trail itself stays — only the
-  identifying specifics inside it were scrubbed.
-- README's "13 tools"/"35-command CLI" summary corrected to the real current counts (21 MCP
-  tools, 35 CLI commands as of this release); MCP tool table gains the previously-undocumented
-  `portunus_rotation_status`.
-
-## [0.26.0] - 2026-08-18
+## [0.26.0] - 2026-08-19
 
 ### Added
 
+- **Per-agent access control (Petitio), real and opt-in (portunus-petitio-rbac).**
+  `PolicyRecord` gains `principal` (scope a policy to one agent identity; blank/`*` = everyone,
+  fully backward-compatible with every existing `roles.json` record) and `"repo"` joins
+  `org`/`project`/`env` as a valid scope type. New `roles.evaluate(policies, requester, ref) ->
+  Decision` is the single seam all scope/precedence logic lives in (flat-OR for v1, a deliberate
+  choice — every call site only ever calls this function and acts on its result, never
+  reimplements matching itself, so a future precedence model is a one-function change, not a
+  rewrite). Every resolve with a real requester now gets a `would-allow`/`would-deny` audit
+  line. New `portunus roles enforce on|off|status` (default: off) is the explicit opt-in that
+  makes a `would-deny` decision actually raise `NotAuthorized` — permissive-if-unconfigured
+  holds even with enforcement on: a scope with zero configured policies always stays open. A
+  brand-new `PORTUNUS_HOME` defaults to enforcement on; an existing vault's setting is never
+  retroactively changed. `--principal` on `portunus roles set/delete`; Settings' roles form
+  gains a principal field, `repo` as a scope option, and updated audit-only labeling. Live-
+  verified against the real vault (410 references) — a matching principal allowed, a
+  non-matching one denied, and every reference outside the one configured scope unaffected. See
+  `docs/architecture.md` §3/§17 and `.pHive/research/petitio-rbac-synthesis.md` (the 13-agent,
+  multi-provider research this epic is grounded in).
 - `portunus agent init`/`portunus agent status` — a single command that wires Portunus into
   whatever AI coding agent CLIs are already on the machine (Claude Code, Codex CLI today):
   registers the MCP server for each detected harness and installs the four usage skills
@@ -48,9 +46,18 @@ All notable changes to Portunus are documented in this file.
   previously-cached check found something newer — it can never install anything itself, only
   `update run` can, verified structurally. Given this tool holds real vault access, the update
   path was deliberately built with zero legitimate reason to import any vault machinery at all.
+- `SECURITY.md` (private vulnerability reporting via GitHub Security Advisories) and
+  `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1) — `CONTRIBUTING.md` referenced a code of
+  conduct that didn't actually exist. `pyproject.toml` gains PyPI classifiers and `Repository`/
+  `Issues`/`Changelog` project URLs. `.github/PULL_REQUEST_TEMPLATE.md` added.
 
 ### Fixed
 
+- `NotAuthorized` (the new exception above) wasn't caught anywhere `NotInjectable`/
+  `ApprovalRequired` already were: `cmd_resolve` would have shown a raw Python traceback instead
+  of a clean error, and — worse — `cmd_sync`/`portunus_sync`/`leakscan.get_values()` would have
+  crashed their entire loop on the first policy-denied reference instead of skipping it
+  gracefully like every other inaccessible reference already does. Fixed at all four sites.
 - The desktop app's own auto-updater (`updater.rs`) had a real bug found while building the CLI
   version above: `gh release view --repo <repo> latest ...` treats `latest` as a literal release
   tag to look up, which fails with "release not found" unless a release happens to be tagged
@@ -60,6 +67,16 @@ All notable changes to Portunus are documented in this file.
 
 ### Changed
 
+- Pre-release scrub: real GCP project IDs (`personalsites-487021`, `ffe-cicd`) and real personal
+  email addresses used as worked examples throughout README/CHANGELOG/`.pHive/epics/**` (from
+  real dogfooding sessions) replaced with placeholders (`demo-project-483920`, `demo-cicd`,
+  `personal@example.com`, `work@example.com`) — 242 substitutions across 56 files, so the public
+  history doesn't point at any real live infrastructure. Author name/company/site were left
+  untouched (already public). The `.pHive/epics/` paper trail itself stays — only the
+  identifying specifics inside it were scrubbed.
+- README's "13 tools"/"35-command CLI" summary corrected to the real current counts (21 MCP
+  tools, 35 CLI commands as of this release); MCP tool table gains the previously-undocumented
+  `portunus_rotation_status`.
 - `pyproject.toml`'s package name is now `pantheon-portunus` (the installed command is still
   `portunus`) — PyPI's existing `portunus` is an unrelated, unmaintained package
   ([`IQTLabs/portunus`](https://github.com/IQTLabs/portunus)); the README's prior

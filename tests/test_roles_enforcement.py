@@ -100,13 +100,18 @@ def test_not_authorized_message_never_contains_a_value(home):
 def test_enforcement_is_isolated_per_home(tmp_path, monkeypatch):
     home_a = tmp_path / "home-a"
     home_b = tmp_path / "home-b"
+    # Pre-create B so it's an "existing" vault, not a brand-new one -- keeps
+    # this test about isolation specifically, independent of Story 04's
+    # separate new-vault-defaults-to-on behavior (see
+    # test_enforcement_default_for_new_vaults.py for that).
+    home_b.mkdir()
 
     monkeypatch.setenv("PORTUNUS_HOME", str(home_a))
     set_enforcement(True)
     assert enforcement_is_on() is True
 
     monkeypatch.setenv("PORTUNUS_HOME", str(home_b))
-    assert enforcement_is_on() is False  # a fresh --home starts off, unaffected by A
+    assert enforcement_is_on() is False  # B's own (pre-existing, untouched) state, unaffected by A
 
     monkeypatch.setenv("PORTUNUS_HOME", str(home_a))
     assert enforcement_is_on() is True  # A's own state is untouched

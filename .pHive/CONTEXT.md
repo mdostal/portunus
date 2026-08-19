@@ -34,19 +34,22 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `PORTUNUS_BACKEND=mock` always short-circuits the router entirely, regardless of any
   configured binding.
 - **Petitio** — the approval-gate wrapper (`broker.py`, class `Broker`). Wraps every OSTIARIUS
-  request so access is always gated: grant / gate / approve + lifecycle guard.
-  `check_injectable(name, requester: Optional[Identity] = None)` carries a deliberately inert
-  seam (portunus-swappable-trio) — `Identity` (name + kind: human/agent/system, resolved the
-  same way `AuditChain`'s actor already is) is threaded through but never consulted; every
-  caller is currently allowed regardless of `requester`. The `PolicyStore` half of that design
-  now exists as `roles.py` (portunus-vault-trust-and-access) — `PolicyRecord(scope_type: org|
-  project|env, scope_value, role, actions[])`, persisted for real in `PORTUNUS_HOME/roles.json`,
-  editable via `portunus roles set/delete/show` and the UI's Settings page — but STILL not
-  consumed anywhere: `check_injectable()`/`retag()` are byte-identical whether or not
-  `roles.json` has content (`tests/test_roles.py`'s own defining test proves this directly, not
-  just asserts it). Real enforcement (still needs an `EscalationRequest`-style evaluation
-  function — most-specific-scope-wins? explicit deny beats allow? genuinely open) is future
-  work — no rush, per explicit product direction.
+  request so access is always gated: grant / gate / approve + lifecycle guard + (as of
+  portunus-petitio-rbac) real, opt-in per-agent access control. `check_injectable(name,
+  requester: Optional[Identity] = None)` evaluates `requester` against `roles.py`'s
+  `PolicyRecord` store (`scope_type: org|project|env|repo`, `scope_value`, `role`, `actions[]`,
+  `principal` — blank/`*` = everyone) via `roles.evaluate()` — the SINGLE seam all scope/
+  precedence logic lives in (flat-OR for v1, a deliberate choice, not an oversight — see
+  design-discussion.md §3). Every resolve with a real `requester` gets a `would-allow`/
+  `would-deny` audit line regardless; that decision only actually raises `NotAuthorized`
+  (distinct from `NotInjectable`/`ApprovalRequired`) when `portunus roles enforce on` has been
+  explicitly run for that vault (default: off; permissive-if-unconfigured holds even with
+  enforcement on — a scope with zero configured policies always stays open). A brand-new
+  `PORTUNUS_HOME` defaults to enforcement on; an existing one is never retroactively changed
+  (`paths.py::home()` stamps this exactly once, at genuine first creation). Not yet built,
+  named explicitly rather than silently missed: scope-aware `list`/`tree`, and identity-scoped
+  approval tokens (`approve()`'s token is keyed on a reference name only today). See
+  `docs/architecture.md` §3/§17.
 - **Reference** — a registry entry: `name -> Secret Manager location`, plus scope, kind,
   lifecycle `state`, and approval gate. Never carries the value itself.
 - **Placeholder** — a `{{secret:NAME}}` token. `Resolver` substitutes it with the live value
