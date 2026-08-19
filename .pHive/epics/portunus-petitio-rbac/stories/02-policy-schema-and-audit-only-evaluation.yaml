@@ -1,7 +1,7 @@
 id: 02-policy-schema-and-audit-only-evaluation
 epic: portunus-petitio-rbac
 title: PolicyRecord.principal + "repo" scope type + roles.evaluate() wired into check_injectable() as audit-only (never raises)
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [01-identity-plumbing]

@@ -38,8 +38,10 @@ def test_set_policy_overwrites_same_scope_and_role(home):
 
 
 def test_set_policy_rejects_invalid_scope_type(home):
+    # "repo" became a valid scope_type in portunus-petitio-rbac Story 02
+    # (design-discussion.md §5) -- use a genuinely invalid one here instead.
     with pytest.raises(PolicyError):
-        set_policy("repo", "shindig", "admin", ["read"])
+        set_policy("team", "shindig", "admin", ["read"])
 
 
 def test_set_policy_requires_scope_value_and_role(home):
