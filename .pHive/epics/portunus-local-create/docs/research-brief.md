@@ -6,7 +6,7 @@ Add local-only secret CREATION to Portunus, exposed through the MCP server so a 
 Claude Code instance (or any other MCP-capable agent/harness) can create and organize new
 secrets in the local vault, not just read/inject what's already there. Motivating scenario: the
 user wants to hand this Portunus instance to other agent instances and have them set up a new
-personal project ("gig tracker") locally, the way `ffe-cicd`'s 342 secrets got organized into
+personal project ("gig tracker") locally, the way `demo-cicd`'s 342 secrets got organized into
 groups earlier this session — but starting local, not GCP, per explicit user scope decision.
 
 ## What already exists
@@ -45,7 +45,7 @@ tree epic): the collision check evaluates a reference's entire current tag-ident
 refuse ANY retag until each gets a distinguishing tag. This does not affect `registry.add()`
 (creation, not retagging) directly, but it means a "gig tracker" project's secrets should get
 real distinguishing metadata (at minimum a unique `tags` entry, ideally `group`) at CREATE time
-— setting it later via bulk retag will hit the exact same footgun that bit ffe-cicd's grouping
+— setting it later via bulk retag will hit the exact same footgun that bit demo-cicd's grouping
 pass.
 
 ## The dominant design question

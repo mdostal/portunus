@@ -30,7 +30,7 @@ steps:
     description: Run full pytest + npm build; update docs; apply version bump; write CHANGELOG entry; run the live proofs against scratch data.
     agent: developer
   - id: review
-    description: Confirm the real vault (personalsites-487021/ffe-cicd bindings, existing references) is genuinely untouched by the live proof.
+    description: Confirm the real vault (demo-project-483920/demo-cicd bindings, existing references) is genuinely untouched by the live proof.
     agent: reviewer
     depends_on: [implement]
   - id: integrate
@@ -61,7 +61,7 @@ files_to_modify:
     change: Version bump
 
 design_decisions:
-  - decision: Live proof uses scratch data, not the real personalsites-487021/ffe-cicd projects
+  - decision: Live proof uses scratch data, not the real demo-project-483920/demo-cicd projects
     rationale: "This story doesn't need to touch the real vault to prove the new capability -- lower risk to use a clean scratch project, matching the pattern used for the swappable-trio epic's stub-kind proof"
 
 cross_cutting:

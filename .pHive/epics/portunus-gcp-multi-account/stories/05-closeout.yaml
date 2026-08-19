@@ -13,10 +13,10 @@ depends_on:
 
 description: |
   Full pytest suite green, then real live verification against the two real GCP accounts
-  already authenticated this session: `portunus bindings set ffe-cicd --account
-  mdostal@ff.events`, `portunus bindings set personalsites-487021 --account
-  mathew.dostal@gmail.com`, then `portunus discover --project ffe-cicd` immediately followed
-  by `portunus discover --project personalsites-487021` in the same shell session -- both
+  already authenticated this session: `portunus bindings set demo-cicd --account
+  work@example.com`, `portunus bindings set demo-project-483920 --account
+  personal@example.com`, then `portunus discover --project demo-cicd` immediately followed
+  by `portunus discover --project demo-project-483920` in the same shell session -- both
   succeeding regardless of gcloud's current ambient active account, proving the exact bug the
   user hit is fixed. README/CONTEXT.md document the account field and bindings command.
   Version bump and CHANGELOG entry.

@@ -36,7 +36,7 @@ were already the whole point of a `Finding`.
 ## 3. "Leaked in N conversations" — count distinct FILES, not raw finding count
 
 A `.claude` transcript can contain the same secret on multiple lines (confirmed live: the real
-scan found `personalsites-487021-google_generative_ai_api_key` at what the raw finding count
+scan found `demo-project-483920-google_generative_ai_api_key` at what the raw finding count
 made look like far more "locations" than actual distinct conversations, because the same file
 can match many times). The badge's headline number should be **distinct file paths**
 (`len(set(f.path for f in findings))`), described as "conversations" or "files" depending on

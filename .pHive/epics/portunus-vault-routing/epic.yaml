@@ -8,7 +8,7 @@ description: |
   Closes the gap between backend.py's own docstring ("selected per-Reference by
   provider+project") and reality (one global PORTUNUS_BACKEND env var per process). Adds:
   a VaultBinding model generalizing gcp-bindings.json with backend/sync_mode fields
-  (migration-safe -- the real personalsites-487021/ffe-cicd bindings keep working
+  (migration-safe -- the real demo-project-483920/demo-cicd bindings keep working
   untouched); a backend router giving each reference a 3-level precedence (ref.backend
   override > project VaultBinding > global PORTUNUS_BACKEND fallback); a recency-aware,
   pull-only sync-down cache (GCP -> local only, never the reverse); CLI/MCP surface for

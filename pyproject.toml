@@ -3,8 +3,8 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "portunus"
-version = "0.25.2"
+name = "pantheon-portunus"
+version = "0.26.0"
 description = "A standalone, boundary-only secret broker — reference a secret by name, the value is injected only at the execution boundary, never inside an LLM or agent context."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,6 +12,22 @@ license = { text = "MIT" }
 authors = [{ name = "Mathew Dostal" }]
 keywords = ["secrets", "gcp", "secret-manager", "harness", "llm", "agents"]
 dependencies = ["cryptography>=41", "mcp>=1.2.0,<2.0.0"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Environment :: Console",
+]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
@@ -21,9 +37,15 @@ portunus = "portunus.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mdostal/portunus"
+Repository = "https://github.com/mdostal/portunus"
+Issues = "https://github.com/mdostal/portunus/issues"
+Changelog = "https://github.com/mdostal/portunus/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+portunus = ["agent_skills/*/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

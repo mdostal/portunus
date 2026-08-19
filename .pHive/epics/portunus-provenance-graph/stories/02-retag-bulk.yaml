@@ -16,7 +16,7 @@ description: |
   required given this can touch dozens of real references in one call.
 
 acceptance_criteria:
-  - "Given 3 references with group starting 'ffe-cicd/event-api/', when `retag-bulk --group-prefix ffe-cicd/event-api --repo event-api` runs, then all 3 get repo='event-api' and references outside that prefix are untouched"
+  - "Given 3 references with group starting 'demo-cicd/event-api/', when `retag-bulk --group-prefix demo-cicd/event-api --repo event-api` runs, then all 3 get repo='event-api' and references outside that prefix are untouched"
   - "Given the same setup with `--dry-run`, when run, then it reports the 3 names that WOULD change and makes zero writes -- verified by re-reading the registry afterward and confirming repo is still unset"
   - "Given one of the N matched references would collide (e.g. an explicit --env combined with an existing identical-tuple reference), when the batch runs, then that one reference is reported under a `failed` list with its error and the rest still apply"
   - "Given `--group-prefix` matches zero references, when run, then it reports zero updated, zero failed -- not an error"
@@ -53,7 +53,7 @@ files_to_modify:
 
 design_decisions:
   - decision: Plain group-prefix string match, not a query language
-    rationale: "group is already a hierarchical path -- a prefix match covers the real case (backfilling everything under ffe-cicd/event-api/*) without inventing new selector syntax. --dry-run covers the 'did I select the right set' concern instead."
+    rationale: "group is already a hierarchical path -- a prefix match covers the real case (backfilling everything under demo-cicd/event-api/*) without inventing new selector syntax. --dry-run covers the 'did I select the right set' concern instead."
 
 cross_cutting:
   - concern: secret-boundary-invariant

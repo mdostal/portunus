@@ -1,0 +1,88 @@
+id: 04-closeout
+epic: portunus-petitio-rbac
+title: default-on for newly-initialized vaults only, docs, version bump, live proof against the real 393-reference vault
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [03-opt-in-enforcement]
+
+description: |
+  Flips the enforcement default so a FRESHLY created PORTUNUS_HOME (first-run/setup-wizard path)
+  starts with enforcement on -- an existing vault's setting is never silently changed; it only
+  enforces if the operator explicitly ran `portunus roles enforce on` (Story 03). Documents the
+  feature (README, docs/architecture.md), bumps the version, and runs a real live proof against
+  the actual 393-reference vault: configure one real scoped policy for one real agent identity,
+  confirm both an allow and a deny genuinely happen, then confirm every other pre-existing
+  reference with no configured policy remains completely unaffected. Also documents, as explicit
+  follow-up (not built in this epic), the two Tier 2 items research-brief.md §4 named and
+  design-discussion.md's self-grill deferred: the `list`/`tree` MCP tools not being scope-aware,
+  and `Broker.approve()`/`gate()` approval tokens being scoped to a reference name only, not the
+  requesting identity.
+
+acceptance_criteria:
+  - "Given a brand-new PORTUNUS_HOME created by this story's change, when it is first initialized, then `portunus roles enforce status` reports on"
+  - "Given an EXISTING PORTUNUS_HOME created before this story (enforcement never explicitly touched), when this story's change lands, then its enforcement state is unchanged -- proven by a real before/after test against a fixture vault, not just documented"
+  - "Given the real portunus vault (393 references), when one real scoped PolicyRecord is configured for one real agent identity and enforcement is turned on for a throwaway --home copy of the real registry, then a matching requester is allowed and a non-matching requester is denied -- a genuine live proof, not a synthetic fixture"
+  - "Given the same live-proof --home, when every OTHER reference (the other 392+) is resolved by any requester, then none of them are denied -- permissive-if-unconfigured holds at real scale, not just in unit tests"
+  - "Given README.md and docs/architecture.md, when read after this story, then both describe the Petitio access-control feature: Identity, PolicyRecord.principal, the repo scope type, roles.evaluate(), and portunus roles enforce"
+  - "Given CHANGELOG.md, when read after this story, then it has an entry for this epic under the new version"
+  - "Given the version files (pyproject.toml, package.json, tauri.conf.json, etc.), when checked, then all are in lockstep at the new minor version"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the new-vault-defaults-to-enforced-on / existing-vault-unaffected split, plus the live-proof scenario against a throwaway copy of the real registry.
+    agent: tester
+  - id: implement
+    description: Flip the new-vault default, run the live proof against a throwaway --home seeded from the real registry (never against the real live PORTUNUS_HOME directly), write docs, bump version.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit, push, open PR into dev, merge on local verification, promote dev->main, cut the release.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: feature documentation surface, same place every prior epic's closeout story documents new capabilities
+    - path: docs/architecture.md
+      purpose: architecture section for Petitio's now-activated access-control layer
+    - path: CHANGELOG.md
+      purpose: version entry
+    - path: .pHive/research/petitio-rbac-synthesis.md
+      purpose: full 13-agent research synthesis this epic is grounded in -- worth linking from docs as the design's provenance
+
+files_to_modify:
+  - file: src/portunus/roles.py (or wherever the new-vault-init path lives)
+    change: new vaults default enforcement to on
+  - file: README.md
+    change: document Identity/PolicyRecord.principal/repo scope/roles.evaluate()/roles enforce
+  - file: docs/architecture.md
+    change: architecture section for the now-activated Petitio access-control layer
+  - file: CHANGELOG.md
+    change: version entry
+  - file: pyproject.toml
+    change: version bump (minor)
+
+design_decisions:
+  - decision: "default-on applies ONLY to newly-initialized vaults, never retroactively"
+    rationale: "design-discussion.md §6 Story 04 -- would otherwise be this project's first-ever breaking upgrade behavior; an existing vault only enforces if the operator explicitly opted in via Story 03"
+  - decision: "live proof runs against a throwaway --home copy of the real registry, never the real live PORTUNUS_HOME"
+    rationale: "matches this session's own standing vault-safety discipline -- verification must never risk mutating or locking the operator's real, in-daily-use vault"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "the live-proof --home copy carries only registry/roles metadata (reference names, scopes, policy records), never real secret values -- copy the registry.json/roles.json shape, not the backend's stored values"
+
+risks:
+  - severity: low
+    description: "default-on-for-new-vaults could surprise a user running the setup wizard who expects the pre-this-epic zero-friction first-run experience"
+    mitigation: "since a fresh vault also starts with zero configured PolicyRecords, permissive-if-unconfigured (design-discussion.md §5) means default-on is behaviorally invisible until the operator configures their first scoped policy -- no friction added to the actual first-run flow"
+
+references:
+  - path: .pHive/epics/portunus-petitio-rbac/docs/design-discussion.md
+    relevant_excerpt: "§5 (default posture), §6 Story 04, self-grill (deferred follow-up items)"
+  - path: .pHive/research/petitio-rbac-synthesis.md
+    relevant_excerpt: "Tier 2/Tier 3 threat rankings; full landscape/integration/threat-model/cost-benefit findings"

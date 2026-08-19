@@ -13,10 +13,10 @@ description: |
   .pHive/CONTEXT.md's ARCA terminology entry updated to describe real per-project/
   per-reference routing (closing the gap between the docstring's existing claim and
   reality). Version bump (minor: 0.12.0 -> 0.13.0). CHANGELOG entry. Live proof against
-  the real vault: bind personalsites-487021 to sync_mode="cached", run `portunus sync
-  personalsites-487021`, confirm a real local encrypted cache gets created, confirm a
+  the real vault: bind demo-project-483920 to sync_mode="cached", run `portunus sync
+  demo-project-483920`, confirm a real local encrypted cache gets created, confirm a
   second sync run reports already_fresh (no redundant GCP fetch) via the real
-  latest_version check, and confirm ffe-cicd (left at sync_mode="direct", untouched)
+  latest_version check, and confirm demo-cicd (left at sync_mode="direct", untouched)
   still resolves exactly as before through the legacy-file fallback path.
 
 acceptance_criteria:
@@ -25,7 +25,7 @@ acceptance_criteria:
   - "Given README.md, when read, then it documents VaultBinding/backend routing/sync_mode/portunus sync with a worked example"
   - "Given .pHive/CONTEXT.md's ARCA entry, when read, then it accurately describes per-Reference/per-project backend selection as implemented, not aspirational"
   - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry 0.13.0 in lockstep"
-  - "Given the live proof against personalsites-487021, when run, then it demonstrates: cache created on first sync, already_fresh reported on second sync (no redundant gcloud value-fetch), and ffe-cicd's existing direct-mode resolution is unaffected"
+  - "Given the live proof against demo-project-483920, when run, then it demonstrates: cache created on first sync, already_fresh reported on second sync (no redundant gcloud value-fetch), and demo-cicd's existing direct-mode resolution is unaffected"
 
 methodology: classic
 steps:
@@ -33,7 +33,7 @@ steps:
     description: Run full pytest + npm build; update docs; apply version bump; write CHANGELOG entry; run the live proof against the real vault.
     agent: developer
   - id: review
-    description: Confirm the live proof's own output never contains a secret value, and that ffe-cicd's existing behavior is genuinely unaffected (not just assumed).
+    description: Confirm the live proof's own output never contains a secret value, and that demo-cicd's existing behavior is genuinely unaffected (not just assumed).
     agent: reviewer
     depends_on: [implement]
   - id: integrate
@@ -64,7 +64,7 @@ files_to_modify:
     change: Version bump
 
 design_decisions:
-  - decision: Live proof targets personalsites-487021 (smaller, lower-stakes project), leaves ffe-cicd untouched as the control proving nothing regressed
+  - decision: Live proof targets demo-project-483920 (smaller, lower-stakes project), leaves demo-cicd untouched as the control proving nothing regressed
     rationale: "Matches this session's established pattern of proving real behavior against real data while minimizing blast radius on the larger, higher-stakes project"
 
 cross_cutting:

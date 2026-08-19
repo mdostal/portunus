@@ -10,8 +10,8 @@ description: |
   README/docs/architecture.md updates documenting repo/source_files and the group/repo tree
   facet. Version bump (minor). Live proof on a scratch vault covering the full new surface
   (repo field, source_files, retag-bulk including --dry-run, tree --by repo, UI toggle). Also: a
-  READ-ONLY dry-run demo against the real ffe-cicd data -- `portunus retag-bulk --group-prefix
-  ffe-cicd/event-api --repo event-api --dry-run` -- to show the user concretely what a real
+  READ-ONLY dry-run demo against the real demo-cicd data -- `portunus retag-bulk --group-prefix
+  demo-cicd/event-api --repo event-api --dry-run` -- to show the user concretely what a real
   backfill would touch, without writing anything. Running it for real (dropping --dry-run) is an
   explicit follow-up for the user to confirm, not done as part of this story (research-brief.md
   §4 -- guessing the repo name for real production data isn't this epic's call to make
@@ -22,7 +22,7 @@ acceptance_criteria:
   - "Given `cd ui && npm run build`, when run, then it completes clean"
   - "Given README.md, when read, then it documents repo/source_files and portunus tree --by"
   - "Given pyproject.toml/manifest.json/__init__.py/tauri.conf.json/Cargo.toml, when checked, then all carry the same bumped minor version in lockstep"
-  - "Given the live proof, when run, then it demonstrates repo/source_files/retag-bulk/tree --by repo end to end on a scratch vault, AND a --dry-run-only demo against the real ffe-cicd group prefix that makes zero writes -- verified by re-checking the real vault's repo fields are still unset afterward"
+  - "Given the live proof, when run, then it demonstrates repo/source_files/retag-bulk/tree --by repo end to end on a scratch vault, AND a --dry-run-only demo against the real demo-cicd group prefix that makes zero writes -- verified by re-checking the real vault's repo fields are still unset afterward"
   - "Given the live proof, when complete, then the real vault's registry count and audit chain are confirmed unchanged"
 
 methodology: classic
@@ -75,7 +75,7 @@ cross_cutting:
 
 risks:
   - severity: low
-    description: Docs could imply the real ffe-cicd backfill already happened
+    description: Docs could imply the real demo-cicd backfill already happened
     mitigation: "Explicit acceptance criterion + CHANGELOG wording must state the dry-run demo made zero real writes and the actual backfill is a follow-up, not done"
 
 references:

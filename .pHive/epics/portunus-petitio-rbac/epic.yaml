@@ -1,0 +1,44 @@
+name: portunus-petitio-rbac
+title: activate Petitio -- per-agent scoped access control on top of the existing inert Identity/roles.py seam
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Grounded in a 13-agent research pass (4 topics x Gemini/Codex/Claude, one synthesis judge --
+  full raw output at .pHive/research/petitio-rbac-synthesis.md, distilled at
+  docs/research-brief.md) answering the user's request: "we'll need to start cleanly adding the
+  petito stuff so that we can bind the right account and right repo access to the right agents
+  and they aren't crossing over and doing whatever the hell they want."
+
+  Activates two seams this codebase already shipped and proved inert on purpose: `Identity`
+  (threaded through `check_injectable()` as `requester=`, but no real call site passes it today)
+  and `roles.py`'s `PolicyRecord` store (persisted, CLI/UI-managed, never read at resolve time).
+  Hand-rolls a minimal Python evaluator (~20-30 lines) rather than adopting an external policy
+  engine -- unanimous across all three research providers, given a single-operator, single-
+  policy-author, three-to-four-scope-dimension problem far smaller than what Casbin/OPA/Cedar
+  are built to solve. Staged rollout mirrors this project's own "stub, not enforced -> activate
+  later" precedent: plumbing (zero behavior change) -> schema + audit-only evaluation (never
+  raises) -> opt-in enforcement flag -> default-on for newly-initialized vaults only.
+
+stories:
+  - id: 01-identity-plumbing
+    title: thread requester=Identity.from_env() through every real check_injectable() call site -- zero behavior change
+    complexity: low
+    depends_on: []
+    status: pending
+  - id: 02-policy-schema-and-audit-only-evaluation
+    title: PolicyRecord.principal + "repo" scope type + roles.evaluate() wired into check_injectable() as audit-only (never raises)
+    complexity: medium
+    depends_on: [01-identity-plumbing]
+    status: pending
+  - id: 03-opt-in-enforcement
+    title: portunus roles enforce on|off|status -- NotAuthorized actually raised, permissive-if-unconfigured posture
+    complexity: medium
+    depends_on: [02-policy-schema-and-audit-only-evaluation]
+    status: pending
+  - id: 04-closeout
+    title: default-on for newly-initialized vaults only, docs, version bump, live proof against the real 393-reference vault
+    complexity: low
+    depends_on: [03-opt-in-enforcement]
+    status: pending

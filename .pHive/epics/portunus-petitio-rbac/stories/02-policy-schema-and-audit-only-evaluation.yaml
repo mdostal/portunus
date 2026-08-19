@@ -1,0 +1,97 @@
+id: 02-policy-schema-and-audit-only-evaluation
+epic: portunus-petitio-rbac
+title: PolicyRecord.principal + "repo" scope type + roles.evaluate() wired into check_injectable() as audit-only (never raises)
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-identity-plumbing]
+
+description: |
+  Extends `PolicyRecord` with `principal: str = ""` (empty/"*" = applies to everyone --
+  backward-compatible with every existing roles.json record) and adds `"repo"` to
+  `VALID_SCOPE_TYPES` (Reference.repo already exists as a real structured tag field --
+  registry.py:82/registry.py:30 -- just missing from roles.py's scope types). Adds
+  `roles.evaluate(policies, requester, ref) -> Decision` (design-discussion.md §3), wired into
+  `check_injectable()` as a new guard clause that writes a `would-allow`/`would-deny` audit line
+  on every resolve where a requester is present and at least one policy matches the reference's
+  scope -- but NEVER raises. This extends the existing "stub, not enforced" test discipline
+  (test_check_injectable_and_retag_are_byte_identical_with_or_without_roles_configured) rather
+  than breaking it: policy evaluation may change what gets logged, never what gets returned or
+  raised. Also fixes a real self-inflicted collision this story would otherwise introduce:
+  `PolicyRecord.key` must become `f"{scope_type}:{scope_value}:{role}:{principal or '*'}"` so
+  two different principals scoped to the same scope+role don't silently overwrite each other in
+  roles.json (design-discussion.md §2). Also relabels the Settings UI's roles form to make clear
+  policies are inert until Story 03 ships enforcement (design-discussion.md, self-grill).
+
+acceptance_criteria:
+  - "Given roles.json has zero PolicyRecords for a reference's scope, when check_injectable() runs with any requester, then the resolve succeeds exactly as before this story (no exception, no behavior change) and the audit line reads would-allow:no-policy-configured"
+  - "Given a PolicyRecord scoped to a reference's org with principal=\"claude-ffe\", when check_injectable() runs with requester.name==\"claude-ffe\", then the resolve succeeds and the audit line reads would-allow:explicit-allow"
+  - "Given the same PolicyRecord, when check_injectable() runs with requester.name==\"codex-other\", then the resolve STILL succeeds (never raises in this story) but the audit line reads would-deny:not-in-scope"
+  - "Given two portunus roles set calls for the SAME scope_type/scope_value/role but DIFFERENT --principal values, when roles.json is read back, then BOTH records exist as distinct entries -- proving the key-collision fix, not silently overwritten"
+  - "Given a PolicyRecord with scope_type=\"repo\" and a Reference whose repo field matches scope_value, when check_injectable() runs, then roles.evaluate() matches on the repo scope exactly as it does for org/project/env"
+  - "Given the full existing pytest suite including test_check_injectable_and_retag_are_byte_identical_with_or_without_roles_configured, when this story's change lands, then it still passes -- extended, not broken, per design-discussion.md §6 Story 02"
+  - "Given AST-inspection of roles.evaluate() and its call site inside check_injectable(), when checked, then no code path raises an exception based on decision.allow -- this story is audit-only by construction, verified structurally not just by test coverage"
+  - "Given the Settings UI's roles form, when a policy is configured, then the UI displays a visible note that policies are not yet enforced (Story 03 activates enforcement)"
+  - "Given check_injectable() and every CLI/MCP call site touched by this story, when AST-inspected, then none of them contain any scope-matching or precedence logic of their own -- all such logic lives inside roles.evaluate() alone, so a future precedence model (most-specific-wins, or an adopted engine) is a change to that one function, not a multi-file rewrite (design-discussion.md §3, user-confirmed expectation of 'fancier rule systems' later)"
+  - "Given roles.evaluate()'s docstring, when read, then it documents the current flat-OR precedence AS a deliberate v1 choice and names this single-seam property explicitly, matching roles.py's existing convention of documenting forward-looking intent inline"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for PolicyRecord.principal (default + explicit), the key-collision fix (two principals, same scope+role, both persist), "repo" as a valid scope_type, roles.evaluate()'s three Decision outcomes (no-policy-configured / explicit-allow / not-in-scope), and the audit-only wiring inside check_injectable() (never raises, always logs).
+    agent: tester
+  - id: implement
+    description: PolicyRecord.principal field + key fix, VALID_SCOPE_TYPES + "repo", roles.evaluate()/Decision, check_injectable() guard clause (audit-only), CLI --principal flag on `portunus roles set`, Settings UI principal field + inert-until-enforced label.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no path in this story can raise NotAuthorized or otherwise change check_injectable()'s return/exception behavior -- this is the story's one hard invariant.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/roles.py
+      purpose: "PolicyRecord dataclass, VALID_SCOPE_TYPES, set_policy()/load_policies() -- all touched by this story; existing key property at roles.py:57"
+    - path: src/portunus/broker.py
+      purpose: "check_injectable() gains its third guard clause here, after the existing lifecycle and approval-gate checks (broker.py:72-108)"
+    - path: src/portunus/registry.py
+      purpose: "Reference.repo field (registry.py:82) and _STRUCTURED_TAG_FIELDS (registry.py:30) -- confirms repo is a real, already-populated field this story's new scope_type reads"
+    - path: tests/test_roles.py
+      purpose: "existing stub-inertness test (test_check_injectable_and_retag_are_byte_identical_with_or_without_roles_configured) this story must extend, not break"
+
+files_to_modify:
+  - file: src/portunus/roles.py
+    change: "PolicyRecord.principal field + key fix, VALID_SCOPE_TYPES + repo, roles.evaluate()/Decision"
+  - file: src/portunus/broker.py
+    change: "check_injectable() gains audit-only policy evaluation guard clause"
+  - file: src/portunus/cli.py
+    change: "portunus roles set gains --principal flag"
+  - file: ui/app/components/SettingsPage.tsx
+    change: "roles form gains principal field + inert-until-enforced label"
+
+design_decisions:
+  - decision: "PolicyRecord.key includes principal"
+    rationale: "design-discussion.md §2 self-grill addition -- without this, setting a policy for one principal silently overwrites a different principal's policy under the same scope+role, exactly the crossing-over bug this epic exists to prevent"
+  - decision: audit-only, never raises, in this story
+    rationale: "design-discussion.md §6 Story 02 -- makes the evaluator's real-world behavior observable against the live 393-reference vault before enforcement can ever block something real, matching this project's own staged-activation precedent"
+  - decision: "roles.evaluate() is the ONLY place scope/precedence logic may live"
+    rationale: "design-discussion.md §3 -- user confirmed flat-OR is fine for v1 but wants the code to expect 'fancier rule systems' later; keeping every call site free of matching/precedence logic of its own means that future work is a change to one function's internals, not a rewrite -- no new abstraction added now, just a discipline enforced by this story's own AST-inspection acceptance criterion"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Decision.reason is a fixed enum string (no-policy-configured/explicit-allow/not-in-scope) plus scope_type/scope_value/principal, all plain config metadata -- audit line never carries a secret value, same discipline every other audit.append() call in this codebase already follows"
+
+risks:
+  - severity: medium
+    description: "the key-collision fix changes roles.json's on-disk key format for any policy record that specifies a principal; existing wildcard-principal records keep their existing key unchanged (principal defaults to \"\" -> \"*\" suffix is new for wildcard too -- confirm this doesn't collide with a real pre-existing key)"
+    mitigation: "test explicitly for backward-compat: an existing roles.json written before this story (no principal field) loads correctly and its records' keys still resolve/delete correctly after the key-format change"
+
+references:
+  - path: .pHive/epics/portunus-petitio-rbac/docs/design-discussion.md
+    relevant_excerpt: "§2 (schema), §3 (evaluator), §4 (where the check lives), §6 Story 02"

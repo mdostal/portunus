@@ -19,10 +19,10 @@ description: |
   thin `portunus list --project <id>` CLI command exposes the method directly for scripting.
 
 acceptance_criteria:
-  - "Given a registry with 3 references for project=personalsites-487021 and 2 for a different project, when list_by_project('personalsites-487021') is called, then exactly the 3 matching References are returned, metadata only"
+  - "Given a registry with 3 references for project=demo-project-483920 and 2 for a different project, when list_by_project('demo-project-483920') is called, then exactly the 3 matching References are returned, metadata only"
   - "Given list_by_project() is called, when its return value is inspected, then no Reference in the result has ever passed through a SecretBackend.access() call (structural: list_by_project has no reference to a backend at all)"
   - "Given `portunus ask \"what secrets are available for personalsites\"` is run, when intent parsing classifies it, then intent_kind=='list' and the command prints names/descriptions/purposes without ever calling resolve_by_tags's single-match path"
-  - "Given `portunus list --project personalsites-487021` is run, when it completes, then stdout shows every matching reference's name/description/purpose/env/injected_as and no value is printed anywhere in the output"
+  - "Given `portunus list --project demo-project-483920` is run, when it completes, then stdout shows every matching reference's name/description/purpose/env/injected_as and no value is printed anywhere in the output"
   - "Given zero references match the given project, when list_by_project() or `portunus list` is called, then it returns/prints an empty result, not an error (browse semantics, not fail-closed resolve semantics)"
 
 methodology: tdd

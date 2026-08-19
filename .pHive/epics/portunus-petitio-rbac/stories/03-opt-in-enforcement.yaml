@@ -1,0 +1,82 @@
+id: 03-opt-in-enforcement
+epic: portunus-petitio-rbac
+title: portunus roles enforce on|off|status -- NotAuthorized actually raised, permissive-if-unconfigured posture
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [02-policy-schema-and-audit-only-evaluation]
+
+description: |
+  `portunus roles enforce on|off|status` persists an enforcement marker under `home()` (i.e.
+  PORTUNUS_HOME -- automatically per-`--home`-scoped with zero extra threading, since `home()`
+  already reads PORTUNUS_HOME/DOSTAL_SECRETS_HOME, exactly like roles.json itself). When
+  enforcement is on, `check_injectable()`'s guard clause (Story 02) actually raises a new
+  `NotAuthorized` exception (distinct from `NotInjectable`/`ApprovalRequired`) when
+  `roles.evaluate()` returns `allow=False`. Default: off. The permissive-if-unconfigured posture
+  from Story 02 is unchanged by this story -- a scope with zero PolicyRecords still always
+  allows; enforcement only ever denies within a scope that has at least one configured policy,
+  for a principal not named there (design-discussion.md §5).
+
+acceptance_criteria:
+  - "Given enforcement is off (the default, including on a vault that has never run `roles enforce`), when check_injectable() runs with a would-deny decision, then it still succeeds exactly as Story 02 -- this story changes nothing about default behavior"
+  - "Given `portunus roles enforce on` has been run, and a PolicyRecord scoped to a reference's org names principal=\"claude-ffe\" only, when check_injectable() runs with requester.name==\"codex-other\", then it raises NotAuthorized"
+  - "Given the same enforcement-on state, when check_injectable() runs with requester.name==\"claude-ffe\", then it succeeds"
+  - "Given enforcement is on, and a DIFFERENT reference's scope has zero configured PolicyRecords, when check_injectable() runs against it with any requester, then it succeeds -- permissive-if-unconfigured holds even with enforcement globally on"
+  - "Given `portunus roles enforce status`, when run, then it reports the current on/off state accurately"
+  - "Given two different PORTUNUS_HOME values (--home A and --home B), when enforcement is turned on for A only, then B's enforcement state is unaffected -- proven by a real two-home test, not just documented"
+  - "Given NotAuthorized is raised, when its message is inspected, then it never contains a secret value -- only the reference name/sm_name and requester name, matching NotInjectable/ApprovalRequired's existing message conventions"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the enforce on/off/status command, NotAuthorized actually raising when enforcement is on and decision.allow is False, permissive-if-unconfigured holding under enforcement-on, and per---home isolation of the enforcement marker.
+    agent: tester
+  - id: implement
+    description: NotAuthorized exception, enforcement-marker persistence under home(), `portunus roles enforce on|off|status` CLI subcommand, check_injectable()'s guard clause now actually raises when enforcement is on.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the permissive-if-unconfigured invariant from Story 02 survives unchanged -- enforcement only narrows behavior for scopes with at least one configured policy, never for unconfigured scopes.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/broker.py
+      purpose: "check_injectable()'s Story 02 guard clause gains the actual raise; NotInjectable/ApprovalRequired (broker.py:24-28) are the existing exception style NotAuthorized follows"
+    - path: src/portunus/paths.py
+      purpose: "home() -- PORTUNUS_HOME/DOSTAL_SECRETS_HOME resolution already gives this story per-`--home` isolation for free, no new threading needed"
+    - path: src/portunus/roles.py
+      purpose: "roles.evaluate()/Decision from Story 02 -- this story only adds the raise, no new evaluation logic"
+
+files_to_modify:
+  - file: src/portunus/broker.py
+    change: "NotAuthorized exception; check_injectable() actually raises when enforcement is on and decision.allow is False"
+  - file: src/portunus/roles.py
+    change: "enforcement-marker persistence (enforcement_is_on(), set_enforcement()) under home()"
+  - file: src/portunus/cli.py
+    change: "portunus roles enforce on|off|status subcommand"
+
+design_decisions:
+  - decision: "enforcement marker lives under home(), not a global env var"
+    rationale: "design-discussion.md §6 Story 03 -- keeps enforcement state properly scoped per --home automatically, consistent with roles.json/registry.json/audit.log already living there; zero new plumbing required since home() already resolves PORTUNUS_HOME"
+  - decision: "NotAuthorized is a new, distinct exception"
+    rationale: "design-discussion.md §4 -- callers and error messages need to tell wrong-lifecycle-state, needs-approval, and wrong-identity/scope apart; collapsing into an existing exception would lose that distinction"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "NotAuthorized's message includes only ref.sm_name and requester.name, mirroring NotInjectable's existing message shape exactly -- no new value-exposure surface"
+
+risks:
+  - severity: medium
+    description: "turning enforcement on for a --home whose roles.json has stale/overly-broad policies from earlier casual testing (e.g. Story 02's own test fixtures if ever pointed at a real home) could deny a legitimate real agent unexpectedly"
+    mitigation: "acceptance criteria require a real two-home isolation test; Story 04's live-proof step explicitly confirms the real 393-reference vault's actual roles.json state before ever running `roles enforce on` against it"
+
+references:
+  - path: .pHive/epics/portunus-petitio-rbac/docs/design-discussion.md
+    relevant_excerpt: "§4 (where the check lives), §5 (default posture), §6 Story 03"

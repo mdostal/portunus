@@ -75,7 +75,7 @@ scope decision) — a clear status report plus a wrapped login command, not a ba
 **Slice G — Closeout.** Register `portunus mcp` in this Claude Code environment's
 `~/.claude.json` (`claude mcp add`), verify via a raw stdio JSON-RPC test script (list_tools +
 call each tool) since this session can't attach to a server started mid-conversation.
-Real proof: promote `personalsites-487021-google_generative_ai_api_key` to `enabled` (human
+Real proof: promote `demo-project-483920-google_generative_ai_api_key` to `enabled` (human
 decision, made live), call `portunus_resolve_exec` with a real `curl` against the Gemini API,
 confirm a real API response comes back and the key never appears anywhere in the tool's
 response. README/CONTEXT.md, extend/cross-reference the existing Claude skill, version bump,

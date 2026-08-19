@@ -15,8 +15,8 @@ depends_on:
 description: |
   Full pytest suite green, npm run build clean, then a real end-to-end verification: build an
   actual 2-3-level group hierarchy across a handful of the real references now in the vault
-  (e.g. group personalsites-487021-resend_api_key and personalsites-487021-resend_audience_id
-  under "personalsites-487021/resend", note a related link between two secrets that serve the
+  (e.g. group demo-project-483920-resend_api_key and demo-project-483920-resend_audience_id
+  under "demo-project-483920/resend", note a related link between two secrets that serve the
   same integration), confirm `portunus tree` and the Project Explorer UI both render it
   identically (same normalization), and confirm the ungrouped bucket correctly holds the
   remaining 380 references. README/CONTEXT.md document group/related/portunus tree. Version

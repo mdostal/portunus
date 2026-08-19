@@ -12,11 +12,14 @@
 registry.json
 audit.log
 
-# Hive session-runtime state (harness-generated, not source)
-.pHive/agent-complete/
-.pHive/interrupts/
-.pHive/metrics/
-.pHive/session-effort.txt
+# Hive session-runtime state (harness-generated, not source). `**/` so this
+# also catches stray nested copies (e.g. ui/.pHive/, ui/src-tauri/.pHive/)
+# created when a tool runs with a subdirectory as cwd -- the bare `.pHive/...`
+# form (no `**/`) only anchors at the repo root and previously missed those.
+**/.pHive/agent-complete/
+**/.pHive/interrupts/
+**/.pHive/metrics/
+**/.pHive/session-effort.txt
 
 # python build / runtime
 .venv/

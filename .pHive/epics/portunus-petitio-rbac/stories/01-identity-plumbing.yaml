@@ -1,0 +1,82 @@
+id: 01-identity-plumbing
+epic: portunus-petitio-rbac
+title: thread requester=Identity.from_env() through every real check_injectable() call site -- zero behavior change
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  `check_injectable(name, requester=None)` has taken a `requester` parameter since it was
+  written, but no real call site passes one today (design-discussion.md §1, verified directly
+  against source: resolver.py:71, cli.py:1215, mcp_server.py:611, leakscan.py:134 all call it
+  bare). `Identity.from_env()` is unit-tested in isolation but never invoked at a real call
+  site. This story is pure plumbing -- thread `requester=Identity.from_env()` through all four
+  -- with ZERO behavior change. No policy logic exists yet (that's Story 02); this story only
+  makes identity visible at the chokepoint so Story 02 has something real to evaluate against.
+
+acceptance_criteria:
+  - "Given the full existing pytest suite, when this story's change lands, then every test still passes unmodified -- this story must not require editing a single existing test's expected behavior"
+  - "Given resolver.py's resolve path, when it calls check_injectable(), then it passes requester=Identity.from_env()"
+  - "Given cli.py's `portunus resolve`/`portunus inject`-style commands (the ones that call check_injectable directly, e.g. line 1215), when they run, then they pass requester=Identity.from_env()"
+  - "Given mcp_server.py's resolve tool, when it calls check_injectable(), then it passes requester=Identity.from_env()"
+  - "Given leakscan.py's injectability check (used to decide whether a finding's reference is still live), when it calls check_injectable(), then it passes requester=Identity.from_env()"
+  - "Given DOSTAL_AGENT is unset and USER is set, when any of the above call sites run, then requester resolves to a human Identity matching Identity.from_env()'s existing documented fallback -- no new fallback logic introduced by this story"
+  - "Given AST-inspection of every touched call site, when checked, then requester is passed by keyword (requester=...), not positionally -- matches the existing signature's own keyword-only intent and keeps future diffs readable"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests asserting requester= is actually passed at each of the four call sites (e.g. a spy/mock Broker.check_injectable asserting call args) plus a full-suite green-run baseline capture to prove zero regression.
+    agent: tester
+  - id: implement
+    description: Add requester=Identity.from_env() to the four real call sites. No other logic changes.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/broker.py
+      purpose: "check_injectable(name, requester=None) -- the chokepoint; Identity dataclass + from_env() already defined here (broker.py:33-51)"
+    - path: src/portunus/resolver.py
+      purpose: "resolver.py:71 -- ref = self.broker.check_injectable(name), called bare today"
+    - path: src/portunus/cli.py
+      purpose: "cli.py:1215 -- gated_ref = broker.check_injectable(ref.name), called bare today"
+    - path: src/portunus/mcp_server.py
+      purpose: "mcp_server.py:611 -- gated_ref = broker.check_injectable(ref.name), called bare today"
+    - path: src/portunus/leakscan.py
+      purpose: "leakscan.py:134 -- gated = broker.check_injectable(ref.name), called bare today"
+
+files_to_modify:
+  - file: src/portunus/resolver.py
+    change: pass requester=Identity.from_env() to check_injectable()
+  - file: src/portunus/cli.py
+    change: pass requester=Identity.from_env() to check_injectable()
+  - file: src/portunus/mcp_server.py
+    change: pass requester=Identity.from_env() to check_injectable()
+  - file: src/portunus/leakscan.py
+    change: pass requester=Identity.from_env() to check_injectable()
+
+design_decisions:
+  - decision: split plumbing from policy logic into its own story
+    rationale: "design-discussion.md §1 -- 'does this change any observable output?' has a single, trivially-reviewable correct answer (no) only if plumbing ships alone, before any evaluator exists to act on the now-visible identity"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Identity carries only a name string and a kind literal, never a secret value -- confirmed by re-reading the existing Identity dataclass (broker.py:33), not a new invariant this story introduces"
+
+risks:
+  - severity: low
+    description: a call site missed during this pass would silently continue to evaluate as anonymous once Story 02 ships, weakening enforcement coverage without any visible error
+    mitigation: "acceptance criteria explicitly enumerate all four known real call sites by file:line, verified against source at research-brief.md §1 -- Story 02's own test pass should additionally grep for any bare check_injectable( call remaining, as a regression guard"
+
+references:
+  - path: .pHive/epics/portunus-petitio-rbac/docs/design-discussion.md
+    relevant_excerpt: "§1 -- Two independently-shippable changes, not one"
+  - path: .pHive/epics/portunus-petitio-rbac/docs/research-brief.md
+    relevant_excerpt: "§1 -- verified against source: none of the four real call sites pass requester= today"

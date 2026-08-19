@@ -15,7 +15,7 @@ plural, multi-backend story they were always meant to be.
 
 "Done" means: an agent can ask "what secrets exist for the personal-sites project" and get back
 names, purposes, and injection targets (never values); a human can point Portunus at a real GCP
-project (`personalsites-487021` or `firefly-events-inc`), see what's already in Secret Manager
+project (`demo-project-483920` or `firefly-events-inc`), see what's already in Secret Manager
 there, and register it with one command instead of hand-typing 19 references; and the GCP
 backend authenticates keyless (WIF) instead of relying on ambient `gcloud` credentials.
 
@@ -109,7 +109,7 @@ and names itself.
 **Slice F — ARCA/OSTIARIUS narrative + closeout.** README section rewrite: ARCA is explicitly
 "pluggable backends behind one interface — local-encrypted, GCP Secret Manager (WIF), AWS
 Secrets Manager (stub) — selected per-Reference by `provider`+`project`, not one global
-choice," with a worked discovery example against `personalsites-487021`. OSTIARIUS section
+choice," with a worked discovery example against `demo-project-483920`. OSTIARIUS section
 gains the metadata-query surface (`list`/`discover`) alongside the existing boundary-resolve
 description. CONTEXT.md gains the new vocabulary (`injected_as`, `list_by_project`,
 `GcpProjectBinding`, discovery).
@@ -130,7 +130,7 @@ description. CONTEXT.md gains the new vocabulary (`injected_as`, `list_by_projec
 - **[medium] Real GCP calls (even read-only discovery) in the test suite would be flaky/slow/
   need live credentials in CI.** Mitigation: `discover` tests inject a `runner`/transport
   callable exactly like `GcloudBackend` already does for `subprocess.run` — no test hits real
-  `gcloud`. Live-project discovery against `personalsites-487021`/`firefly-events-inc` is a
+  `gcloud`. Live-project discovery against `demo-project-483920`/`firefly-events-inc` is a
   manual smoke test only, never part of `pytest`.
 - **[medium] Per-project GCP binding config (Open Question 1) adds a second place project
   config can live** (`PORTUNUS_GCP_PROJECT` env var still exists from before this epic).
@@ -177,7 +177,7 @@ description. CONTEXT.md gains the new vocabulary (`injected_as`, `list_by_projec
 
 ```
 VERIFICATION PLAN:
-  Tools: pytest (existing), manual gcloud smoke test (personalsites-487021, firefly-events-inc)
+  Tools: pytest (existing), manual gcloud smoke test (demo-project-483920, firefly-events-inc)
   Automated: Reference metadata fields migrate additively (old registry.json still loads);
     GCP project binding resolves per-Reference; WIF token-mint path never logs/returns the
     token (ported test_auth.py assertions); discover module only ever invokes `secrets list`/
@@ -185,7 +185,7 @@ VERIFICATION PLAN:
     writes state=requested (never enabled); list_by_project returns metadata only, zero-to-many,
     no value access possible from that code path; AWS backend raises BackendError, never a
     silent no-op or wrong-provider fallback.
-  Manual: `portunus discover --provider gcp --project personalsites-487021` against the real
+  Manual: `portunus discover --provider gcp --project demo-project-483920` against the real
     project (read-only) to confirm real secret names/labels surface correctly; `portunus auth
     gcp` smoke test if a real WIF pool/provider is configured (may not be — acceptable to defer
     if no live WIF trust relationship exists yet, since the mint path is fully unit-tested

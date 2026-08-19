@@ -23,7 +23,7 @@ description: |
 
 acceptance_criteria:
   - "Given no gcp-bindings.json exists and PORTUNUS_GCP_PROJECT is set, when a GCP-provider Reference is resolved, then the backend uses that env var's project (unchanged from pre-epic behavior)"
-  - "Given a gcp-bindings.json exists mapping project 'personalsites-487021' to a WIF audience, when a Reference with project=personalsites-487021 is resolved, then GcloudBackend is constructed with that project and a credential_provider using that audience"
+  - "Given a gcp-bindings.json exists mapping project 'demo-project-483920' to a WIF audience, when a Reference with project=demo-project-483920 is resolved, then GcloudBackend is constructed with that project and a credential_provider using that audience"
   - "Given two Reference entries with different project values, when each is resolved in the same process, then each uses its own project's binding, not a single global one"
   - "Given a credential_provider is set and access() is called, when the gcloud subprocess is invoked, then --access-token-file points at a 0600 tempfile that is deleted before access() returns (even on gcloud failure)"
   - "Given gcp-bindings.json is written by this story's code, when checked on disk, then its file mode is 0600"

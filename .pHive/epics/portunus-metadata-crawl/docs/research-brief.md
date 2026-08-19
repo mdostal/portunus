@@ -58,7 +58,7 @@ Checked directly against the real vault (`~/.portunus`, 393 live references, rea
 This inverts the obvious plan. "Clone the GitHub repo named in `repo` and grep for context" has
 **almost nothing to anchor on** — only 1 reference in the entire vault names a repo at all. The
 field that's actually populated, at real scale, is `group` — hierarchical paths like
-`ffe-cicd/event-api/prod` already encoding project/app/env structure a naming-convention parser
+`demo-cicd/event-api/prod` already encoding project/app/env structure a naming-convention parser
 can mine for `description`/`purpose`/`org` inference RIGHT NOW, with zero external access
 required. Real external-repo crawling (GitHub Actions workflows, Vercel config, deploy scripts)
 is genuinely valuable — the user named it directly and it's real, wanted work — but it's gated

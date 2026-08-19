@@ -16,9 +16,9 @@ shared code path); not conflated with the sub-vault-within-one-instance hierarch
   structured-tag pattern `provider`/`project`/`env` already use, not a new nested model.
   ("Vault," in the user's mental model, maps almost exactly to today's `project` +
   `VaultBinding` — one project, one backend/credential config, already supports many apps
-  sharing one project (`ffe-cicd`) or one app owning its own. The missing rung is the level
+  sharing one project (`demo-cicd`) or one app owning its own. The missing rung is the level
   ABOVE project that groups several projects under one organizational umbrella, e.g. "Firefly
-  Events" spanning `ffe-cicd`/`shindig`/`personalsites-487021`.) Also: a metadata provenance
+  Events" spanning `demo-cicd`/`shindig`/`demo-project-483920`.) Also: a metadata provenance
   sidecar (human-set vs. LLM-suggested-unconfirmed), unchanged from the original plan.
 - **Broker (Petitio)** — `broker.py`. Holds the already-inert `Identity`/`requester` seam.
   **Revised**: this epic does NOT wire enforcement into `retag()`/`state`/`drop`. It defines

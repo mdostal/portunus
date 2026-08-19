@@ -114,7 +114,7 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   (`ProjectExplorer.tsx`'s `buildTree()`) is an independent TypeScript implementation of the
   same normalization rule (trim, split on `/`, drop empty segments) — no shared code with the
   Python side, but a shared, written-down contract; verified to agree byte-for-byte against
-  real vault data (both the `personalsites-487021/resend` pair and all 342 `ffe-cicd`
+  real vault data (both the `demo-project-483920/resend` pair and all 342 `demo-cicd`
   secrets, grouped into ~20 real apps by naming convention).
 - **`list_by_project()`** — `Registry`'s metadata-only browse query (zero-to-many, no
   fail-closed single-match requirement — a sibling method to `resolve_by_tags()`, not an
@@ -160,7 +160,7 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `list_sessions()` return namespace/TTL/rotation/`expired` metadata only, never the session
   payload. CLI-exposed as `portunus session store|load|inspect|list|remove` — `load` mirrors `resolve`'s tempfile-only-out discipline exactly (0600 file, path only, never the record on stdout). No UI exposure yet.
 - **`org`** (`registry.py`, portunus-vault-trust-and-access) — an organizational umbrella one
-  level above `project` (e.g. `firefly-events` spanning `ffe-cicd`/`shindig`), IS in
+  level above `project` (e.g. `firefly-events` spanning `demo-cicd`/`shindig`), IS in
   `_STRUCTURED_TAG_FIELDS` (tag-matchable, participates in `retag()`'s collision check
   alongside `provider`/`project`/`env`/`repo`) — unlike `group`, which stays free-text/
   organizational-only and unrelated to identity. Vault Map's org → project drill-down is built
@@ -281,6 +281,14 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/views.py` — custom views (`PORTUNUS_HOME/views.json`), locked from day one.
 - `src/portunus/roles.py` — STUB role/policy schema (`PORTUNUS_HOME/roles.json`) — persists for
   real, consumed by nothing.
+- `src/portunus/agent_setup.py` — `portunus agent init`/`status`: MCP registration + usage-skill
+  install for whatever agent CLIs are on the machine. Zero secret-boundary surface by
+  construction (no `Registry`/`Broker`/`Resolver` import) — local agent-CLI config plumbing only.
+- `src/portunus/update.py` — `portunus update check`/`run`: CLI self-update via the user's own
+  `gh` CLI, pinned to an exact release tag, never a silent unattended install. The passive
+  per-invocation check (`maybe_notify()`, wired into `cli.py::main()`) can only ever notify —
+  structurally incapable of calling `apply_update()`. Same zero-secret-boundary-import
+  discipline as `agent_setup.py`. See `docs/architecture.md` §16.
 - `ui/` — the standalone localhost-only UI (Console / Vault Map / Ask Bar). Every API route
   under `ui/app/api/` shells out to the same gated `portunus` console script rather than
   reimplementing any gating logic in TypeScript — see `ui/lib/portunus.ts`. Also runnable as a
@@ -294,8 +302,12 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   the source those facts are drawn from.
 - `.claude/skills/` — thin Claude skills wrapping the CLI/MCP surface for agent use:
   `portunus-ask` (fetch/inject by description), `portunus-drop` (create a secret, single/bulk),
-  `portunus-vault-setup` (configure/check a project's backend + sync mode). Also installed at
-  Claude Code's user scope (`~/.claude/skills/`) so any session on the machine sees them.
+  `portunus-vault-setup` (configure/check a project's backend + sync mode), `portunus-vault-audit`
+  (crawl/report/leak-scan). The canonical, packaged copy lives at `src/portunus/agent_skills/`
+  (real package data, ships in the installed wheel) — `portunus agent init` installs it to
+  Claude Code's user scope (`~/.claude/skills/`) on any machine, not just this repo.
+  `src/portunus/agent_setup.py` also registers the MCP server for any detected agent CLI
+  (Claude Code, Codex CLI today). See `docs/architecture.md` §15.
 - `.pHive/epics/` — in-flight Hive epics/stories for this repo.
 - `docs/architecture.md` — adopter-facing reference (component diagram, ARCA backend-selection
   precedence, Petitio today-vs-tomorrow, request/resolve sequence) — distinct from `.pHive/`,

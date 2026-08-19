@@ -4,11 +4,11 @@ from portunus import Registry
 
 def test_list_by_project_filters_by_project(home):
     reg = Registry()
-    reg.add("a", "sm-a", provider="gcp", project="personalsites-487021", description="Auth secret")
-    reg.add("b", "sm-b", provider="gcp", project="personalsites-487021", description="Billing key")
+    reg.add("a", "sm-a", provider="gcp", project="demo-project-483920", description="Auth secret")
+    reg.add("b", "sm-b", provider="gcp", project="demo-project-483920", description="Billing key")
     reg.add("c", "sm-c", provider="gcp", project="firefly-events-inc")
 
-    matches = reg.list_by_project("personalsites-487021")
+    matches = reg.list_by_project("demo-project-483920")
     assert sorted(r.name for r in matches) == ["a", "b"]
 
 

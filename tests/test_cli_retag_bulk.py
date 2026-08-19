@@ -8,7 +8,7 @@ from portunus import Registry
 
 
 def _seed(home):
-    """Matches the real ffe-cicd data's shape: every reference already
+    """Matches the real demo-cicd data's shape: every reference already
     carries a unique tags{} entry (its raw SM name) even though provider/
     project/env are often shared -- that per-entry uniqueness is what keeps
     a bulk repo backfill from colliding two different secrets into the same
@@ -17,16 +17,16 @@ def _seed(home):
     with a sibling becomes identical too -- see the dedicated collision test
     below, which constructs that case on purpose rather than by accident."""
     reg = Registry()
-    reg.add("a", "sm-a", group="ffe-cicd/event-api/prod", tags={"key": "sm-a"})
-    reg.add("b", "sm-b", group="ffe-cicd/event-api/dev", tags={"key": "sm-b"})
-    reg.add("c", "sm-c", group="ffe-cicd/social-engine/prod", tags={"key": "sm-c"})
+    reg.add("a", "sm-a", group="demo-cicd/event-api/prod", tags={"key": "sm-a"})
+    reg.add("b", "sm-b", group="demo-cicd/event-api/dev", tags={"key": "sm-b"})
+    reg.add("c", "sm-c", group="demo-cicd/social-engine/prod", tags={"key": "sm-c"})
     reg.add("d", "sm-d", group="")  # no group -- must never match any prefix
     return reg
 
 
 def test_retag_bulk_updates_only_matching_prefix(home, capsys):
     _seed(home)
-    rc = main(["retag-bulk", "--group-prefix", "ffe-cicd/event-api", "--repo", "event-api"])
+    rc = main(["retag-bulk", "--group-prefix", "demo-cicd/event-api", "--repo", "event-api"])
     assert rc == 0
     reg = Registry()
     assert reg.require("a").repo == "event-api"
@@ -37,7 +37,7 @@ def test_retag_bulk_updates_only_matching_prefix(home, capsys):
 
 def test_retag_bulk_dry_run_makes_zero_writes(home, capsys):
     _seed(home)
-    rc = main(["retag-bulk", "--group-prefix", "ffe-cicd/event-api", "--repo", "event-api", "--dry-run"])
+    rc = main(["retag-bulk", "--group-prefix", "demo-cicd/event-api", "--repo", "event-api", "--dry-run"])
     assert rc == 0
     reg = Registry()
     assert reg.require("a").repo == ""
@@ -46,7 +46,7 @@ def test_retag_bulk_dry_run_makes_zero_writes(home, capsys):
 
 def test_retag_bulk_dry_run_reports_what_would_change(home, capsys):
     _seed(home)
-    rc = main(["retag-bulk", "--group-prefix", "ffe-cicd/event-api", "--repo", "event-api",
+    rc = main(["retag-bulk", "--group-prefix", "demo-cicd/event-api", "--repo", "event-api",
                "--dry-run", "--json"])
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
@@ -55,7 +55,7 @@ def test_retag_bulk_dry_run_reports_what_would_change(home, capsys):
 
 def test_retag_bulk_json_reports_updated(home, capsys):
     _seed(home)
-    rc = main(["retag-bulk", "--group-prefix", "ffe-cicd/event-api", "--repo", "event-api", "--json"])
+    rc = main(["retag-bulk", "--group-prefix", "demo-cicd/event-api", "--repo", "event-api", "--json"])
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert sorted(out["updated"]) == ["a", "b"]
@@ -76,7 +76,7 @@ def test_retag_bulk_one_collision_does_not_abort_the_rest(home, capsys):
     # a and b share provider/project with no other distinguishing tag --
     # once both get the same repo, they become genuinely indistinguishable
     # by structured tags (a real, correct collision, not a bug). c carries
-    # its own distinguishing tag (matching the real ffe-cicd data's shape),
+    # its own distinguishing tag (matching the real demo-cicd data's shape),
     # so it updates cleanly regardless of what happens to a/b.
     reg.add("a", "sm-a", group="g/x", provider="gcp", project="p", repo="taken")
     reg.add("b", "sm-b", group="g/x", provider="gcp", project="p")
@@ -90,7 +90,7 @@ def test_retag_bulk_one_collision_does_not_abort_the_rest(home, capsys):
 
 def test_retag_bulk_source_files(home, capsys):
     _seed(home)
-    rc = main(["retag-bulk", "--group-prefix", "ffe-cicd/event-api",
+    rc = main(["retag-bulk", "--group-prefix", "demo-cicd/event-api",
                "--source-files", "docker-compose.yml,ci.yml"])
     assert rc == 0
     ref = Registry().require("a")
