@@ -258,8 +258,8 @@
     <h2 class="display">Install</h2>
     <p class="section-lede">Run it as a CLI/MCP tool, a local web UI, or a native macOS menu-bar app.</p>
 
-    <div class="install-card"><span class="comment"># CLI + MCP server</span>
-pip install portunus
+    <div class="install-card"><span class="comment"># CLI + MCP server + agent skills, one shot</span>
+curl -fsSL https://mdostal.github.io/portunus/install.sh | bash
 portunus reg add my-secret sm-my-secret --project my-proj
 portunus resolve "Authorization: Bearer {{secret:my-secret}}"</div>
 
