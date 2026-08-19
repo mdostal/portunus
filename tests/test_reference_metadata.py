@@ -310,10 +310,10 @@ def test_two_references_differing_only_by_repo_do_not_collide(home):
     ambiguous, proving repo genuinely participates in the collision-check
     identity tuple the same way provider/project/env/scope/kind do."""
     reg = Registry()
-    reg.add("a", "sm-a", provider="gcp", project="ffe-cicd", repo="event-api")
-    reg.add("b", "sm-b", provider="gcp", project="ffe-cicd", repo="social-engine")
-    ref_a = reg.resolve_by_tags(provider="gcp", project="ffe-cicd", repo="event-api")
-    ref_b = reg.resolve_by_tags(provider="gcp", project="ffe-cicd", repo="social-engine")
+    reg.add("a", "sm-a", provider="gcp", project="demo-cicd", repo="event-api")
+    reg.add("b", "sm-b", provider="gcp", project="demo-cicd", repo="social-engine")
+    ref_a = reg.resolve_by_tags(provider="gcp", project="demo-cicd", repo="event-api")
+    ref_b = reg.resolve_by_tags(provider="gcp", project="demo-cicd", repo="social-engine")
     assert ref_a.name == "a"
     assert ref_b.name == "b"
 

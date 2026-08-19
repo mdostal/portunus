@@ -28,7 +28,7 @@ Two pieces:
 - `uv` is installed (`0.6.14`) and already the working mechanism for local Python MCP servers
   in this Claude Code environment.
 - The real Gemini secret to use as the closeout proof:
-  `personalsites-487021-google_generative_ai_api_key` (sm_name `GOOGLE_GENERATIVE_AI_API_KEY`),
+  `demo-project-483920-google_generative_ai_api_key` (sm_name `GOOGLE_GENERATIVE_AI_API_KEY`),
   currently `state=requested` from the earlier bulk-discovery -- needs promotion to `enabled`
   (a human decision, made live in this conversation, same pattern as the Resend key earlier)
   before it's usable.

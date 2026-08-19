@@ -19,7 +19,7 @@ description: |
   later, clearly marked not-built), and the request/resolve sequence. Version bump (minor).
   Live proof: confirm a real project can be bound to each of the 5 new stub kinds and fails
   closed with the correct message; confirm SyncingBackend's offline fallback against a real
-  simulated network failure for the already-cached personalsites-487021 project.
+  simulated network failure for the already-cached demo-project-483920 project.
 
 acceptance_criteria:
   - "Given the full pytest suite, when run, then it stays green"
@@ -27,7 +27,7 @@ acceptance_criteria:
   - "Given README.md's component table, when read, then ARCA/Petitio rows accurately describe the post-epic reality, not aspiration"
   - "Given docs/architecture.md, when read, then all 4 diagrams render as valid Mermaid and each is referenced from README/CONTEXT.md"
   - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped minor version in lockstep"
-  - "Given the live proof, when run against the real vault, then binding personalsites-487021's already-cached reference to sync_mode=cached and simulating a network failure (e.g. temporarily invalid gcloud account) demonstrates a stale-offline serve, and the project is restored to its real working configuration afterward"
+  - "Given the live proof, when run against the real vault, then binding demo-project-483920's already-cached reference to sync_mode=cached and simulating a network failure (e.g. temporarily invalid gcloud account) demonstrates a stale-offline serve, and the project is restored to its real working configuration afterward"
 
 methodology: classic
 steps:
@@ -35,7 +35,7 @@ steps:
     description: Run full pytest + npm build; write docs/architecture.md + diagrams; update README/CONTEXT.md; apply version bump; write CHANGELOG entry; run the live proofs.
     agent: developer
   - id: review
-    description: Confirm the live proof's own output never contains a secret value, and that personalsites-487021's real configuration is fully restored afterward, not left in a broken/simulated state.
+    description: Confirm the live proof's own output never contains a secret value, and that demo-project-483920's real configuration is fully restored afterward, not left in a broken/simulated state.
     agent: reviewer
     depends_on: [implement]
   - id: integrate
@@ -68,7 +68,7 @@ files_to_modify:
     change: Version bump
 
 design_decisions:
-  - decision: Live proof restores personalsites-487021 to its real working config afterward
+  - decision: Live proof restores demo-project-483920 to its real working config afterward
     rationale: "This is the real production vault, not a scratch environment -- matches this session's established discipline of never leaving real state in a simulated-failure condition"
 
 cross_cutting:

@@ -208,7 +208,7 @@ posture this whole system already enforces everywhere else.
 ## 7. Provenance metadata: repo/source_files are OSTIARIUS-layer, not a new store
 
 `repo` and `source_files` (`registry.py`) answer *which git repo, and which file in it, actually
-consumes a secret* — a real gap found by inspecting the real ffe-cicd data: 342 references, one
+consumes a secret* — a real gap found by inspecting the real demo-cicd data: 342 references, one
 shared GCP project spanning many repos, and nothing distinguishing which repo owned which
 secret. This is registry metadata, the same layer `group`/`related`/`description` already live
 on — it doesn't add a new component, doesn't change ARCA's backend-selection precedence (§2),
@@ -273,7 +273,7 @@ structured-tag pattern `provider`/`project`/`env`/`repo` already use, added to
 up immediately) rather than a new nested hierarchy object. `VaultBinding` + `project` already
 gave "each vault is its own thing" (per-project backend/credential, already proven for GCP
 multi-account); `org` fills the one real missing rung — grouping several projects under one
-organizational umbrella (e.g. `firefly-events` spanning `ffe-cicd`/`shindig`).
+organizational umbrella (e.g. `firefly-events` spanning `demo-cicd`/`shindig`).
 
 **Sub-vault navigation is a UI concept, not a new store.** The Standalone UI's Vault Map
 renders an org → project drill-down over the `org`/`project` fields — no new backend, no new

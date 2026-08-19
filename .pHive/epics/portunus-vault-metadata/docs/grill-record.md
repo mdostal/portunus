@@ -47,7 +47,7 @@
 - **U1** — §3 Slice C's `--register` flow says a discovered secret becomes a new `Reference`
   with `sm_name` set from the discovered name, but never says what the local `name` (the
   registry's actual dict key, distinct from `sm_name`) becomes. Two different GCP projects can
-  legally have same-named secrets (e.g. both `personalsites-487021` and `firefly-events-inc`
+  legally have same-named secrets (e.g. both `demo-project-483920` and `firefly-events-inc`
   could have an `API_KEY`) — using the bare discovered name as `name` risks a second discovery
   run silently colliding with/overwriting an unrelated reference from a different project.
   - Draft location: §3 Slice C

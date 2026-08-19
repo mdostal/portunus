@@ -32,7 +32,7 @@ independently-shippable changes, not one (see Story 01).
 
 ## 2. Real vault shape (grounds the threat model and the scope design)
 
-393 real references today: 342 under `ffe-cicd`, 36 under `personalsites-487021`, 10 under
+393 real references today: 342 under `demo-cicd`, 36 under `demo-project-483920`, 10 under
 `coin-finder`, plus a handful of others (`mdostal.com`, `shared`, `demo-app`). One developer,
 one machine, multiple concurrently-running AI coding agents (Claude Code, Codex, etc.) against
 the same shared local vault. `PORTUNUS_HOME`/`--home` already gives full instance-level

@@ -14,9 +14,9 @@ description: |
   mirrors it.
 
 acceptance_criteria:
-  - "Given `portunus tree --project ffe-cicd` (no --by), when run, then output is byte-identical to today's group-keyed tree -- zero behavior change for the default"
-  - "Given `portunus tree --project ffe-cicd --by repo`, when run, then references are nested under their repo field instead of group, and any reference with repo='' lands under '(no repo set)' -- never silently dropped, same non-drop guarantee --by group already has for ungrouped refs"
-  - "Given `portunus_tree(project='ffe-cicd', by='repo')` (MCP), when called, then it returns the same repo-keyed shape as the CLI's --json output"
+  - "Given `portunus tree --project demo-cicd` (no --by), when run, then output is byte-identical to today's group-keyed tree -- zero behavior change for the default"
+  - "Given `portunus tree --project demo-cicd --by repo`, when run, then references are nested under their repo field instead of group, and any reference with repo='' lands under '(no repo set)' -- never silently dropped, same non-drop guarantee --by group already has for ungrouped refs"
+  - "Given `portunus_tree(project='demo-cicd', by='repo')` (MCP), when called, then it returns the same repo-keyed shape as the CLI's --json output"
   - "Given `--by` with an invalid value, when run, then argparse rejects it with a clear choices error, not a silent fallback"
 
 methodology: tdd

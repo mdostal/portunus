@@ -43,7 +43,7 @@ reference's rotation would target, when configured — Vercel/GitHub/Stripe toda
 surfaces both in its bundle. Deeper consumer discovery (parsing a real `.github/workflows/*.yml`
 or `vercel.json` for an env var reference) is real, wanted, explicitly out of v1 — gated on
 `repo` having real fill-rate first (§3 below), which this epic's own crawl bundle can help
-build toward (an LLM reading a `group` like `ffe-cicd/event-api/prod` can reasonably propose a
+build toward (an LLM reading a `group` like `demo-cicd/event-api/prod` can reasonably propose a
 `repo` guess for a human to confirm, same suggest/confirm path as any other field).
 
 ## 4. The report is a renderer over whatever the vault already knows, not gated on the crawl

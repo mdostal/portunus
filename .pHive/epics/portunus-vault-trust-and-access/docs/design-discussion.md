@@ -13,10 +13,10 @@ The user's mental model of "vault" turns out to map closely onto what already ex
 `VaultBinding` + `project` already give "each vault is its own thing and place" (its own
 backend, its own credential — GCP multi-account already proves this works, one project/vault
 per binding) and already support both directions the user described — many apps sharing one
-project (`ffe-cicd` hosting several apps' secrets under one binding) or one app owning its own
+project (`demo-cicd` hosting several apps' secrets under one binding) or one app owning its own
 project outright. What's genuinely missing is the level ABOVE project: nothing today groups
-several projects under one organizational umbrella (e.g. "Firefly Events" spanning `ffe-cicd`/
-`shindig`/`personalsites-487021`), which is exactly the level the user wants to grant broad
+several projects under one organizational umbrella (e.g. "Firefly Events" spanning `demo-cicd`/
+`shindig`/`demo-project-483920`), which is exactly the level the user wants to grant broad
 ("dev access across the entirety of Firefly Events") vs. narrow ("admin of Shindig specifically,
 but only prod-release rights there") permissions at, eventually.
 

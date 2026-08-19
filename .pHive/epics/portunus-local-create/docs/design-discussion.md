@@ -7,7 +7,7 @@ everything in the vault (v0.11.0) but cannot create a new secret or change its l
 without falling back to the CLI. This epic adds exactly two MCP tools — `portunus_drop`
 (create, local-vault only) and `portunus_state` (lifecycle transition) — so an agent can run the
 full local create → organize → enable → inject loop entirely through MCP. Proven against a real
-worked example: setting up a "gig tracker" project's secrets locally, the way `ffe-cicd` was
+worked example: setting up a "gig tracker" project's secrets locally, the way `demo-cicd` was
 organized earlier, but local-only.
 
 GCP Secret Manager creation (`gcloud secrets create`), an AWS write path, and any bidirectional
@@ -114,7 +114,7 @@ context) but call for opposite responses.
 
 Yes — `portunus_drop`'s signature includes `group`/`related`/`tags` from the start (§2, Slice A),
 mirroring `cmd_drop`'s own full flag set. This is a direct lesson from the `Registry.retag()`
-collision footgun hit while organizing `ffe-cicd`: bulk-identical-tag secrets refuse ANY retag
+collision footgun hit while organizing `demo-cicd`: bulk-identical-tag secrets refuse ANY retag
 until each gets a distinguishing tag/group. A "gig tracker" project set up through repeated
 `portunus_drop` calls, each with real `group`/`tags` from the first call, never needs a bulk
 reorganization pass at all — the footgun simply doesn't apply because nothing is ever

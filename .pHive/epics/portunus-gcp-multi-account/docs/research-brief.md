@@ -2,8 +2,8 @@
 
 ## Requirement
 
-User hit a real bug live: running `gcloud auth login` to authenticate `mdostal@ff.events`
-silently deactivated `mathew.dostal@gmail.com` for any ambient `gcloud` command — because
+User hit a real bug live: running `gcloud auth login` to authenticate `work@example.com`
+silently deactivated `personal@example.com` for any ambient `gcloud` command — because
 `gcloud`'s CLI has a single mutable "active account" pointer, and every Portunus GCP code path
 (`GcloudBackend.access()`, `discover.py::list_gcp_secrets()`) shells out to bare `gcloud`
 commands with no explicit identity, so they silently follow whichever account happens to be
@@ -18,16 +18,16 @@ explicitly gates their next milestone (a real formal-release test session).
 $ gcloud auth list
      Credentialed Accounts
 ACTIVE  ACCOUNT
-        mathew.dostal@gmail.com
-*       mdostal@ff.events
+        personal@example.com
+*       work@example.com
 
-$ gcloud projects list --account=mathew.dostal@gmail.com --format="table(projectId,name)"
+$ gcloud projects list --account=personal@example.com --format="table(projectId,name)"
 PROJECT_ID                      NAME
 firefly-events-inc              Firefly Events Inc
 ...  <works perfectly -- the credential is fully intact>
 ```
 
-`mathew.dostal@gmail.com` was never logged out at the credential-store level — `gcloud` already
+`personal@example.com` was never logged out at the credential-store level — `gcloud` already
 holds multiple credentialed accounts simultaneously; only the *default* identity used by a
 command with no explicit `--account=` flag changed. Every real `gcloud` invocation already
 accepts `--account=<email>` to select which locally-stored credential to use, per call,

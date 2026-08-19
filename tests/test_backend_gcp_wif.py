@@ -52,26 +52,26 @@ def test_legacy_bindings_file_without_account_key_still_loads(home):
 
 
 def test_env_fallback_binding_has_empty_account(home, monkeypatch):
-    monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "personalsites-487021")
+    monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "demo-project-483920")
     bindings = load_vault_bindings()
-    assert bindings["personalsites-487021"].account == ""
+    assert bindings["demo-project-483920"].account == ""
 
 
 def test_load_vault_bindings_falls_back_to_env_when_no_file(home, monkeypatch):
-    monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "personalsites-487021")
+    monkeypatch.setenv("PORTUNUS_GCP_PROJECT", "demo-project-483920")
     monkeypatch.setenv("PORTUNUS_GCP_WIF_AUDIENCE", "//iam.googleapis.com/projects/1/.../providers/p")
     bindings = load_vault_bindings()
-    assert bindings["personalsites-487021"].project == "personalsites-487021"
-    assert bindings["personalsites-487021"].wif_audience.startswith("//iam.googleapis.com")
+    assert bindings["demo-project-483920"].project == "demo-project-483920"
+    assert bindings["demo-project-483920"].wif_audience.startswith("//iam.googleapis.com")
 
 
 def test_load_vault_bindings_reads_bindings_file(home):
     save_vault_bindings({
-        "personalsites-487021": VaultBinding("personalsites-487021", "aud-a"),
+        "demo-project-483920": VaultBinding("demo-project-483920", "aud-a"),
         "firefly-events-inc": VaultBinding("firefly-events-inc", "aud-b"),
     })
     bindings = load_vault_bindings()
-    assert bindings["personalsites-487021"].wif_audience == "aud-a"
+    assert bindings["demo-project-483920"].wif_audience == "aud-a"
     assert bindings["firefly-events-inc"].wif_audience == "aud-b"
 
 
@@ -91,8 +91,8 @@ def test_backend_uses_project_scoped_binding_over_default(home, monkeypatch):
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     bindings = {
-        "personalsites-487021": VaultBinding(
-            "personalsites-487021",
+        "demo-project-483920": VaultBinding(
+            "demo-project-483920",
             "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/p",
         ),
     }
@@ -100,13 +100,13 @@ def test_backend_uses_project_scoped_binding_over_default(home, monkeypatch):
         bindings=bindings, runner=runner, audit=AuditChain(),
     )
     # Patch the internal provider's transport so mint() never hits the network.
-    provider = backend._binding_providers["personalsites-487021"]
+    provider = backend._binding_providers["demo-project-483920"]
     provider.transport = _mocked_transport("GCP.TOKEN.A")
     provider.token_source = StaticOIDC()
 
-    backend.access("dostal-x", project="personalsites-487021")
+    backend.access("dostal-x", project="demo-project-483920")
     cmd = observed[0]
-    assert "--project=personalsites-487021" in cmd
+    assert "--project=demo-project-483920" in cmd
     assert any(arg.startswith("--access-token-file=") for arg in cmd)
 
 
@@ -119,19 +119,19 @@ def test_two_different_projects_in_same_process_use_own_bindings(home, monkeypat
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     bindings = {
-        "personalsites-487021": VaultBinding("personalsites-487021", "aud-personal"),
+        "demo-project-483920": VaultBinding("demo-project-483920", "aud-personal"),
         "firefly-events-inc": VaultBinding("firefly-events-inc", "aud-firefly"),
     }
     backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
-    for proj, token in (("personalsites-487021", "TOKEN.A"), ("firefly-events-inc", "TOKEN.B")):
+    for proj, token in (("demo-project-483920", "TOKEN.A"), ("firefly-events-inc", "TOKEN.B")):
         provider = backend._binding_providers[proj]
         provider.transport = _mocked_transport(token)
         provider.token_source = StaticOIDC()
 
-    backend.access("secret-a", project="personalsites-487021")
+    backend.access("secret-a", project="demo-project-483920")
     backend.access("secret-b", project="firefly-events-inc")
 
-    assert "--project=personalsites-487021" in observed[0]
+    assert "--project=demo-project-483920" in observed[0]
     assert "--project=firefly-events-inc" in observed[1]
 
 
@@ -243,11 +243,11 @@ def test_build_wires_bindings_into_gcloud_backend(home, monkeypatch):
     """cli._build() end-to-end: PORTUNUS_BACKEND=gcloud picks up gcp-bindings.json."""
     from portunus.cli import _build
 
-    save_vault_bindings({"personalsites-487021": VaultBinding("personalsites-487021", "aud-x")})
+    save_vault_bindings({"demo-project-483920": VaultBinding("demo-project-483920", "aud-x")})
     monkeypatch.setenv("PORTUNUS_BACKEND", "gcloud")
     _registry, _audit, _broker, resolver = _build()
     assert isinstance(resolver.backend, GcloudBackend)
-    assert "personalsites-487021" in resolver.backend._binding_providers
+    assert "demo-project-483920" in resolver.backend._binding_providers
 
 
 def test_no_binding_and_no_credential_provider_falls_back_to_ambient_gcloud(home, monkeypatch):

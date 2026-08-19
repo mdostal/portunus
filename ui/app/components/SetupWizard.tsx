@@ -146,7 +146,7 @@ export default function SetupWizard({ onDone }: { onDone: () => void }) {
               <span>project name</span>
               <input
                 className="field"
-                placeholder="e.g. mdostal.com, ffe-cicd, shindig"
+                placeholder="e.g. mdostal.com, demo-cicd, shindig"
                 value={projectName}
                 disabled={bindingBusy}
                 onChange={(e) => setProjectName(e.target.value)}

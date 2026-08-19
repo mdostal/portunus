@@ -54,15 +54,15 @@ def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, 
     from portunus.backend import VaultBinding, save_vault_bindings
 
     save_vault_bindings({
-        "personalsites-487021": VaultBinding("personalsites-487021", account="mathew.dostal@gmail.com"),
-        "ffe-cicd": VaultBinding("ffe-cicd", account="mdostal@ff.events"),
+        "demo-project-483920": VaultBinding("demo-project-483920", account="personal@example.com"),
+        "demo-cicd": VaultBinding("demo-cicd", account="work@example.com"),
     })
 
     def fake_run(cmd, capture_output, text, timeout):
         assert cmd == ["gcloud", "auth", "list", "--format=json"]
         return SimpleNamespace(
             returncode=0,
-            stdout=json.dumps([{"account": "mathew.dostal@gmail.com", "status": "ACTIVE"}]),
+            stdout=json.dumps([{"account": "personal@example.com", "status": "ACTIVE"}]),
             stderr="",
         )
 
@@ -72,8 +72,8 @@ def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, 
     rc = main(["auth", "status"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "personalsites-487021" in out and "authenticated" in out
-    assert "ffe-cicd" in out and "MISSING" in out
+    assert "demo-project-483920" in out and "authenticated" in out
+    assert "demo-cicd" in out and "MISSING" in out
 
 
 def test_auth_status_json_shape(home, monkeypatch, capsys):

@@ -10,22 +10,22 @@ need more."*
 
 ## 2. The real data, checked directly, not assumed
 
-`portunus list --project ffe-cicd --json` — 342 references, 30 distinct `group` values. Every
+`portunus list --project demo-cicd --json` — 342 references, 30 distinct `group` values. Every
 single one of them:
 
 - `state="requested"` — a `discover --register` placeholder, never reviewed by a human
 - `description`, `purpose`, `kind`, `related`, `injected_as` — **all empty**, on all 342
 - `tags` — only `{"key": "<raw SM name>"}`, the mechanical discovery output
-- `group` — a free-text path like `ffe-cicd/event-api/prod`, `ffe-cicd/social-engine/dev`
+- `group` — a free-text path like `demo-cicd/event-api/prod`, `demo-cicd/social-engine/dev`
 
 `related` (the one existing cross-reference field) is populated on exactly **2** references in
 the *entire* vault (a Resend API-key/audience-ID pair) — not a usable substrate for a
 relationship graph today, at any scale.
 
 **What this confirms:** the user's complaint is accurate and specific. `group` already captures
-a rough service/env hierarchy (`ffe-cicd/<service>/<env>`) and `portunus tree` already renders it
+a rough service/env hierarchy (`demo-cicd/<service>/<env>`) and `portunus tree` already renders it
 — but there is no structured field for *which git repo* consumes a secret (distinct from the GCP
-*project*, which is one shared umbrella (`ffe-cicd`) spanning many repos/services), and *nothing
+*project*, which is one shared umbrella (`demo-cicd`) spanning many repos/services), and *nothing
 at all* for *which file* in that repo references it. `group`'s second path segment (`event-api`,
 `social-engine`, `monitoring`, ...) almost certainly **is** the repo name in practice, informally
 — but it's unstructured free text, not queryable/filterable as its own dimension the way
@@ -57,7 +57,7 @@ at all* for *which file* in that repo references it. `group`'s second path segme
   questions (Portunus would need read access to arbitrary other repos) — not what was asked.
   `source_files` ships as free-text, human-filled metadata, same posture as `description`/
   `purpose` today.
-- **Auto-applying a bulk `repo` backfill to the real 342 ffe-cicd entries** as part of this
+- **Auto-applying a bulk `repo` backfill to the real 342 demo-cicd entries** as part of this
   epic's own "live proof." The `group`-second-segment-as-repo heuristic is a reasonable
   *default*, but it's a guess about real production infrastructure this session doesn't have
   independent confirmation of — mass-editing 342 real references on that guess, unconfirmed, is
@@ -75,5 +75,5 @@ tree view; `related` rendered as clickable chips instead of plain text (cheap, r
 what already exists rather than building a new visualization).
 
 **Out of scope, explicitly deferred:** a real relationship graph visualization (§4); automated
-file-reference discovery (§4); running the bulk backfill against real ffe-cicd data
+file-reference discovery (§4); running the bulk backfill against real demo-cicd data
 unsupervised (§4, offered as a follow-up instead).

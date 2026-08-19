@@ -5,7 +5,7 @@ description: >
   north star: richer Reference metadata (description/purpose/injected_as), a real
   Workload-Identity-Federation-authenticated multi-project GCP Secret Manager backend
   (porting tested code from origin/dos-81-keyless-wif), read-only GCP secret discovery
-  (validated against the real personalsites-487021 and firefly-events-inc projects), an
+  (validated against the real demo-project-483920 and firefly-events-inc projects), an
   LLM-facing metadata-only "list keys for project" query, and a stubbed-only AWS backend.
 target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
 methodology: tdd

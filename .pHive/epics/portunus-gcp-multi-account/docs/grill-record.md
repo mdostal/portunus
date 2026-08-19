@@ -11,8 +11,8 @@
 
 - Vocabulary mismatches: clean
 - Hidden assumptions: clean (the `--account=` mechanism was empirically verified live this
-  session, not just assumed -- `gcloud secrets list --account=mdostal@ff.events
-  --project=ffe-cicd` already ran successfully during research)
+  session, not just assumed -- `gcloud secrets list --account=work@example.com
+  --project=demo-cicd` already ran successfully during research)
 - Unresolved tensions: 1 finding
 - Convention violations: clean
 - Posture mismatches: clean

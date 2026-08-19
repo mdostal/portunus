@@ -38,7 +38,7 @@ existing per-project config precedent this epic generalizes: a `PORTUNUS_HOME/gc
 file, `{project: {wif_audience, account}}`, loaded into a `Dict[str, GcpProjectBinding]`, 0600 on
 disk. `portunus bindings set/show` (cli.py) is the existing CLI surface. **This file is real,
 already populated for the two real projects in production use this session**
-(`personalsites-487021` → `mathew.dostal@gmail.com`, `ffe-cicd` → `mdostal@ff.events`) — any
+(`demo-project-483920` → `personal@example.com`, `demo-cicd` → `work@example.com`) — any
 format change here needs to keep reading the existing file correctly, not just a fresh-install
 happy path.
 
@@ -67,8 +67,8 @@ component exists yet anywhere in `ui/app/`.
 
 1. **Where does per-project backend choice live?** The existing `gcp-bindings.json` precedent is
    the natural home — extend its per-project schema with a `backend` field (default `"gcp"` for
-   every existing entry, so the real, already-populated file for `personalsites-487021`/
-   `ffe-cicd` keeps working with zero migration) and a `sync_mode` field (default `"direct"` —
+   every existing entry, so the real, already-populated file for `demo-project-483920`/
+   `demo-cicd` keeps working with zero migration) and a `sync_mode` field (default `"direct"` —
    today's live-fetch-every-time behavior, unchanged for every existing entry). This avoids a
    file-format migration entirely; old entries just get the new fields' defaults on read.
 
@@ -99,7 +99,7 @@ used throughout `backend.py`/`discover.py`, no new SDK to validate.
 ## inconsistency_risk_signals
 
 - Real risk: any change to `gcp-bindings.json`'s read path must be proven, not assumed, to still
-  correctly load the actual production file for `personalsites-487021`/`ffe-cicd` — this needs an
+  correctly load the actual production file for `demo-project-483920`/`demo-cicd` — this needs an
   explicit test against that exact existing shape, not just a fresh-fixture test.
 - The module docstring in backend.py already asserts "selected per-Reference by provider+project"
   as if it were true today — grill should confirm the design doc doesn't just restate that

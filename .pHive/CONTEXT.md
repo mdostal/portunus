@@ -114,7 +114,7 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   (`ProjectExplorer.tsx`'s `buildTree()`) is an independent TypeScript implementation of the
   same normalization rule (trim, split on `/`, drop empty segments) — no shared code with the
   Python side, but a shared, written-down contract; verified to agree byte-for-byte against
-  real vault data (both the `personalsites-487021/resend` pair and all 342 `ffe-cicd`
+  real vault data (both the `demo-project-483920/resend` pair and all 342 `demo-cicd`
   secrets, grouped into ~20 real apps by naming convention).
 - **`list_by_project()`** — `Registry`'s metadata-only browse query (zero-to-many, no
   fail-closed single-match requirement — a sibling method to `resolve_by_tags()`, not an
@@ -160,7 +160,7 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   `list_sessions()` return namespace/TTL/rotation/`expired` metadata only, never the session
   payload. CLI-exposed as `portunus session store|load|inspect|list|remove` — `load` mirrors `resolve`'s tempfile-only-out discipline exactly (0600 file, path only, never the record on stdout). No UI exposure yet.
 - **`org`** (`registry.py`, portunus-vault-trust-and-access) — an organizational umbrella one
-  level above `project` (e.g. `firefly-events` spanning `ffe-cicd`/`shindig`), IS in
+  level above `project` (e.g. `firefly-events` spanning `demo-cicd`/`shindig`), IS in
   `_STRUCTURED_TAG_FIELDS` (tag-matchable, participates in `retag()`'s collision check
   alongside `provider`/`project`/`env`/`repo`) — unlike `group`, which stays free-text/
   organizational-only and unrelated to identity. Vault Map's org → project drill-down is built

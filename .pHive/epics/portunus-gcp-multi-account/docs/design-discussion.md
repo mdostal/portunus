@@ -15,9 +15,9 @@ injection use the right identity per project regardless of which account gcloud 
 
 ## 2. What I Found
 
-See `docs/research-brief.md`. Verified directly: `mathew.dostal@gmail.com`'s credential was
-never destroyed by logging into `mdostal@ff.events` — `gcloud projects list
---account=mathew.dostal@gmail.com` works perfectly. The break is purely "no code path passes
+See `docs/research-brief.md`. Verified directly: `personal@example.com`'s credential was
+never destroyed by logging into `work@example.com` — `gcloud projects list
+--account=personal@example.com` works perfectly. The break is purely "no code path passes
 `--account=`." Two real gaps found: `discover.py::list_gcp_secrets()` has no account parameter
 at all (100% ambient-dependent), and there is no CLI command to write `gcp-bindings.json` —
 only `save_gcp_bindings()`, called by tests, exists.
@@ -54,8 +54,8 @@ is a local CLI reading the operator's own `gcp-bindings.json` (already a `0600` 
 the hard boundary everywhere.
 
 **Slice E — Closeout.** Verify multiple accounts really work concurrently: discover
-`ffe-cicd` with `account=mdostal@ff.events` and `personalsites-487021` with
-`account=mathew.dostal@gmail.com` in the same process/session, back to back, both succeeding
+`demo-cicd` with `account=work@example.com` and `demo-project-483920` with
+`account=personal@example.com` in the same process/session, back to back, both succeeding
 regardless of gcloud's ambient active-account state. README/CONTEXT.md, version bump,
 CHANGELOG.
 
@@ -101,10 +101,10 @@ VERIFICATION PLAN:
     list_gcp_secrets() appends --account= when given; portunus bindings set upserts without
     clobbering the other field; portunus bindings show never prints a WIF audience mixed with
     a value (there is no value in scope here) but does print account/audience presence.
-  Manual: portunus bindings set ffe-cicd --account mdostal@ff.events; portunus bindings set
-    personalsites-487021 --account mathew.dostal@gmail.com; portunus discover --project
-    ffe-cicd (real, live) followed immediately by portunus discover --project
-    personalsites-487021 (real, live) in the same shell session, both succeeding regardless of
+  Manual: portunus bindings set demo-cicd --account work@example.com; portunus bindings set
+    demo-project-483920 --account personal@example.com; portunus discover --project
+    demo-cicd (real, live) followed immediately by portunus discover --project
+    demo-project-483920 (real, live) in the same shell session, both succeeding regardless of
     gcloud's current ambient active account.
   Not verifying: WIF mechanics themselves (unchanged, already covered by portunus-vault-
     metadata's tests); any UI (explicitly deferred to the settings-page epic).
