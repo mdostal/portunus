@@ -67,6 +67,10 @@ That's portunus.
   **35-command CLI**, and a **Next.js UI** (plus a native macOS desktop shell around the UI).
 - **Tamper-evident, hash-chained audit log** — keyed by secret *name*, never value. `portunus
   verify` proves the chain.
+- **Per-agent access control, opt-in.** `portunus roles set --principal <agent>` scopes a policy
+  to a specific identity (org/project/env/repo); `portunus roles enforce on` activates it. A
+  scope with no configured policy always stays fully open — enforcement only ever narrows what a
+  *specific* principal can reach, never a surprise lockout. See "Access control (Petitio)" below.
 
 ## Roadmap (help wanted)
 
@@ -78,8 +82,12 @@ That's portunus.
       built-in `HttpHeaderAdapter`/`HttpBodyAdapter` class yet, only `EnvVarAdapter`/`FileAdapter`)*
 - [ ] Secret rotation *(the provenance layer is real — `RotationBinding`, three stub adapters — but
       every adapter still unconditionally raises; nothing rotates yet)*
-- [ ] Role-based / per-agent access control *(the seam exists — `Identity` + a `requester` param on
-      the one gate check — every caller is currently allowed regardless of who's asking)*
+- [ ] Scope-aware `list`/`tree` — these two MCP tools still return full-vault metadata regardless
+      of the caller's own access scope; only the actual `resolve`/inject path is gated today
+      *(a real, named gap — not started; portunus-petitio-rbac design-discussion.md's self-grill)*
+- [ ] Approval tokens (`portunus approve`) are scoped to a reference name only, not to the
+      identity that requested it — a different concurrently-running agent can walk through the
+      same approval window *(also a real, named gap, same source)*
 
 ## Honest scope
 
@@ -145,7 +153,7 @@ their own (Latin, theme-consistent) names:
 |---|---|---|
 | **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project". **Three entry points, one implementation**: the `portunus` CLI, the standalone UI's API routes, and an MCP stdio server for other agents/harnesses | `resolver.py` + the `portunus` CLI (`cli.py`) + `mcp_server.py` (`portunus mcp`) |
 | **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice. **Real today:** local-encrypted (default), GCP Secret Manager (keyless via WIF, optionally with a recency-aware pull-only sync-down cache that survives a real network outage by serving the last-known-good cached value). **Honest stubs, not yet real:** AWS Secrets Manager, HashiCorp Vault, Infisical, Doppler, 1Password, Azure Key Vault — each fails closed with a clear error and a link to [request it](.github/ISSUE_TEMPLATE/adapter-request.yaml), never silently mis-routes. See `docs/architecture.md` for the full picture. | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `VaultBinding`, and the six stub classes); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
-| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **`Identity` + an optional `requester` parameter on `check_injectable` exist as a deliberately inert seam** — every caller is currently allowed regardless of `requester`; real role-based enforcement (a policy store, an escalation-request flow) is designed but not yet built. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter yet — config only, zero real adapters today, all stubs (Vercel is the confirmed priority target for the first real one). See `docs/architecture.md` §5. | `broker.py`, `rotation.py` |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **Per-agent access control is real and opt-in**: every call threads an `Identity` (`requester`) through `check_injectable()`, which evaluates it against `roles.py`'s `PolicyRecord`s (`org`/`project`/`env`/`repo` scope + `principal`) via `roles.evaluate()` — every resolve gets a `would-allow`/`would-deny` audit line regardless, but only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been explicitly run for that vault (default: off; a scope with zero configured policies always stays open). Not yet scope-aware: the `list`/`tree` MCP tools, and `approve()`'s token (scoped to a reference name, not the requesting identity) — see Roadmap. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter yet — config only, zero real adapters today, all stubs (Vercel is the confirmed priority target for the first real one). See `docs/architecture.md` §3/§17. | `broker.py`, `roles.py`, `rotation.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
 So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
@@ -238,8 +246,9 @@ backend only (`PORTUNUS_BACKEND=gcloud`) — there's no local ciphertext to lose
   the same pattern the CI example uses) — never a network call, never a second trust boundary.
   This is a deliberate v1 scoping decision, not an oversight: the MCP server is stdio-only today,
   which makes same-pod/same-host reachability the natural fit; a network-reachable *shared*
-  Portunus service many pods call would need the currently-stub-only RBAC (`roles.py`) to
-  actually be enforced — real, larger, explicitly future work.
+  Portunus service many pods call would need real network-level authentication between caller
+  and broker (today's `roles.py` access control assumes a trusted local-process caller, same as
+  every other same-host boundary in this design) — real, larger, explicitly future work.
 
 **Auth per backend, per environment:**
 
@@ -788,12 +797,18 @@ your own explicit click. Routing fields (`org`/`provider`/`project`/`env`/`repo`
 never agent-suggestible — those affect which backend a resolve actually uses. CLI:
 `portunus metadata confirm/reject/pending`.
 
-**Roles & permissions — STUB ONLY.** Settings lets you record `{scope: org/project/env, role,
-actions}` policy records, and they genuinely persist (`portunus roles set/delete/show`,
-`PORTUNUS_HOME/roles.json`) — but nothing reads them yet. `check_injectable()`/`retag()` behave
-identically whether or not any policy exists. This is deliberate, staged groundwork for
-Petitio's future real access-level enforcement, always shown with an explicit "not yet
-enforced" label — never a control that looks live but silently does nothing.
+**Roles & permissions — real, opt-in access control.** Settings lets you record `{scope:
+org/project/env/repo, role, actions, principal}` policy records (`portunus roles set/delete/
+show`, `PORTUNUS_HOME/roles.json`) scoping a policy to a specific agent identity (`principal` —
+blank/`*` means everyone, backward-compatible with every pre-existing record). Every resolve
+gets a `would-allow`/`would-deny` audit line reflecting what the policy store says, whether or
+not enforcement is active. `portunus roles enforce on` is the explicit opt-in that makes a
+`would-deny` decision actually raise (`NotAuthorized`) instead of just being logged — default
+off, and even with it on, a scope with zero configured policies always stays fully open
+(configuring your first policy for one project/repo never silently locks out every other
+reference). Not yet scope-aware: `list`/`tree` still return full-vault metadata for any caller,
+and `approve()`'s approval token is scoped to a reference name only, not the requesting
+identity — both real, named, deliberately deferred gaps (Roadmap above).
 
 **Metadata crawl & deploy-docs report.** Settings' "Crawl & report" section lists references
 still missing description/purpose/org, and offers a "Fetch crawl bundle" button — the same
@@ -815,8 +830,9 @@ path; there is no default). A match escalates a visible severity (warn → urgen
 over time until you run `portunus leak mark-rotated <name>` — a human assertion Portunus
 can't independently verify, not a real rotation trigger. This finds secrets that already
 leaked; it does not stop the next paste into a chat window, and it never blocks `resolve`/
-`inject` (advisory only, matching the roles.json stub's own "detect first, enforce later"
-precedent). Findings are always `{reference, file, line}` — never the leaked value itself, at
+`inject` (advisory only — a separate, orthogonal control from the access-control enforcement
+above; a reference can be both leak-flagged and fully accessible at the same time). Findings
+are always `{reference, file, line}` — never the leaked value itself, at
 any layer (CLI, MCP, UI). CLI: `portunus leak-scan [--json]`, `portunus leak-scan config
 add-path/remove-path/show`, `portunus leak status [name]`, `portunus leak mark-rotated
 <name>`. MCP: `portunus_run_leak_scan`, `portunus_leak_status`, `portunus_leak_scan_config_
@@ -977,7 +993,9 @@ src/portunus/
   discover.py    ARCA discovery — read-only enumeration of a live provider project's secrets
                  (names/labels only); structurally cannot reach a value (no backend import)
   broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit; Identity +
-                 an inert requester param on check_injectable (real enforcement not yet built)
+                 requester feeds real, opt-in access-control enforcement (`roles enforce on`)
+  roles.py       PolicyRecord store (org/project/env/repo scope + principal) + roles.evaluate()
+                 -- the single seam all scope/precedence logic lives in, per check_injectable()
   audit.py       tamper-evident hash-chain access log
   resolver.py    OSTIARIUS — boundary-only {{secret:NAME}} resolution  ← the core
   adapters.py    boundary injection adapters (env var, file) -- see Roadmap for HTTP-client

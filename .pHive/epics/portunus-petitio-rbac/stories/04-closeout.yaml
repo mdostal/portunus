@@ -1,7 +1,7 @@
 id: 04-closeout
 epic: portunus-petitio-rbac
 title: default-on for newly-initialized vaults only, docs, version bump, live proof against the real 393-reference vault
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [03-opt-in-enforcement]
