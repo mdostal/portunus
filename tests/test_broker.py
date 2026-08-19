@@ -86,13 +86,12 @@ def test_check_injectable_requester_is_genuinely_inert(home):
     assert b.check_injectable("x", requester=nobody).sm_name == "dostal-x"
 
 
-def test_check_injectable_never_raises_based_on_a_policy_decision():
-    """AST-level, updated for portunus-petitio-rbac Story 02: `requester`
-    branching is now expected (it gates the audit-only policy evaluation),
-    but no `raise` may ever be reachable from a branch that inspects
-    `decision`/`decision.allow` -- that's the one hard invariant this story
-    (and Story 02's own test suite) must preserve. Real enforcement is
-    Story 03's job, behind a separate, explicit opt-in."""
+def test_check_injectable_only_raises_on_a_policy_decision_when_enforcement_is_on():
+    """AST-level, updated for portunus-petitio-rbac Story 03: raising on a
+    policy decision is now legitimate (that's this story's whole point),
+    but ONLY ever gated on roles.enforcement_is_on() -- structurally
+    verified, not just tested behaviorally, that there's no path to
+    NotAuthorized that skips the enforcement-flag check."""
     import ast
     import inspect
     import textwrap
@@ -101,14 +100,18 @@ def test_check_injectable_never_raises_based_on_a_policy_decision():
     src = textwrap.dedent(inspect.getsource(Broker.check_injectable))
     tree = ast.parse(src)
     func = tree.body[0]
+    found_decision_based_raise = False
     for node in ast.walk(func):
         if isinstance(node, ast.If):
-            test_names = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
-            if "decision" in test_names:
-                body_src = ast.unparse(ast.Module(body=node.body, type_ignores=[]))
-                assert "raise" not in body_src, (
-                    f"a branch on `decision` reaches a raise: {body_src}"
+            test_src = ast.unparse(node.test)
+            body_src = ast.unparse(ast.Module(body=node.body, type_ignores=[]))
+            if "decision" in test_src and "raise" in body_src and "NotAuthorized" in body_src:
+                found_decision_based_raise = True
+                assert "enforcement_is_on" in test_src, (
+                    f"a branch raises NotAuthorized based on `decision` without checking "
+                    f"enforcement_is_on() in the same condition: {test_src}"
                 )
+    assert found_decision_based_raise, "expected check_injectable to raise NotAuthorized somewhere"
 
 
 def test_check_injectable_docstring_states_enforcement_not_built():

@@ -1,7 +1,7 @@
 id: 03-opt-in-enforcement
 epic: portunus-petitio-rbac
 title: portunus roles enforce on|off|status -- NotAuthorized actually raised, permissive-if-unconfigured posture
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [02-policy-schema-and-audit-only-evaluation]

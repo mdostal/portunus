@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .backend import BackendError, SecretBackend
-from .broker import ApprovalRequired, Broker, Identity, NotInjectable
+from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
 from .filelock import flock_path
 from .paths import home
 from .registry import Registry
@@ -132,7 +132,7 @@ def get_values(
     for ref in registry:
         try:
             gated = broker.check_injectable(ref.name, requester=Identity.from_env())
-        except (NotInjectable, ApprovalRequired):
+        except (NotInjectable, ApprovalRequired, NotAuthorized):
             continue
         chosen_backend = backend_for(gated) if backend_for is not None else backend
         try:

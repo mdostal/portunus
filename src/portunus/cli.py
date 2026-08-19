@@ -33,7 +33,15 @@ from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
-from .roles import PolicyError, VALID_SCOPE_TYPES, delete_policy, load_policies, set_policy
+from .roles import (
+    PolicyError,
+    VALID_SCOPE_TYPES,
+    delete_policy,
+    enforcement_is_on,
+    load_policies,
+    set_enforcement,
+    set_policy,
+)
 from .crawl import crawl_candidates, generate_report
 from .leakscan import (
     add_scan_path,
@@ -49,7 +57,7 @@ from .leakscan import (
 )
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
-from .broker import ApprovalRequired, Broker, Identity, NotInjectable
+from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
@@ -280,7 +288,7 @@ def _inject_resolved_ref(resolver, broker, ref, args, audit_action: str) -> int:
     template = f"{{{{secret:{ref.name}}}}}"
     try:
         resolver.resolve_call(template, boundary=lambda v: adapter.inject(v, **adapter_kwargs))
-    except (UnknownReference, NotInjectable, ApprovalRequired, BackendError, AdapterError) as exc:
+    except (UnknownReference, NotInjectable, ApprovalRequired, NotAuthorized, BackendError, AdapterError) as exc:
         broker.audit.append(audit_action, ref.sm_name, f"error:{target_desc}")
         return _err(str(exc))
     broker.audit.append(audit_action, ref.sm_name, f"ok:{target_desc}")
@@ -839,7 +847,7 @@ def cmd_resolve(args) -> int:
         return 0
     except UnknownReference as exc:
         return _err(f"unknown reference {{{{secret:{exc.args[0]}}}}}")
-    except (NotInjectable, ApprovalRequired) as exc:
+    except (NotInjectable, ApprovalRequired, NotAuthorized) as exc:
         return _err(str(exc))
     except BackendError as exc:
         return _err(str(exc))
@@ -1215,8 +1223,8 @@ def cmd_sync(args) -> int:
     for ref in registry.list_by_project(args.project):
         try:
             gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
-        except (NotInjectable, ApprovalRequired):
-            continue  # not currently injectable -- nothing to sync, not a failure
+        except (NotInjectable, ApprovalRequired, NotAuthorized):
+            continue  # not currently injectable/authorized -- nothing to sync, not a failure
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
         if not isinstance(backend, SyncingBackend):
             continue  # not a cached-mode reference -- nothing to report
@@ -1437,6 +1445,23 @@ def cmd_roles_show(args) -> int:
     for k, p in policies.items():
         principal_note = f" principal={p.principal}" if p.principal else " principal=* (everyone)"
         print(f"  {k}  actions={p.actions}{principal_note}")
+    return 0
+
+
+def cmd_roles_enforce(args) -> int:
+    """portunus-petitio-rbac Story 03. Default: off. A scope with zero
+    configured policies always allows regardless of this setting --
+    enforcement only ever narrows behavior for a scope that has at least
+    one policy record (design-discussion.md §5, "permissive-if-
+    unconfigured"). Scoped per PORTUNUS_HOME/--home automatically, same as
+    roles.json itself."""
+    if args.state == "status":
+        print(f"enforcement: {'on' if enforcement_is_on() else 'off'}")
+        return 0
+    set_enforcement(args.state == "on")
+    _, audit, _, _ = _build()
+    audit.append("roles_config_changed", "-", f"enforce {args.state}")
+    print(f"enforcement: {args.state}")
     return 0
 
 
@@ -2248,6 +2273,15 @@ def build_parser() -> argparse.ArgumentParser:
     rl_show.add_argument("--scope-value", default="")
     rl_show.add_argument("--json", action="store_true")
     rl_show.set_defaults(func=cmd_roles_show)
+
+    rl_enforce = rl_sub.add_parser(
+        "enforce",
+        help="opt-in enforcement -- when on, check_injectable() raises NotAuthorized on a "
+             "would-deny decision (default: off; a scope with no configured policy always "
+             "still allows regardless of this setting)",
+    )
+    rl_enforce.add_argument("state", choices=("on", "off", "status"))
+    rl_enforce.set_defaults(func=cmd_roles_enforce)
 
     cr = sub.add_parser(
         "crawl",
