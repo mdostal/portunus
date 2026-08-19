@@ -32,7 +32,7 @@ from .backend import (
     BackendError, VaultBinding, load_vault_bindings, save_vault_bindings,
 )
 from .localvault import LocalEncryptedBackend, SESSION_SCHEMA
-from .broker import Broker, NotInjectable, ApprovalRequired
+from .broker import Broker, NotInjectable, ApprovalRequired, NotAuthorized
 from .resolver import Resolver, UnknownReference, PLACEHOLDER_RE
 from .auth import (
     AuthError,
@@ -68,6 +68,7 @@ __all__ = [
     "Broker",
     "NotInjectable",
     "ApprovalRequired",
+    "NotAuthorized",
     "Resolver",
     "UnknownReference",
     "PLACEHOLDER_RE",

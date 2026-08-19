@@ -17,7 +17,7 @@ from typing import List, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .backend import BackendError, SyncingBackend, load_vault_bindings
-from .broker import ApprovalRequired, Identity, NotInjectable
+from .broker import ApprovalRequired, Identity, NotAuthorized, NotInjectable
 from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
 from .crawl import crawl_candidates
 from .leakscan import (
@@ -373,7 +373,7 @@ def portunus_resolve_to_tempfile(name: str = "", tags: Optional[dict] = None) ->
         path = resolver.resolve_to_tempfile(placeholder)
     except UnknownReference:
         return {"error": f"unknown reference: {ref.name}"}
-    except (NotInjectable, ApprovalRequired) as exc:
+    except (NotInjectable, ApprovalRequired, NotAuthorized) as exc:
         return {"error": str(exc)}
     except BackendError as exc:
         return {"error": str(exc)}
@@ -450,7 +450,7 @@ def portunus_resolve_exec(argv: List[str], name: str = "", tags: Optional[dict] 
         result = resolver.resolve_exec(template_argv, runner=_capturing_runner)
     except UnknownReference:
         return {"error": f"unknown reference: {ref.name}"}
-    except (NotInjectable, ApprovalRequired) as exc:
+    except (NotInjectable, ApprovalRequired, NotAuthorized) as exc:
         return {"error": str(exc)}
     except BackendError as exc:
         return {"error": str(exc)}
@@ -608,8 +608,8 @@ def portunus_sync(project: str) -> dict:
     synced, fresh, failed = [], [], []
     for ref in registry.list_by_project(project):
         try:
-            gated_ref = broker.check_injectable(ref.name)
-        except (NotInjectable, ApprovalRequired):
+            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
+        except (NotInjectable, ApprovalRequired, NotAuthorized):
             continue
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
         if not isinstance(backend, SyncingBackend):

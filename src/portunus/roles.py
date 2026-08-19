@@ -38,7 +38,7 @@ from typing import Dict, List, Optional
 from .filelock import flock_path
 from .paths import home
 
-VALID_SCOPE_TYPES = ("org", "project", "env")
+VALID_SCOPE_TYPES = ("org", "project", "env", "repo")
 
 
 class PolicyError(RuntimeError):
@@ -53,10 +53,20 @@ class PolicyRecord:
     scope_value: str
     role: str
     actions: List[str] = field(default_factory=list)
+    # "" / "*" = applies to everyone -- every pre-existing roles.json record
+    # (written before this field existed) loads with principal="" and keeps
+    # behaving as a wildcard, so this is additive, not a breaking migration.
+    principal: str = ""
 
     @property
     def key(self) -> str:
-        return f"{self.scope_type}:{self.scope_value}:{self.role}"
+        # Includes principal so two different principals scoped to the same
+        # (scope_type, scope_value, role) are DISTINCT stored records --
+        # without this, set_policy() for one principal would silently
+        # overwrite a different principal's policy (portunus-petitio-rbac
+        # design-discussion.md §2), exactly the "crossing over" failure this
+        # epic exists to prevent, self-inflicted by its own storage key.
+        return f"{self.scope_type}:{self.scope_value}:{self.role}:{self.principal or '*'}"
 
 
 def _roles_path(path: Optional[Path] = None) -> Path:
@@ -78,6 +88,7 @@ def _load_unlocked(path: Optional[Path] = None) -> Dict[str, PolicyRecord]:
             scope_value=cfg.get("scope_value", ""),
             role=cfg.get("role", ""),
             actions=list(cfg.get("actions", [])),
+            principal=cfg.get("principal", ""),  # absent (pre-this-story file) -> "" (wildcard)
         )
         for key, cfg in raw.items()
     }
@@ -89,7 +100,7 @@ def _save_unlocked(policies: Dict[str, PolicyRecord], path: Optional[Path] = Non
     raw = {
         key: {
             "scope_type": p.scope_type, "scope_value": p.scope_value,
-            "role": p.role, "actions": p.actions,
+            "role": p.role, "actions": p.actions, "principal": p.principal,
         }
         for key, p in policies.items()
     }
@@ -109,20 +120,23 @@ def load_policies(path: Optional[Path] = None) -> Dict[str, PolicyRecord]:
 
 def set_policy(
     scope_type: str, scope_value: str, role: str, actions: List[str],
-    path: Optional[Path] = None,
+    principal: str = "", path: Optional[Path] = None,
 ) -> PolicyRecord:
-    """Create or overwrite one (scope_type, scope_value, role) policy
-    record's actions. Load -> mutate -> save under one flock acquisition,
-    same discipline views.py's own mutators established -- no retrofit
-    needed here, unlike vault-bindings.json's still-unfixed read-modify-
-    write race."""
+    """Create or overwrite one (scope_type, scope_value, role, principal)
+    policy record's actions. Load -> mutate -> save under one flock
+    acquisition, same discipline views.py's own mutators established -- no
+    retrofit needed here, unlike vault-bindings.json's still-unfixed
+    read-modify-write race."""
     if scope_type not in VALID_SCOPE_TYPES:
         raise PolicyError(f"invalid scope_type: {scope_type!r} (want one of {VALID_SCOPE_TYPES})")
     if not scope_value:
         raise PolicyError("scope_value is required")
     if not role:
         raise PolicyError("role is required")
-    record = PolicyRecord(scope_type=scope_type, scope_value=scope_value, role=role, actions=list(actions))
+    record = PolicyRecord(
+        scope_type=scope_type, scope_value=scope_value, role=role,
+        actions=list(actions), principal=principal,
+    )
     with flock_path(_roles_lock_path(path)):
         policies = _load_unlocked(path)
         policies[record.key] = record
@@ -130,11 +144,90 @@ def set_policy(
         return record
 
 
-def delete_policy(scope_type: str, scope_value: str, role: str, path: Optional[Path] = None) -> bool:
-    key = f"{scope_type}:{scope_value}:{role}"
+def delete_policy(
+    scope_type: str, scope_value: str, role: str,
+    principal: str = "", path: Optional[Path] = None,
+) -> bool:
+    key = f"{scope_type}:{scope_value}:{role}:{principal or '*'}"
     with flock_path(_roles_lock_path(path)):
         policies = _load_unlocked(path)
         existed = policies.pop(key, None) is not None
         if existed:
             _save_unlocked(policies, path)
         return existed
+
+
+@dataclass(frozen=True)
+class Decision:
+    """The one and only shape roles.evaluate() ever returns. `reason` is a
+    fixed enum string -- no free text, no scope/value details -- so it's
+    always safe to write straight into an audit line."""
+    allow: bool
+    reason: str  # "no-policy-configured" | "explicit-allow" | "not-in-scope"
+
+
+def _scope_matches(policy: "PolicyRecord", ref: object) -> bool:
+    return getattr(ref, policy.scope_type, "") == policy.scope_value
+
+
+def evaluate(policies: Dict[str, "PolicyRecord"], requester: Optional[object], ref: object) -> "Decision":
+    """The SINGLE place any scope/precedence logic for Petitio may live --
+    check_injectable() and every CLI/MCP caller only ever call this and act
+    on the returned Decision, never reimplement matching themselves
+    (portunus-petitio-rbac design-discussion.md §3). That single-seam
+    discipline is deliberate: the user confirmed flat-OR precedence is fine
+    for v1 but wants the code to expect "fancier rule systems" later --
+    keeping every call site free of matching logic of its own means a
+    future precedence model (most-specific-wins, or an adopted engine like
+    Casbin) is a change to this one function's internals, not a rewrite
+    across every caller.
+
+    Precedence today, as a deliberate v1 choice, not an oversight: a FLAT
+    OR across every matching policy -- any one matching, allowing policy is
+    sufficient. There is no most-specific-wins narrowing yet (an org-level
+    allow is not narrowed by a repo-level policy that doesn't list the same
+    principal). Revisit only if real usage produces an actual case that
+    needs narrowing.
+
+    `requester is None` is treated identically to "no policy configured" --
+    fail-open at the identity layer, not fail-closed, so a caller that
+    hasn't been threaded with an identity never gets a surprise denial from
+    a missing parameter.
+    """
+    matching = [p for p in policies.values() if _scope_matches(p, ref)]
+    if not matching:
+        return Decision(allow=True, reason="no-policy-configured")
+    if requester is None:
+        return Decision(allow=True, reason="no-policy-configured")
+    for p in matching:
+        if p.principal in ("", "*", requester.name):
+            return Decision(allow=True, reason="explicit-allow")
+    return Decision(allow=False, reason="not-in-scope")
+
+
+def _enforce_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "roles-enforce.json")
+
+
+def enforcement_is_on(path: Optional[Path] = None) -> bool:
+    """Default: off. Reads home() fresh on every call (like every other
+    config store here) so this is automatically per-`--home`-scoped with
+    zero extra threading -- --home just overrides PORTUNUS_HOME for the
+    invocation, and home() picks that up the same way roles.json does."""
+    enforce_path = _enforce_path(path)
+    if not enforce_path.exists():
+        return False
+    try:
+        return bool(json.loads(enforce_path.read_text() or "{}").get("enforced", False))
+    except (OSError, ValueError):
+        return False
+
+
+def set_enforcement(on: bool, path: Optional[Path] = None) -> None:
+    enforce_path = _enforce_path(path)
+    enforce_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = enforce_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"enforced": on}))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, enforce_path)
+    os.chmod(enforce_path, 0o600)

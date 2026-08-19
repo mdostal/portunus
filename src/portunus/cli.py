@@ -33,7 +33,15 @@ from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
-from .roles import PolicyError, VALID_SCOPE_TYPES, delete_policy, load_policies, set_policy
+from .roles import (
+    PolicyError,
+    VALID_SCOPE_TYPES,
+    delete_policy,
+    enforcement_is_on,
+    load_policies,
+    set_enforcement,
+    set_policy,
+)
 from .crawl import crawl_candidates, generate_report
 from .leakscan import (
     add_scan_path,
@@ -49,7 +57,7 @@ from .leakscan import (
 )
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
-from .broker import ApprovalRequired, Broker, NotInjectable
+from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
@@ -280,7 +288,7 @@ def _inject_resolved_ref(resolver, broker, ref, args, audit_action: str) -> int:
     template = f"{{{{secret:{ref.name}}}}}"
     try:
         resolver.resolve_call(template, boundary=lambda v: adapter.inject(v, **adapter_kwargs))
-    except (UnknownReference, NotInjectable, ApprovalRequired, BackendError, AdapterError) as exc:
+    except (UnknownReference, NotInjectable, ApprovalRequired, NotAuthorized, BackendError, AdapterError) as exc:
         broker.audit.append(audit_action, ref.sm_name, f"error:{target_desc}")
         return _err(str(exc))
     broker.audit.append(audit_action, ref.sm_name, f"ok:{target_desc}")
@@ -839,7 +847,7 @@ def cmd_resolve(args) -> int:
         return 0
     except UnknownReference as exc:
         return _err(f"unknown reference {{{{secret:{exc.args[0]}}}}}")
-    except (NotInjectable, ApprovalRequired) as exc:
+    except (NotInjectable, ApprovalRequired, NotAuthorized) as exc:
         return _err(str(exc))
     except BackendError as exc:
         return _err(str(exc))
@@ -1214,9 +1222,9 @@ def cmd_sync(args) -> int:
     synced, fresh, failed = [], [], []
     for ref in registry.list_by_project(args.project):
         try:
-            gated_ref = broker.check_injectable(ref.name)
-        except (NotInjectable, ApprovalRequired):
-            continue  # not currently injectable -- nothing to sync, not a failure
+            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
+        except (NotInjectable, ApprovalRequired, NotAuthorized):
+            continue  # not currently injectable/authorized -- nothing to sync, not a failure
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
         if not isinstance(backend, SyncingBackend):
             continue  # not a cached-mode reference -- nothing to report
@@ -1390,15 +1398,20 @@ def cmd_views_show(args) -> int:
 
 
 def _policy_to_dict(p) -> dict:
-    return {"scope_type": p.scope_type, "scope_value": p.scope_value, "role": p.role, "actions": p.actions}
+    return {
+        "scope_type": p.scope_type, "scope_value": p.scope_value, "role": p.role,
+        "actions": p.actions, "principal": p.principal,
+    }
 
 
 def cmd_roles_set(args) -> int:
-    """STUB ONLY -- writes genuinely persist to roles.json, but nothing
-    reads them for enforcement. See roles.py's own module docstring."""
+    """Writes genuinely persist to roles.json and, as of portunus-petitio-
+    rbac Story 02, feed an audit-only evaluation on every resolve -- but
+    still never enforced (raised on) until Story 03's opt-in flag. See
+    roles.py's own module docstring."""
     actions = [a.strip() for a in args.actions.split(",") if a.strip()] if args.actions else []
     try:
-        record = set_policy(args.scope_type, args.scope_value, args.role, actions)
+        record = set_policy(args.scope_type, args.scope_value, args.role, actions, principal=args.principal)
     except PolicyError as exc:
         return _err(str(exc))
     _, audit, _, _ = _build()
@@ -1408,10 +1421,10 @@ def cmd_roles_set(args) -> int:
 
 
 def cmd_roles_delete(args) -> int:
-    existed = delete_policy(args.scope_type, args.scope_value, args.role)
+    existed = delete_policy(args.scope_type, args.scope_value, args.role, principal=args.principal)
     if existed:
         _, audit, _, _ = _build()
-        audit.append("roles_config_changed", "-", f"deleted {args.scope_type}:{args.scope_value}:{args.role}")
+        audit.append("roles_config_changed", "-", f"deleted {args.scope_type}:{args.scope_value}:{args.role}:{args.principal or '*'}")
     print("deleted" if existed else "no such policy")
     return 0
 
@@ -1426,11 +1439,29 @@ def cmd_roles_show(args) -> int:
         print(json.dumps({k: _policy_to_dict(p) for k, p in policies.items()}))
         return 0
     if not policies:
-        print("(no policies configured -- roles are not enforced yet, this is a stub)")
+        print("(no policies configured -- roles are audit-only, not enforced yet)")
         return 0
-    print("NOTE: roles are STUB ONLY -- not enforced by check_injectable/retag yet.")
+    print("NOTE: roles are audit-only -- would-allow/would-deny is logged on every resolve, but never enforced (raised on) yet.")
     for k, p in policies.items():
-        print(f"  {k}  actions={p.actions}")
+        principal_note = f" principal={p.principal}" if p.principal else " principal=* (everyone)"
+        print(f"  {k}  actions={p.actions}{principal_note}")
+    return 0
+
+
+def cmd_roles_enforce(args) -> int:
+    """portunus-petitio-rbac Story 03. Default: off. A scope with zero
+    configured policies always allows regardless of this setting --
+    enforcement only ever narrows behavior for a scope that has at least
+    one policy record (design-discussion.md §5, "permissive-if-
+    unconfigured"). Scoped per PORTUNUS_HOME/--home automatically, same as
+    roles.json itself."""
+    if args.state == "status":
+        print(f"enforcement: {'on' if enforcement_is_on() else 'off'}")
+        return 0
+    set_enforcement(args.state == "on")
+    _, audit, _, _ = _build()
+    audit.append("roles_config_changed", "-", f"enforce {args.state}")
+    print(f"enforcement: {args.state}")
     return 0
 
 
@@ -2227,12 +2258,14 @@ def build_parser() -> argparse.ArgumentParser:
     rl_set.add_argument("--scope-value", required=True)
     rl_set.add_argument("--role", required=True)
     rl_set.add_argument("--actions", default="", help="comma-separated, e.g. read,test,prod-release")
+    rl_set.add_argument("--principal", default="", help="which agent/identity this applies to (default: everyone)")
     rl_set.set_defaults(func=cmd_roles_set)
 
     rl_delete = rl_sub.add_parser("delete", help="delete a policy record")
     rl_delete.add_argument("--scope-type", required=True, choices=VALID_SCOPE_TYPES)
     rl_delete.add_argument("--scope-value", required=True)
     rl_delete.add_argument("--role", required=True)
+    rl_delete.add_argument("--principal", default="", help="must match what --principal was set to (default: everyone)")
     rl_delete.set_defaults(func=cmd_roles_delete)
 
     rl_show = rl_sub.add_parser("show", help="show policy records (optionally filtered)")
@@ -2240,6 +2273,15 @@ def build_parser() -> argparse.ArgumentParser:
     rl_show.add_argument("--scope-value", default="")
     rl_show.add_argument("--json", action="store_true")
     rl_show.set_defaults(func=cmd_roles_show)
+
+    rl_enforce = rl_sub.add_parser(
+        "enforce",
+        help="opt-in enforcement -- when on, check_injectable() raises NotAuthorized on a "
+             "would-deny decision (default: off; a scope with no configured policy always "
+             "still allows regardless of this setting)",
+    )
+    rl_enforce.add_argument("state", choices=("on", "off", "status"))
+    rl_enforce.set_defaults(func=cmd_roles_enforce)
 
     cr = sub.add_parser(
         "crawl",

@@ -1,7 +1,7 @@
 id: 02-session-api
 epic: portunus-session-vault
 title: Core Session API (save/load/list/revoke)
-status: partial  # see epic.yaml -> reconciliation: store/load/inspect/remove exist, but load_session has no TTL-expiry enforcement and there is no list-sessions capability
+status: done-elsewhere  # updated 2026-08-19: TTL-expiry enforcement (SessionExpired) and list_sessions() both now exist in localvault.py -- this gap has since closed
 complexity: medium
 methodology: tdd
 depends_on:

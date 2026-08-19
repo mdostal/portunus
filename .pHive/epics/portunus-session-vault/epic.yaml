@@ -4,7 +4,30 @@ description: Persist Playwright and login sessions durably as secrets using Arca
 target_codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
 methodology: tdd
 version_bump: minor
-status: needs-replanning
+status: mostly-shipped-elsewhere -- 2 stories genuinely open, need fresh scoping before resuming
+
+reconciliation_2026_08_19:
+  performed_by: backlog-audit during pre-release review pass
+  finding: >
+    Re-checked the 2026-08-12 reconciliation below against current code: it's partially stale.
+    Story 02's identified gaps have since closed for real -- localvault.py's load_session() now
+    enforces TTL expiry (raises SessionExpired unless allow_expired=True) and list_sessions()
+    exists. Story 04 also shipped since, via commit 61f83cc ("PAN-7834: CLI and Broker Seam
+    Integration for session API") -- portunus session store/load/inspect/list/remove all work.
+    Stories 01/02/04 marked done-elsewhere accordingly. Stories 03 (Ostiarius role-scoped gate)
+    and 05 (Playwright integration tests) remain genuinely unstarted -- confirmed by direct
+    inspection: session storage still bypasses Broker.check_injectable/the audit chain entirely
+    (store_session/load_session are called directly on the backend), and no Playwright-related
+    code exists anywhere in this repo.
+  open_question: >
+    Whether these two are still wanted, and in what shape, is a real product call, not a
+    mechanical one -- not resolved here. (a) Story 03's session-gating overlaps conceptually with
+    portunus-petitio-rbac (activating Identity/PolicyRecord enforcement on check_injectable) --
+    worth deciding together rather than building a second, separate gating mechanism for
+    sessions alone. (b) Story 05's Playwright-specific framing may itself be stale scope from
+    this epic's original (wrong-codebase) planning -- the real shipped capability is a generic
+    login/browser-session store, not Playwright-specific; "Playwright integration tests" may no
+    longer be the right shape for whatever's still wanted here. Left open rather than guessed at.
 
 reconciliation:
   performed_by: portunus-standalone-core story 07 (glossary-verify-closeout), 2026-08-12

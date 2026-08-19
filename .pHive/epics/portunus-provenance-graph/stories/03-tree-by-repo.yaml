@@ -1,7 +1,7 @@
 id: 03-tree-by-repo
 epic: portunus-provenance-graph
 title: portunus tree --by {group,repo} (CLI + MCP), parameterized _build_tree
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [01-repo-and-source-files-schema]

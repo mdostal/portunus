@@ -5,7 +5,7 @@ import { checkMetadataCompleteness } from "../completeness";
 import { renderReportMarkdown } from "../renderReportMarkdown";
 import type { CrawlCandidate, LeakSummary, PortunusPolicy, PortunusReference } from "../types";
 
-const SCOPE_TYPES: PortunusPolicy["scope_type"][] = ["org", "project", "env"];
+const SCOPE_TYPES: PortunusPolicy["scope_type"][] = ["org", "project", "env", "repo"];
 
 // Settings (portunus-vault-trust-and-access Slice 7) -- vault-binding
 // management stays in Project Explorer (that epic's own deliberate scope
@@ -18,7 +18,9 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
   const [policies, setPolicies] = useState<Record<string, PortunusPolicy>>({});
   const [policiesError, setPoliciesError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState({ scope_type: "org" as PortunusPolicy["scope_type"], scope_value: "", role: "", actions: "" });
+  const [draft, setDraft] = useState({
+    scope_type: "org" as PortunusPolicy["scope_type"], scope_value: "", role: "", actions: "", principal: "",
+  });
 
   function refreshPolicies() {
     fetch("/api/roles")
@@ -48,7 +50,7 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
         return;
       }
       setPolicies(data);
-      setDraft({ scope_type: "org", scope_value: "", role: "", actions: "" });
+      setDraft({ scope_type: "org", scope_value: "", role: "", actions: "", principal: "" });
     } finally {
       setBusy(false);
     }
@@ -60,7 +62,9 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
       const res = await fetch("/api/roles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", scope_type: p.scope_type, scope_value: p.scope_value, role: p.role }),
+        body: JSON.stringify({
+          action: "delete", scope_type: p.scope_type, scope_value: p.scope_value, role: p.role, principal: p.principal,
+        }),
       });
       if (res.ok) refreshPolicies();
     } finally {
@@ -471,18 +475,23 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
       <section className="settings-section settings-stub">
         <h2>Roles &amp; policies</h2>
         <p className="stub-banner">
-          ⚠ STUB ONLY -- these records persist for real, but nothing enforces them yet.
-          check_injectable()/retag() behave identically whether or not any policy exists here.
-          Real access-level enforcement is planned future work (Petitio).
+          ⚠ AUDIT-ONLY -- these records persist for real and now feed a would-allow/would-deny
+          line on every resolve's audit entry, but check_injectable()/retag() never raise on
+          them yet. Real access-level enforcement (an explicit opt-in) is planned future work
+          (Petitio).
         </p>
 
         {policiesError && <p className="inline-status error">✗ {policiesError}</p>}
 
         <div className="settings-hierarchy-list">
           {Object.values(policies).map((p) => (
-            <div className="settings-hierarchy-row" key={`${p.scope_type}:${p.scope_value}:${p.role}`}>
+            <div
+              className="settings-hierarchy-row"
+              key={`${p.scope_type}:${p.scope_value}:${p.role}:${p.principal || "*"}`}
+            >
               <span>
                 {p.scope_type}={p.scope_value} / {p.role}
+                {p.principal ? ` (${p.principal})` : " (everyone)"}
               </span>
               <span className="policy-actions">{p.actions.join(", ") || "(no actions)"}</span>
               <button className="btn quiet" disabled={busy} onClick={() => deletePolicy(p)}>
@@ -528,6 +537,13 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
             value={draft.actions}
             disabled={busy}
             onChange={(e) => setDraft((d) => ({ ...d, actions: e.target.value }))}
+          />
+          <input
+            className="field"
+            placeholder="principal (blank = everyone), e.g. claude-ffe"
+            value={draft.principal}
+            disabled={busy}
+            onChange={(e) => setDraft((d) => ({ ...d, principal: e.target.value }))}
           />
           <button className="btn quiet" type="submit" disabled={busy || !draft.scope_value.trim() || !draft.role.trim()}>
             + add policy

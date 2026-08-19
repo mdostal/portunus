@@ -1,7 +1,7 @@
 id: 05-closeout
 epic: portunus-provenance-graph
 title: docs, version bump, live proof (scratch data + a small real-vault dry-run demo)
-status: pending
+status: shipped
 complexity: low
 methodology: classic
 depends_on: [02-retag-bulk, 04-ui-repo-toggle-and-related-chips]

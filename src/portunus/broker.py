@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
+from . import roles
 from .audit import AuditChain
 from .paths import home
 from .registry import Registry, Reference
@@ -30,6 +31,13 @@ class NotInjectable(RuntimeError):
 
 class ApprovalRequired(RuntimeError):
     """Raised when a gated reference has no valid (unexpired) approval."""
+
+
+class NotAuthorized(RuntimeError):
+    """Raised when enforcement is on (portunus-petitio-rbac Story 03,
+    `portunus roles enforce on`) and roles.evaluate() denies the requester.
+    Distinct from NotInjectable (wrong lifecycle state) and ApprovalRequired
+    (needs a human approval) -- this is specifically "wrong identity/scope"."""
 
 
 @dataclass(frozen=True)
@@ -72,17 +80,20 @@ class Broker:
     def check_injectable(self, name: str, requester: Optional[Identity] = None) -> Reference:
         """Return the Reference iff it may be injected right now, else raise.
 
-        Enforces both the lifecycle state and the approval gate. This is the
+        Enforces the lifecycle state and the approval gate. This is the
         single chokepoint the resolver calls before any value is fetched.
 
-        `requester` is a deliberate no-op today -- Petitio's access-level
-        (role-based) enforcement is not built yet. Every caller is currently
-        allowed regardless of which Identity (or None) is passed; this
-        parameter exists purely as the seam a future policy engine will
-        consume, so every call site already threads an identity through
-        ahead of that engine existing. Do not mistake "not yet enforced"
-        for "broken" -- this is intentional, confirmed scope (see
-        portunus-swappable-trio).
+        `requester` feeds a policy evaluation (portunus-petitio-rbac
+        Story 02, design-discussion.md §4/§6): every call with a real
+        `requester` gets a `would-allow`/`would-deny` audit line reflecting
+        what `roles.evaluate()` decided. Whether that decision can also
+        raise `NotAuthorized` depends entirely on
+        `roles.enforcement_is_on()` (Story 03, `portunus roles enforce`) --
+        default off, so a fresh vault's behavior is unchanged. Even with
+        enforcement on, a scope with zero configured policies still always
+        allows -- enforcement only ever denies within a scope that has at
+        least one policy, for a principal not named there
+        (design-discussion.md §5, "permissive-if-unconfigured").
         """
         ref = self.registry.require(name)
         state = ref.state or "enabled"
@@ -105,6 +116,15 @@ class Broker:
             raise ApprovalRequired(
                 f"{ref.sm_name} needs approval — a human must run: portunus approve {name}"
             )
+        if requester is not None:
+            decision = roles.evaluate(roles.load_policies(), requester, ref)
+            verb = "would-allow" if decision.allow else "would-deny"
+            self.audit.append("resolve", ref.sm_name, f"{verb}:{decision.reason}")
+            if not decision.allow and roles.enforcement_is_on():
+                raise NotAuthorized(
+                    f"{ref.sm_name} is not authorized for {requester.name} "
+                    f"— no policy record grants this scope to this identity"
+                )
         return ref
 
     # --- gate / approve --------------------------------------------------

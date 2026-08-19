@@ -1,7 +1,7 @@
 id: 01-repo-and-source-files-schema
 epic: portunus-provenance-graph
 title: repo + source_files fields on Reference, registry, CLI/MCP surface
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []
