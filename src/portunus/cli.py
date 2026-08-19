@@ -49,7 +49,7 @@ from .leakscan import (
 )
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
-from .broker import ApprovalRequired, Broker, NotInjectable
+from .broker import ApprovalRequired, Broker, Identity, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
@@ -1214,7 +1214,7 @@ def cmd_sync(args) -> int:
     synced, fresh, failed = [], [], []
     for ref in registry.list_by_project(args.project):
         try:
-            gated_ref = broker.check_injectable(ref.name)
+            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
         except (NotInjectable, ApprovalRequired):
             continue  # not currently injectable -- nothing to sync, not a failure
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend

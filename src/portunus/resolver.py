@@ -28,7 +28,7 @@ import tempfile
 from typing import Callable, List, Optional, Sequence
 
 from .backend import SecretBackend
-from .broker import Broker
+from .broker import Broker, Identity
 
 # {{secret:NAME}} where NAME is anything but a closing brace.
 PLACEHOLDER_RE = re.compile(r"\{\{secret:([^}]+)\}\}")
@@ -68,7 +68,7 @@ class Resolver:
         """Policy-gate then fetch one value. Caller must not leak the result."""
         if name not in self.registry:
             raise UnknownReference(name)
-        ref = self.broker.check_injectable(name)   # raises on dropped/revoked/gated
+        ref = self.broker.check_injectable(name, requester=Identity.from_env())   # raises on dropped/revoked/gated
         backend = self.backend_for(ref) if self.backend_for is not None else self.backend
         value = backend.access(ref.sm_name, project=ref.project)  # the only place a value appears
         self.broker.audit.append("resolve", ref.sm_name, "ok")

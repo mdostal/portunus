@@ -608,7 +608,7 @@ def portunus_sync(project: str) -> dict:
     synced, fresh, failed = [], [], []
     for ref in registry.list_by_project(project):
         try:
-            gated_ref = broker.check_injectable(ref.name)
+            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
         except (NotInjectable, ApprovalRequired):
             continue
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
