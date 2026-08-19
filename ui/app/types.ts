@@ -90,10 +90,14 @@ export interface PortunusView {
 // STUB ONLY -- see roles.py. Persisted for real, but not enforced by
 // check_injectable/retag yet (Petitio's future access-level engine).
 export interface PortunusPolicy {
-  scope_type: "org" | "project" | "env";
+  scope_type: "org" | "project" | "env" | "repo";
   scope_value: string;
   role: string;
   actions: string[];
+  // "" / "*" = applies to everyone. Audit-only as of portunus-petitio-rbac
+  // Story 02 -- feeds a would-allow/would-deny audit line, never enforced
+  // (raised on) yet; see roles.py's own module docstring.
+  principal: string;
 }
 
 export interface AuditEntry {

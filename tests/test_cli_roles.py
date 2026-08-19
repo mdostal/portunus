@@ -20,11 +20,11 @@ def test_roles_set_and_show(home, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     data = json.loads(out)
-    key = "org:firefly-events:dev"
+    key = "org:firefly-events:dev:*"  # wildcard suffix -- no --principal was passed
     assert data[key]["actions"] == ["read", "test"]
 
 
-def test_roles_show_warns_it_is_a_stub(home, capsys):
+def test_roles_show_warns_it_is_not_enforced(home, capsys):
     main([
         "roles", "set", "--scope-type", "project", "--scope-value", "shindig",
         "--role", "admin", "--actions", "read,test,prod-release",
@@ -34,7 +34,7 @@ def test_roles_show_warns_it_is_a_stub(home, capsys):
     rc = main(["roles", "show"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "STUB" in out.upper()
+    assert "NEVER ENFORCED" in out.upper()
 
 
 def test_roles_delete(home, capsys):

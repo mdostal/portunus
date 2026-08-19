@@ -86,10 +86,13 @@ def test_check_injectable_requester_is_genuinely_inert(home):
     assert b.check_injectable("x", requester=nobody).sm_name == "dostal-x"
 
 
-def test_check_injectable_source_never_branches_on_requester():
-    """AST-level: requester's attributes must never appear inside any
-    conditional -- structurally proving it's unreferenced, not just
-    untested."""
+def test_check_injectable_never_raises_based_on_a_policy_decision():
+    """AST-level, updated for portunus-petitio-rbac Story 02: `requester`
+    branching is now expected (it gates the audit-only policy evaluation),
+    but no `raise` may ever be reachable from a branch that inspects
+    `decision`/`decision.allow` -- that's the one hard invariant this story
+    (and Story 02's own test suite) must preserve. Real enforcement is
+    Story 03's job, behind a separate, explicit opt-in."""
     import ast
     import inspect
     import textwrap
@@ -99,9 +102,13 @@ def test_check_injectable_source_never_branches_on_requester():
     tree = ast.parse(src)
     func = tree.body[0]
     for node in ast.walk(func):
-        if isinstance(node, (ast.If, ast.IfExp, ast.BoolOp)):
-            names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
-            assert "requester" not in names, ast.unparse(node)
+        if isinstance(node, ast.If):
+            test_names = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+            if "decision" in test_names:
+                body_src = ast.unparse(ast.Module(body=node.body, type_ignores=[]))
+                assert "raise" not in body_src, (
+                    f"a branch on `decision` reaches a raise: {body_src}"
+                )
 
 
 def test_check_injectable_docstring_states_enforcement_not_built():

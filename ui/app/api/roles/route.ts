@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanError, runPortunus } from "@/lib/portunus";
 
-// STUB ONLY -- see roles.py's own module docstring. This route lets the
-// Settings page manage policy records that genuinely persist, but nothing
-// in check_injectable()/retag() reads them. Thin shell-out, same pattern
-// every other route uses.
+// Audit-only as of portunus-petitio-rbac Story 02 -- see roles.py's own
+// module docstring. This route lets the Settings page manage policy
+// records that genuinely persist and feed a would-allow/would-deny audit
+// line on every resolve, but check_injectable()/retag() never raise on
+// them yet. Thin shell-out, same pattern every other route uses.
 export async function GET() {
   const result = await runPortunus(["roles", "show", "--json"]);
   if (result.code !== 0) {
@@ -29,13 +30,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const principal = String(body.principal || "").trim();
+
   let args: string[];
   if (action === "delete") {
     args = ["roles", "delete", "--scope-type", scopeType, "--scope-value", scopeValue, "--role", role];
+    if (principal) args.push("--principal", principal);
   } else {
     args = ["roles", "set", "--scope-type", scopeType, "--scope-value", scopeValue, "--role", role];
     const actions = String(body.actions || "");
     if (actions) args.push("--actions", actions);
+    if (principal) args.push("--principal", principal);
   }
 
   const result = await runPortunus(args);
