@@ -4,6 +4,18 @@ target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
 methodology: tdd
 version_bump: minor
 
+reconciliation:
+  performed_by: backlog-audit during pre-release review pass, 2026-08-19
+  finding: >
+    Every story's scope was already real and shipped in the current codebase, confirmed by
+    direct inspection rather than assumed: Reference.repo/source_files fields (registry.py),
+    retag-bulk --group-prefix/--repo/--source-files/--dry-run (cli.py, CHANGELOG.md "Live-
+    verified against the real demo-cicd data, 384 references"), portunus tree --by {group,repo}
+    (CLI+MCP), Project Explorer's Group/Repo toggle (ui/app/components/ProjectExplorer.tsx),
+    and DetailDrawer's related-as-chips rendering all exist and work. The stories were simply
+    never marked shipped -- the work happened, the story-tracking bookkeeping didn't catch up.
+    All 5 stories marked status: shipped on this basis; no new code was written.
+
 description: |
   Real data confirmed the gap directly: all 342 demo-cicd references are auto-discovered
   placeholders with zero description/purpose/kind/related, and no field captures which git repo

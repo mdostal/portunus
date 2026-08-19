@@ -1,7 +1,7 @@
 id: 02-retag-bulk
 epic: portunus-provenance-graph
 title: portunus retag-bulk --group-prefix (with --dry-run)
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [01-repo-and-source-files-schema]

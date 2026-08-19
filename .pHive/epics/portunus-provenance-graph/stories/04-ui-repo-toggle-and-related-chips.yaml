@@ -1,7 +1,7 @@
 id: 04-ui-repo-toggle-and-related-chips
 epic: portunus-provenance-graph
 title: Project Explorer Group/Repo toggle, DetailDrawer related-as-chips, source_files display
-status: pending
+status: shipped
 complexity: medium
 methodology: classic
 depends_on: [03-tree-by-repo]

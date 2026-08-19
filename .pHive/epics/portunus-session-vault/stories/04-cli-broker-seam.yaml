@@ -1,7 +1,7 @@
 id: 04-cli-broker-seam
 epic: portunus-session-vault
 title: CLI and Broker Seam Integration
-status: needs-replanning  # see epic.yaml -> reconciliation: valid, unstarted capability, but this story's file paths target a different (wrong) codebase
+status: done-elsewhere  # updated 2026-08-19: shipped via PAN-7834 (commit 61f83cc, "CLI and Broker Seam Integration for session API") -- cmd_session_store/load/inspect/list/remove all exist
 complexity: low
 methodology: tdd
 depends_on:
