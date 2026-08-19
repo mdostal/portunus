@@ -203,3 +203,31 @@ def evaluate(policies: Dict[str, "PolicyRecord"], requester: Optional[object], r
         if p.principal in ("", "*", requester.name):
             return Decision(allow=True, reason="explicit-allow")
     return Decision(allow=False, reason="not-in-scope")
+
+
+def _enforce_path(path: Optional[Path] = None) -> Path:
+    return path or (home() / "roles-enforce.json")
+
+
+def enforcement_is_on(path: Optional[Path] = None) -> bool:
+    """Default: off. Reads home() fresh on every call (like every other
+    config store here) so this is automatically per-`--home`-scoped with
+    zero extra threading -- --home just overrides PORTUNUS_HOME for the
+    invocation, and home() picks that up the same way roles.json does."""
+    enforce_path = _enforce_path(path)
+    if not enforce_path.exists():
+        return False
+    try:
+        return bool(json.loads(enforce_path.read_text() or "{}").get("enforced", False))
+    except (OSError, ValueError):
+        return False
+
+
+def set_enforcement(on: bool, path: Optional[Path] = None) -> None:
+    enforce_path = _enforce_path(path)
+    enforce_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = enforce_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"enforced": on}))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, enforce_path)
+    os.chmod(enforce_path, 0o600)
