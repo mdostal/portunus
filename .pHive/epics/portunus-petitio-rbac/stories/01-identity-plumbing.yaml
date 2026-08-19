@@ -1,7 +1,7 @@
 id: 01-identity-plumbing
 epic: portunus-petitio-rbac
 title: thread requester=Identity.from_env() through every real check_injectable() call site -- zero behavior change
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: []
