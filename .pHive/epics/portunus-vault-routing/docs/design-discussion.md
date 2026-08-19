@@ -31,8 +31,8 @@ that if they care or they can ask for it").
 ## 2. Why this is scoped as Large, not Medium
 
 Unlike this session's two prior epics (2-3 small, additive tools each), this one touches: (a) an
-already-in-production config file (`gcp-bindings.json`, real content for `personalsites-487021`/
-`ffe-cicd`), (b) `Resolver`'s core resolution path (currently one fixed backend per instance,
+already-in-production config file (`gcp-bindings.json`, real content for `demo-project-483920`/
+`demo-cicd`), (b) `Resolver`'s core resolution path (currently one fixed backend per instance,
 used by every CLI command and all 10 MCP tools), and (c) a new caching mechanism with real
 correctness requirements (never serve a stale value past its recency window; never silently drop
 a sync failure into "looks fine"). Presenting this design for confirmation before writing stories
@@ -68,7 +68,7 @@ call site known in advance.
   same effective behavior the real vault has today**, just expressed through the new model. Else
   fall back to today's env-var-derived single-binding default (unchanged).
 - The legacy file is never written to, moved, or deleted by this epic. The real
-  `personalsites-487021`/`ffe-cicd` bindings keep working with zero manual migration step; the
+  `demo-project-483920`/`demo-cicd` bindings keep working with zero manual migration step; the
   new file is created automatically the first time anyone calls `portunus bindings set` again
   (any field), naturally forward-migrating.
 - **Acceptance-critical test**: load the *actual* current `gcp-bindings.json` shape (verbatim,
@@ -196,10 +196,10 @@ Docs (README's MCP/CLI sections, `.pHive/CONTEXT.md`'s ARCA terminology entry �
 what that entry should have described from the start), version bump (this changes core resolution
 behavior — **minor**, not major: additive/backward-compatible per Slices A/B's own migration
 guarantees, no existing caller breaks). Live proof against the real vault: bind one real project
-(likely `personalsites-487021`, the smaller of the two) to `sync_mode="cached"`, run
-`portunus sync personalsites-487021`, confirm a real local encrypted cache gets created, confirm a
+(likely `demo-project-483920`, the smaller of the two) to `sync_mode="cached"`, run
+`portunus sync demo-project-483920`, confirm a real local encrypted cache gets created, confirm a
 second sync run reports `already_fresh` (no redundant GCP fetch) via the real `latest_version`
-check, and confirm `ffe-cicd` (left at `sync_mode="direct"`, untouched) still resolves exactly as
+check, and confirm `demo-cicd` (left at `sync_mode="direct"`, untouched) still resolves exactly as
 it does today through the legacy-file fallback path.
 
 ## 4. What "the secure store was supposed to be a package" means here
@@ -231,7 +231,7 @@ inventing new credential-minting logic — not pulled into this epic's scope.
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| A bug in the new config loader silently breaks the real `personalsites-487021`/`ffe-cicd` bindings | Critical | Slice A's acceptance criteria require testing against the *actual* current `gcp-bindings.json` content, not a simplified fixture; the legacy file is never written/moved, only read; new file is additive |
+| A bug in the new config loader silently breaks the real `demo-project-483920`/`demo-cicd` bindings | Critical | Slice A's acceptance criteria require testing against the *actual* current `gcp-bindings.json` content, not a simplified fixture; the legacy file is never written/moved, only read; new file is additive |
 | `SyncingBackend` serves a stale cached value past a real rotation, and a caller can't tell it's stale | High | Recency check runs on every `access()` call by design (Slice C step 2) — staleness is structurally impossible to miss for any `cached`-mode reference; the explicit `portunus sync` trigger (Slice D) exists specifically for callers who want a guaranteed-fresh point-in-time refresh (the deploy use case) rather than relying on next-access timing |
 | Router silently mis-routes a reference to the wrong backend | High | Fallback-to-today's-global-backend behavior only fires when no binding matches `ref.project` — never a *wrong* binding; every routed case is an explicit, human-configured entry in `vault-bindings.json` |
 | Scope creep into real key rotation or bidirectional sync | Medium | Explicitly out of scope per §1, confirmed twice by the user this session; the UI's rotate-key control is inert by construction (no route/handler exists to accidentally wire up) |

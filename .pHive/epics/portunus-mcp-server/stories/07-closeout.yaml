@@ -19,7 +19,7 @@ description: |
   for qdrant-nomic). Verify via a raw stdio JSON-RPC test script -- this session cannot attach
   to a server started mid-conversation, so verification is a standalone script sending
   tools/list and tools/call messages and checking responses, not a live in-session tool call.
-  The real proof: promote personalsites-487021-google_generative_ai_api_key to state=enabled
+  The real proof: promote demo-project-483920-google_generative_ai_api_key to state=enabled
   (human decision, made live in conversation), call portunus_resolve_exec with a real curl
   against the Google Generative AI API, confirm a real API response comes back and the key
   never appears anywhere in the tool's response or this session's own output. README/

@@ -112,7 +112,7 @@ bump, README's "Standalone UI" section gains a one-line mention of the Project E
    local, no-network read, and folding it into the route the Project Explorer panel already
    calls avoids a whole extra route for one boolean.)*
 2. Does the discovery panel need pagination/virtualization for large projects (e.g. the real
-   `personalsites-487021` has 19 secrets today, could grow)? *(My call: no — render the full
+   `demo-project-483920` has 19 secrets today, could grow)? *(My call: no — render the full
    list, same as the CLI's own unpaginated stdout; revisit only if real usage shows it's a
    problem. Not worth the complexity for a localhost single-user tool.)*
 
@@ -128,7 +128,7 @@ VERIFICATION PLAN:
   Manual: full click-through of the new Project Explorer tab (list + discover + register)
     against a temp PORTUNUS_HOME seeded with demo data; metadata edit via DetailDrawer's
     extended Move form; visual check that description doesn't crowd Console/VaultMap.
-  Not verifying: real-network discovery against personalsites-487021 in this epic (already
+  Not verifying: real-network discovery against demo-project-483920 in this epic (already
     verified in portunus-vault-metadata; this epic's UI routes are exercised against a mocked/
     seeded local registry + a stubbed gcloud runner, same discipline as the backend epic).
 ```

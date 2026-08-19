@@ -32,7 +32,7 @@ description: |
   description/purpose/group/related.
 
 acceptance_criteria:
-  - "Given the real, actual current PORTUNUS_HOME/gcp-bindings.json content (personalsites-487021 + ffe-cicd, verbatim), when load_vault_bindings() reads it, then both projects resolve to backend='gcp' with their existing account/wif_audience values intact, and no new file is written as a side effect of reading"
+  - "Given the real, actual current PORTUNUS_HOME/gcp-bindings.json content (demo-project-483920 + demo-cicd, verbatim), when load_vault_bindings() reads it, then both projects resolve to backend='gcp' with their existing account/wif_audience values intact, and no new file is written as a side effect of reading"
   - "Given no vault-bindings.json and no gcp-bindings.json, when load_vault_bindings() reads, then it falls back to the existing PORTUNUS_GCP_PROJECT/PORTUNUS_GCP_WIF_AUDIENCE env-derived single binding, unchanged from today"
   - "Given a fresh vault-bindings.json written via save_vault_bindings(), when load_vault_bindings() reads it back, then backend/sync_mode round-trip correctly alongside wif_audience/account, and it takes precedence over any legacy gcp-bindings.json present"
   - "Given save_vault_bindings() is called, when inspected, then the legacy gcp-bindings.json file (if present) is untouched -- not read-then-rewritten, not deleted, not renamed"
@@ -87,7 +87,7 @@ files_to_modify:
 
 design_decisions:
   - decision: New file (vault-bindings.json) + legacy-fallback read, never a migration script that touches the old file
-    rationale: "The real, already-populated gcp-bindings.json for personalsites-487021/ffe-cicd must never be at risk of a bad rewrite -- read-only fallback is strictly safer than any write-based migration"
+    rationale: "The real, already-populated gcp-bindings.json for demo-project-483920/demo-cicd must never be at risk of a bad rewrite -- read-only fallback is strictly safer than any write-based migration"
   - decision: Clean rename across all call sites, not a load_gcp_bindings back-compat alias
     rationale: "Every call site is known in advance within this one epic -- a dual-named shim would be exactly the kind of unnecessary back-compat cruft this codebase avoids elsewhere"
 

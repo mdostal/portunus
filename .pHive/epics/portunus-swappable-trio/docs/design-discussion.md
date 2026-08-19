@@ -12,8 +12,8 @@ research, a design synthesis, and an adversarial grill pass):
 - **ARCA**: local + GCP stay the only *real* backends — matches what all 6 researched
   candidates (HashiCorp Vault, Infisical, AWS Secrets Manager, Doppler, 1Password Secrets
   Automation, Azure Key Vault) independently recommended (stub-only; none has a validated
-  environment to build a real adapter against yet, unlike GCP's real `personalsites-487021`/
-  `ffe-cicd` projects). Add honest, interface-conformant stubs for the other five, matching
+  environment to build a real adapter against yet, unlike GCP's real `demo-project-483920`/
+  `demo-cicd` projects). Add honest, interface-conformant stubs for the other five, matching
   `AWSSecretsManagerBackend`'s existing restraint exactly. Add one real, scoped capability:
   harden the sync-down cache (`SyncingBackend`, shipped in portunus-vault-routing) to survive
   a real network outage by falling back to the last-known-good local copy instead of hard-

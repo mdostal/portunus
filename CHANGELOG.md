@@ -4,6 +4,26 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `SECURITY.md` (private vulnerability reporting via GitHub Security Advisories) and
+  `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1) — `CONTRIBUTING.md` referenced a code of
+  conduct that didn't actually exist. `pyproject.toml` gains PyPI classifiers and `Repository`/
+  `Issues`/`Changelog` project URLs. `.github/PULL_REQUEST_TEMPLATE.md` added.
+
+### Changed
+
+- Pre-release scrub: real GCP project IDs (`personalsites-487021`, `ffe-cicd`) and real personal
+  email addresses used as worked examples throughout README/CHANGELOG/`.pHive/epics/**` (from
+  real dogfooding sessions) replaced with placeholders (`demo-project-483920`, `demo-cicd`,
+  `personal@example.com`, `work@example.com`) — 242 substitutions across 56 files, so the public
+  history doesn't point at any real live infrastructure. Author name/company/site were left
+  untouched (already public). The `.pHive/epics/` paper trail itself stays — only the
+  identifying specifics inside it were scrubbed.
+- README's "13 tools"/"35-command CLI" summary corrected to the real current counts (21 MCP
+  tools, 35 CLI commands as of this release); MCP tool table gains the previously-undocumented
+  `portunus_rotation_status`.
+
 ## [0.26.0] - 2026-08-18
 
 ### Added
@@ -210,7 +230,7 @@ final checkpoint after v0.20.0's metadata-quality/org-hierarchy half.
 ### Added
 
 - **`org` field** — an organizational umbrella one level above `project` (e.g. `firefly-events`
-  spanning `ffe-cicd`/`shindig`), the same flat-structured-tag pattern `provider`/`project`/
+  spanning `demo-cicd`/`shindig`), the same flat-structured-tag pattern `provider`/`project`/
   `env`/`repo` already use. Wired through `reg add`/`retag`/`retag-bulk`/`drop` and into
   `retag()`'s collision check.
 - **Sub-vault navigation** — Vault Map is now a real org → project drill-down (each level
@@ -302,7 +322,7 @@ release.
 ### Added
 
 - **`repo` + `source_files` reference metadata.** Found by inspecting the real data first: all
-  342 `ffe-cicd` references share one GCP project across many repos/services, with nothing
+  342 `demo-cicd` references share one GCP project across many repos/services, with nothing
   distinguishing *which git repo* actually consumes a secret. `repo` is a new structured field
   (`find --tags repo=...` works immediately, same as provider/project/env); `source_files` is a
   list of file paths in that repo, same optional posture as `related`.
@@ -319,8 +339,8 @@ release.
   explicitly considered and deferred: `related` has 2 real data points in the whole vault today,
   not yet a substrate worth a graph renderer.
 
-Live-verified against the real `ffe-cicd` data (384 references in the vault at the time): `retag-bulk
---group-prefix ffe-cicd/event-api --repo event-api --dry-run` correctly identified 91
+Live-verified against the real `demo-cicd` data (384 references in the vault at the time): `retag-bulk
+--group-prefix demo-cicd/event-api --repo event-api --dry-run` correctly identified 91
 references with zero collisions and made zero writes. The actual backfill against real
 production data is an explicit follow-up for whoever owns that vault to confirm, not something
 this release does unsupervised — the real data's repo naming is a judgment call, not something
@@ -539,7 +559,7 @@ to guess at automatically.
   with a `{{secret}}` marker substituted through a capturing `subprocess.run` (30s timeout, not
   the CLI's default `execvp`) and returns only `{stdout, stderr, returncode}` — never the
   resolved command line, on any path including timeouts/exceptions. Verified live against the
-  real Google Generative AI API using the real `personalsites-487021` Gemini key: a real API
+  real Google Generative AI API using the real `demo-project-483920` Gemini key: a real API
   response came back, the key itself never appeared in the tool's result.
 - **`portunus auth login <email>`** / **`portunus auth status [--json]`** — bounded auth
   lifecycle through Portunus instead of bare `gcloud`. `login` is a thin wrapper around
@@ -567,8 +587,8 @@ to guess at automatically.
 - **UI: Project Explorer's Registered list now renders as a nested tree**, built client-side
   from the same data already fetched -- an independent TypeScript implementation of the same
   grouping rule as the Python CLI, verified to agree exactly against real data.
-- Applied to the real vault: `personalsites-487021`'s Resend key pair grouped and
-  cross-linked; **all 342 real `ffe-cicd` secrets organized into ~20 real application groups**
+- Applied to the real vault: `demo-project-483920`'s Resend key pair grouped and
+  cross-linked; **all 342 real `demo-cicd` secrets organized into ~20 real application groups**
   (event-api/dev+prod, social-engine/dev+prod, shindig, game-library, monitoring,
   orchestration, venues, stripe, and more) by naming convention, replacing an undifferentiated
   flat list with a real navigable structure in both the CLI and the live UI.
@@ -596,9 +616,9 @@ to guess at automatically.
   local-CLI-reading-its-own-config trust boundary, deliberately different from the UI's
   presence-only `wif_configured`).
 - Verified live against two real GCP accounts in one session:
-  `portunus discover --project ffe-cicd` (342 secrets, `account=mdostal@ff.events`)
-  immediately followed by `portunus discover --project personalsites-487021` (36 secrets,
-  `account=mathew.dostal@gmail.com`), both succeeding regardless of which account gcloud
+  `portunus discover --project demo-cicd` (342 secrets, `account=work@example.com`)
+  immediately followed by `portunus discover --project demo-project-483920` (36 secrets,
+  `account=personal@example.com`), both succeeding regardless of which account gcloud
   considered "active" -- and confirmed the pre-fix failure mode by removing the binding and
   reproducing the exact `Permission denied` error the user hit.
 

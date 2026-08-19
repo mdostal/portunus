@@ -1,6 +1,6 @@
 """VaultBinding's backend/sync_mode fields + migration-safe config loading
 (story 01, portunus-vault-routing). The real gcp-bindings.json for
-personalsites-487021/ffe-cicd must keep working with zero manual migration --
+demo-project-483920/demo-cicd must keep working with zero manual migration --
 see test_load_vault_bindings_reads_the_actual_real_gcp_bindings_content."""
 import json
 
@@ -47,22 +47,22 @@ def test_legacy_file_loads_with_gcp_direct_defaults(home):
 
 def test_load_vault_bindings_reads_the_actual_real_gcp_bindings_content(home):
     """The exact, real PORTUNUS_HOME/gcp-bindings.json content for this
-    session's actual vault (personalsites-487021 + ffe-cicd) -- verbatim,
+    session's actual vault (demo-project-483920 + demo-cicd) -- verbatim,
     not a simplified fixture."""
     real_content = {
-        "personalsites-487021": {"wif_audience": "", "account": "mathew.dostal@gmail.com"},
-        "ffe-cicd": {"wif_audience": "", "account": "mdostal@ff.events"},
+        "demo-project-483920": {"wif_audience": "", "account": "personal@example.com"},
+        "demo-cicd": {"wif_audience": "", "account": "work@example.com"},
     }
     (home / "gcp-bindings.json").write_text(json.dumps(real_content, indent=2))
 
     bindings = load_vault_bindings()
 
-    assert bindings["personalsites-487021"].backend == "gcp"
-    assert bindings["personalsites-487021"].sync_mode == "direct"
-    assert bindings["personalsites-487021"].account == "mathew.dostal@gmail.com"
-    assert bindings["ffe-cicd"].backend == "gcp"
-    assert bindings["ffe-cicd"].sync_mode == "direct"
-    assert bindings["ffe-cicd"].account == "mdostal@ff.events"
+    assert bindings["demo-project-483920"].backend == "gcp"
+    assert bindings["demo-project-483920"].sync_mode == "direct"
+    assert bindings["demo-project-483920"].account == "personal@example.com"
+    assert bindings["demo-cicd"].backend == "gcp"
+    assert bindings["demo-cicd"].sync_mode == "direct"
+    assert bindings["demo-cicd"].account == "work@example.com"
     # reading must never write a new file as a side effect
     assert not (home / "vault-bindings.json").exists()
 

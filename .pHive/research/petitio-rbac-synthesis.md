@@ -28,7 +28,7 @@
 
 ### A3. Threat model
 **Agreement (strong):** All three land on the same top tier, independently:
-1. **Cross-project accidental resolve** (hallucinated/under-specified reference names, or session/context bleed when an agent is repointed at a different project mid-session) — high likelihood, and with 342 of 393 references under `ffe-cicd`, an under-specified query from a small project is statistically likely to land on the big one.
+1. **Cross-project accidental resolve** (hallucinated/under-specified reference names, or session/context bleed when an agent is repointed at a different project mid-session) — high likelihood, and with 342 of 393 references under `demo-cicd`, an under-specified query from a small project is statistically likely to land on the big one.
 2. **Prompt-injection-driven resolve** — an agent reading untrusted repo content (README, issue, fetched URL) that instructs it to fetch an unrelated project's secret. All three call this out as the *strongest single argument* for real enforcement, because it's structurally invisible to what already exists: audit chain only records after the value is out, and leak-scan never sees it at all when the value goes straight into a subprocess argv/env (as `resolve_exec`-style flows do) without ever touching disk.
 3. **Broad enumeration** (`list`/`tree` defaulting to the whole vault's metadata) — real, but lower severity standalone; valuable mainly as a force-multiplier that feeds scenarios 1–2 by putting hundreds of irrelevant reference names into a confused agent's context.
 
@@ -102,7 +102,7 @@ class PolicyRecord:
 
 **Tier 1 — real prevention needed; nothing existing covers these:**
 1. **Prompt-injection-driven out-of-scope resolve.** An agent ingests untrusted repo content (README, issue, fetched page) instructing it to fetch an unrelated project's secret. This is the single strongest justification for building this feature: it requires no prior machine compromise, can reach the full vault, and is invisible to both the audit chain (records only after the fact) and leak-scan (never touches disk when a value goes straight into a subprocess call).
-2. **Cross-project accidental resolve** — hallucinated/under-specified reference addressing, or an agent's session context bleeding from one project to another after being repointed mid-session. The everyday, non-adversarial failure mode this whole shared-vault setup makes possible; with 342 of 393 references under `ffe-cicd`, an under-specified query from a small project is statistically likely to land on the big one.
+2. **Cross-project accidental resolve** — hallucinated/under-specified reference addressing, or an agent's session context bleeding from one project to another after being repointed mid-session. The everyday, non-adversarial failure mode this whole shared-vault setup makes possible; with 342 of 393 references under `demo-cicd`, an under-specified query from a small project is statistically likely to land on the big one.
 3. **Human mistagging / over-broad grants.** Easy to happen once among hundreds of references; the authoring tools to prevent it (`roles.py` CLI + Settings UI) already exist and are proven inert. This is the scenario that most directly validates finishing what's half-built rather than starting something new.
 
 **Tier 2 — real, fold into the same design, not independently urgent:**

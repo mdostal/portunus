@@ -32,7 +32,7 @@ injected" or "description metadata" — the fields exist. The gap is **fill rate
 not schema.
 
 **Real fill-rate reality** (confirmed, not estimated): `portunus-provenance-graph/docs/
-research-brief.md` — all 342 real `ffe-cicd` references have `description`/`purpose`/`kind`/
+research-brief.md` — all 342 real `demo-cicd` references have `description`/`purpose`/`kind`/
 `related`/`injected_as` **empty**. `related` has exactly 2 real data points in the **entire**
 385-reference vault. A bulk-backfill tool (`retag-bulk --group-prefix`) was built and dry-run-
 verified (91 matches, zero collisions) specifically for this — but the real backfill was

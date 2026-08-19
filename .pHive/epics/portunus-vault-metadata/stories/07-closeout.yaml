@@ -18,7 +18,7 @@ description: |
   Slice F. README's ARCA section rewritten to explicitly narrate pluggable backends behind
   one interface -- local-encrypted, GCP Secret Manager (WIF), AWS Secrets Manager (stub) --
   selected per-Reference by provider+project, not one global choice, with a worked discovery
-  example against personalsites-487021 (19 real secrets) as the concrete illustration.
+  example against demo-project-483920 (19 real secrets) as the concrete illustration.
   OSTIARIUS section gains the metadata-query surface (list/discover) alongside the existing
   boundary-resolve description. CONTEXT.md gains new vocabulary: injected_as, list_by_project,
   GcpProjectBinding, discover, gcp-bindings.json, and the "WIF tokens are a second
@@ -28,7 +28,7 @@ description: |
 acceptance_criteria:
   - "Given README.md's ARCA section, when read, then it names all three backends (local-encrypted, GCP/WIF, AWS-stub) and states selection is per-Reference by provider+project"
   - "Given README.md's OSTIARIUS section, when read, then it documents the list/discover metadata-query surface alongside the existing boundary-resolve description"
-  - "Given README.md, when read, then it includes a worked discovery example referencing a real project (personalsites-487021) and its non-empty result"
+  - "Given README.md, when read, then it includes a worked discovery example referencing a real project (demo-project-483920) and its non-empty result"
   - "Given CONTEXT.md's Terminology section, when read, then it defines injected_as, list_by_project, GcpProjectBinding, discover, and gcp-bindings.json"
   - "Given pyproject.toml/manifest.json/src/portunus/__init__.py, when checked, then all three carry the same bumped version number in lockstep"
   - "Given CHANGELOG.md, when read, then it has a new entry describing this epic's shipped capabilities"

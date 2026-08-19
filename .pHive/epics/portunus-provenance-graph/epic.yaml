@@ -5,9 +5,9 @@ methodology: tdd
 version_bump: minor
 
 description: |
-  Real data confirmed the gap directly: all 342 ffe-cicd references are auto-discovered
+  Real data confirmed the gap directly: all 342 demo-cicd references are auto-discovered
   placeholders with zero description/purpose/kind/related, and no field captures which git repo
-  (distinct from the shared ffe-cicd GCP project) or which file actually consumes a secret.
+  (distinct from the shared demo-cicd GCP project) or which file actually consumes a secret.
   Adds `repo` (new structured tag field, immediately queryable via `find --tags repo=...`) and
   `source_files` (new list field, same posture as `related`) to Reference. A new
   `retag-bulk --group-prefix <p> --repo <name> [--dry-run]` CLI command makes backfilling many

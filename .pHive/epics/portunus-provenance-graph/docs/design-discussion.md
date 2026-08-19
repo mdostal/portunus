@@ -7,7 +7,7 @@
   repo=event-api`, fail-closed collision-checking on `retag`, and a UI facet chip (Project
   Explorer already renders one chip row per structured field — `repo` slots in identically, zero
   new UI plumbing beyond adding it to the existing facet list). Distinct from `project`
-  (`ffe-cicd` is one GCP project shared by many repos/services) and distinct from `group` (free
+  (`demo-cicd` is one GCP project shared by many repos/services) and distinct from `group` (free
   text, human-organized display path, not queryable as its own dimension today).
 - **`source_files`** (list of strings, default `[]`) — same shape and posture as `related`
   (optional, additive, human-filled, no fail-closed semantics, not a `_STRUCTURED_TAG_FIELDS`
@@ -23,10 +23,10 @@ metadata addition this session used (`description`, `purpose`, `injected_as`, `g
 ## 2. Bulk-retag-by-prefix: the actual unlock for 342 entries
 
 `Registry.retag()` changes one reference. Backfilling `repo` across (e.g.) the 91 references
-under `ffe-cicd/event-api/*` one at a time is the real toil the user is trying to avoid. New:
+under `demo-cicd/event-api/*` one at a time is the real toil the user is trying to avoid. New:
 
 ```bash
-portunus retag-bulk --group-prefix ffe-cicd/event-api --repo event-api
+portunus retag-bulk --group-prefix demo-cicd/event-api --repo event-api
 ```
 
 Semantics: select every reference whose `group` starts with `--group-prefix` (a plain string

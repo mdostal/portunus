@@ -20,7 +20,7 @@ in the workflow's journal; this brief summarizes what's load-bearing for this ep
 All six above ship as honest, interface-conformant stubs (`access()` raises `BackendError`
 with a GitHub-request pointer) — no new real cloud/vault PoC. Revisit per-product if/when a
 real validated environment exists (mirrors this project's own established pattern: GCP became
-real because `personalsites-487021`/`ffe-cicd` are real, already-authenticated projects).
+real because `demo-project-483920`/`demo-cicd` are real, already-authenticated projects).
 
 ## Petitio — RBAC/escalation pattern research
 

@@ -27,7 +27,7 @@ real code before being treated as real:
   "a real Large-scope epic on its own (needs a 'known vaults' registry, cross-vault ambiguity
   semantics, UI vault-switcher)". Real, unblocked, but speculative: today's actual architecture
   is one shared `PORTUNUS_HOME` vault serving many projects via `project` tags (confirmed by
-  this session's own real usage — `ffe-cicd`, `personalsites-487021`, `cleanup-tools`,
+  this session's own real usage — `demo-cicd`, `demo-project-483920`, `cleanup-tools`,
   `coinfinder`, all in the same vault), with `--home <path>` as an explicit per-invocation escape
   hatch for a genuinely separate vault. No evidence surfaced that the user runs multiple
   separate vaults that would need federating. Presented to the user as an option; not chosen.

@@ -63,7 +63,7 @@ That's portunus.
 - **Bring your own vault** — **GCP Secret Manager** (keyless, via Workload Identity Federation)
   and a **local-encrypted vault** (Fernet: AES-128-CBC + HMAC-SHA256, zero cloud setup) work
   today.
-- **One core, three doors** — an **MCP server** (13 tools, metadata-only by default), a
+- **One core, three doors** — an **MCP server** (21 tools, metadata-only by default), a
   **35-command CLI**, and a **Next.js UI** (plus a native macOS desktop shell around the UI).
 - **Tamper-evident, hash-chained audit log** — keyed by secret *name*, never value. `portunus
   verify` proves the chain.
@@ -97,7 +97,7 @@ model is a *gift*, open it as an issue.
 ## Quick start
 
 ```bash
-pip install -e ".[test]"   # or: pipx install portunus, once published
+curl -fsSL https://mdostal.github.io/portunus/install.sh | bash   # or: pip install -e ".[test]" from a clone
 
 # store a secret -- stdin/file only, never an inline flag (would land in shell history)
 echo -n "sk-ant-..." | portunus drop shared-anthropic dostal-shared-anthropic --stdin
@@ -379,7 +379,7 @@ portunus reg add stripe-prod dostal-stripe-live \
 ```
 
 `org` sits one level above `project` — an organizational umbrella spanning several projects
-(e.g. `firefly-events` spanning `ffe-cicd`, `shindig`, and more), the structural field the
+(e.g. `firefly-events` spanning `demo-cicd`, `shindig`, and more), the structural field the
 Standalone UI's Vault Map drill-down and Console's facets key off of. Like every other
 structured tag, an absent `org` is never an error — it lands in a `(no org set)` bucket, same
 non-dropping treatment `group`'s own `(ungrouped)` bucket already gets.
@@ -391,18 +391,18 @@ The LLM-facing structure query: renders every reference's `group` as a real tree
 under an `(ungrouped)` bucket rather than being silently dropped:
 
 ```bash
-$ portunus tree --project ffe-cicd
-ffe-cicd/
+$ portunus tree --project demo-cicd
+demo-cicd/
   clerk-webhook/
-    ffe-cicd-clerk-webhook-secret-dev
-    ffe-cicd-clerk-webhook-secret-prod
+    demo-cicd-clerk-webhook-secret-dev
+    demo-cicd-clerk-webhook-secret-prod
   event-api/
     dev/
-      ffe-cicd-event-api-dev-mongo-uri
-      ffe-cicd-event-api-dev-jwt-secret
+      demo-cicd-event-api-dev-mongo-uri
+      demo-cicd-event-api-dev-jwt-secret
       ... (48 more)
     prod/
-      ffe-cicd-event-api-prod-mongo-uri
+      demo-cicd-event-api-prod-mongo-uri
       ... (39 more)
   ... (18 more apps)
 ```
@@ -415,8 +415,8 @@ the same data.
 ### `repo`/`source_files` — which git repo (and file) actually consumes a secret
 
 A real gap, found by looking at the real data: `group` already captures a rough service/env
-hierarchy (`ffe-cicd/event-api/prod`), but nothing distinguished *which git repo* consumes a
-secret from *which cloud project* it lives in — one shared GCP project (`ffe-cicd`) can span
+hierarchy (`demo-cicd/event-api/prod`), but nothing distinguished *which git repo* consumes a
+secret from *which cloud project* it lives in — one shared GCP project (`demo-cicd`) can span
 many repos/services. `repo` is a new structured field (`find --tags repo=event-api` works
 immediately, same as `provider`/`project`/`env`); `source_files` is a list of file paths in that
 repo that reference the secret (a `docker-compose.yml`, a CI workflow) — same optional,
@@ -433,10 +433,10 @@ secrets, not a one-at-a-time `retag` per reference:
 
 ```bash
 # Preview first -- makes zero writes, reports exactly what would change:
-portunus retag-bulk --group-prefix ffe-cicd/event-api --repo event-api --dry-run
+portunus retag-bulk --group-prefix demo-cicd/event-api --repo event-api --dry-run
 
 # Then actually apply it:
-portunus retag-bulk --group-prefix ffe-cicd/event-api --repo event-api
+portunus retag-bulk --group-prefix demo-cicd/event-api --repo event-api
 ```
 
 Selects every reference whose `group` starts with `--group-prefix` (a plain string prefix, no
@@ -447,7 +447,7 @@ and never aborts the rest of the batch, same precedent `drop-bulk` already set.
 — same command, same shape, a second facet on the same underlying data:
 
 ```bash
-portunus tree --project ffe-cicd --by repo   # --by group is the default, unchanged
+portunus tree --project demo-cicd --by repo   # --by group is the default, unchanged
 ```
 
 A reference with no `repo` set renders under a `(no repo set)` bucket, same non-dropping
@@ -487,10 +487,10 @@ gcloud's ambient active account. (Mutually exclusive with a WIF binding on the s
 project — a minted access token already carries identity.)
 
 ```bash
-portunus bindings set ffe-cicd --account work@example.com
+portunus bindings set demo-cicd --account work@example.com
 portunus bindings set my-project-12345 --account personal@example.com
 portunus bindings show                          # real values -- a local CLI reading your own 0600 config
-portunus discover --provider gcp --project ffe-cicd            # uses work@example.com
+portunus discover --provider gcp --project demo-cicd            # uses work@example.com
 portunus discover --provider gcp --project my-project-12345  # uses personal@example.com
 # both work in the same session, regardless of which account gcloud currently considers active
 ```
@@ -530,7 +530,7 @@ actually bound to — **not** one global `PORTUNUS_BACKEND` choice for the whole
 levels of precedence: a reference's own `backend` override (set via `portunus_drop`/`reg add`/
 `retag --backend {local,gcp,aws}`) wins outright; else the project's `VaultBinding.backend`
 (`portunus bindings set <project> --backend ...`); else today's global `PORTUNUS_BACKEND`
-env var, unchanged, as the final fallback. This means `my-project-12345` and `ffe-cicd` can
+env var, unchanged, as the final fallback. This means `my-project-12345` and `demo-cicd` can
 resolve correctly in the *same process* without ever setting `PORTUNUS_BACKEND=gcloud` by hand.
 
 ```bash
@@ -695,6 +695,7 @@ below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 | `portunus_drop_bulk(entries)` | Create many local-vault secrets in one call — `{"created": [names], "failed": [{"name","error"}]}`, never a value |
 | `portunus_state(name, state)` | Change a reference's lifecycle state — `{name, state}` |
 | `portunus_sync(project)` | Force a recency check for every cached-mode reference in a project — `{"synced", "already_fresh", "failed"}`, names only |
+| `portunus_rotation_status(provider="")` | Configured per-provider rotation bindings (status/account) — one provider or all. Every provider is a stub today (`status="stub"`) — no real rotation has ever fired |
 
 The injection tools use the same **dual addressing** as the CLI's own `inject`/`ask`: give an
 exact `name` (from a prior `portunus_list`/`portunus_tree` call) or `tags` — never raw

@@ -88,4 +88,4 @@ references:
   - path: .pHive/epics/portunus-vault-metadata/docs/design-discussion.md
     relevant_excerpt: "Slice C -- GCP discovery (read-only)"
   - path: .pHive/epics/portunus-vault-metadata/docs/research-brief.md
-    relevant_excerpt: "Real infra confirmed this session -- personalsites-487021 (19 secrets), firefly-events-inc (0 secrets)"
+    relevant_excerpt: "Real infra confirmed this session -- demo-project-483920 (19 secrets), firefly-events-inc (0 secrets)"

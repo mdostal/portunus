@@ -28,16 +28,16 @@ Decomposed:
 
 ## Real infra confirmed this session (do not re-verify, use as given)
 
-Local `gcloud` CLI is authenticated as `mathew.dostal@gmail.com` (default project
-`personalsites-487021`). Two live GCP projects are the worked examples:
+Local `gcloud` CLI is authenticated as `personal@example.com` (default project
+`demo-project-483920`). Two live GCP projects are the worked examples:
 
-- `personalsites-487021` ("PersonalSites") — Mathew Dostal's personal-sites project. 19 real
+- `demo-project-483920` ("PersonalSites") — Mathew Dostal's personal-sites project. 19 real
   secrets already exist in its Secret Manager (`AUTH_SECRET`, `RESEND_API_KEY`,
   `SANITY_API_*`, `dostal-shared-*`, etc.) — a solid non-empty discovery example.
 - `firefly-events-inc` ("Firefly Events Inc") — reachable under the same account (cross-account
   IAM), Secret Manager currently empty (`Listed 0 items`) — a solid empty-project example.
 
-A third gcloud account, `mdostal@ff.events`, is configured locally but its cached token is
+A third gcloud account, `work@example.com`, is configured locally but its cached token is
 expired and non-interactive reauth fails — do not assume it's usable without the user running
 `gcloud auth login` themselves.
 

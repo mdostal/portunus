@@ -7,10 +7,10 @@ from portunus.cli import main
 
 def test_cli_list_prints_metadata_only(home, capsys):
     reg = Registry()
-    reg.add("a", "sm-a", provider="gcp", project="personalsites-487021",
+    reg.add("a", "sm-a", provider="gcp", project="demo-project-483920",
             description="Auth secret", purpose="Session signing")
 
-    rc = main(["list", "--project", "personalsites-487021"])
+    rc = main(["list", "--project", "demo-project-483920"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "sm-a" in out
