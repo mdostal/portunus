@@ -719,6 +719,78 @@ more) before concluding a hand-rolled evaluator was the right-sized v1 for this 
 shape -- full raw output at `.pHive/research/petitio-rbac-synthesis.md`, distilled at
 `.pHive/epics/portunus-petitio-rbac/docs/research-brief.md`.
 
+## 18. Vault access transfer: scoped metadata sharing between instances (portunus-vault-transfer)
+
+**Distinct from `vault export`/`import` (§8), on purpose.** That pair moves the vault's *whole*
+critical-state surface — registry, master key, encrypted values, bindings, audit log — as one
+passphrase-locked archive: a full-vault backup/restore, for a machine move or a reinstall.
+`vault access export/import/verify` (new module `vault_transfer.py`) instead shares *working
+access* to some or all of a vault between two Portunus instances, without ever moving a value.
+For the common case — a GCP/AWS-backed reference — the value already lives with the cloud
+provider, not locally; only the registry pointer and its bindings ever need to move. The bundle
+is plain JSON, never passphrase-locked, because it structurally cannot contain a secret value:
+only `Reference`/`VaultBinding`/`RotationBinding` fields, each independently confirmed non-secret
+by its own docstring. This is also the literal answer to a standing ask this session: "portunus
+can already inject so it should be able to help setup and get that going" — `verify` reuses the
+exact same `Resolver.resolve_call()` boundary a real `resolve`/`ask`/`mcp` call already uses, no
+new fetch mechanism.
+
+**`resolved_backend` is computed once, at export time, on the source.** `resolved_backend_kind()`
+mirrors `cli.py::_make_backend_router()`'s own 3-level precedence (explicit `ref.backend`
+override → project's `VaultBinding.backend` → the global `PORTUNUS_BACKEND` fallback,
+normalizing the env var's own `"gcloud"` spelling to the `"gcp"` kind string every other field in
+this codebase uses) — but returns a plain string, baked into each exported reference. This can
+only be computed correctly on the source: an unscoped reference relying on the source's own
+global fallback has no equivalent on the target, which doesn't share that fallback value. Import
+never re-derives it — `import_bundle()` only ever reads the precomputed field and pins it
+directly into the target's own `ref.backend`, an explicit override that makes the target resolve
+that reference to the exact backend kind the source did, regardless of the target's own env/
+bindings.
+
+**The one piece of real import logic: `resolved_backend == "local"` always forces
+`state=requested`.** Regardless of the reference's state on the source, a local-backed value
+lives only on the source machine — landing it as anything else on the target would be a silent
+lie about readiness, exactly the failure mode `Registry.request()`'s existing "value-less
+placeholder" semantics already exist to prevent for agent-initiated asks. Every other backend's
+state transfers unchanged; no value ever needs to move for those. A per-reference conflict (same
+name, different `sm_name`/backend) never aborts the batch — refused without `--force`, reported
+by name with both the existing and incoming `sm_name`/backend, and overwritten with it — matching
+`drop_bulk`'s own established "one bad entry doesn't abort the batch" precedent.
+
+**`verify` is CLI-only for a different reason than `vault export`/`import` are.** Those are
+CLI-only because an archive containing every value should never be triggerable by an LLM-facing
+tool. `verify` never touches a value at all — its boundary (`_reachable_boundary`, structurally
+verified by AST to ignore its own argument entirely and always return the same literal) discards
+the resolved plaintext on arrival. It's CLI-only because it can trigger real backend API calls
+across every reference in the registry in a single invocation — a quota/cost/IAM-error-surfacing
+side effect, the same "a human initiates this" posture `vault export`/`import` already have, for
+a genuinely different reason.
+
+**Live-verified, not just unit-tested.** A real scoped export of the actual vault (one real,
+low-risk project's 19 references, all local-backed) was imported into a throwaway `--home` and
+verified there. `verify` correctly reported all 19 as needing `portunus drop` — an accurate
+readiness report, not a false "reachable" claim, since the values genuinely don't exist on the
+throwaway target. A direct filesystem check afterward confirmed `vault.enc.json` (the file that
+would actually hold an encrypted value) was never created. `master.key` *was* created — a
+pre-existing, unrelated side effect of `_build()` constructing a fallback `LocalEncryptedBackend`
+instance, which generates its key eagerly in `__init__` regardless of whether any local
+operation ever actually happens (true for `portunus list` on a fresh home today, not something
+this epic introduced or fixed). It's an inert Fernet key applied to no data — a real, precisely
+scoped finding from this epic's own live proof, not glossed over, and left as a known gap rather
+than an in-scope fix (lazy key generation would be a real behavior change to a load-bearing
+primitive, deserving its own dedicated story if pursued).
+
+**Self-grill: selective local-value transfer, explicitly deferred.** This epic's own
+design-discussion self-grill considered letting `export` optionally carry a *chosen* local
+value too (with the operator's explicit, per-reference consent) rather than always landing
+local-backed references as `state=requested`. Deliberately not built here — it's a materially
+different trust/consent model than "share a pointer," and conflating the two would have made
+this epic's own scope boundary (never move a value, structurally) harder to reason about and
+verify. Tracked as a real, separate follow-up, not silently dropped. See also `vault-backup`'s
+own §4 (portunus-vault-backup design-discussion.md) — the sibling decision to defer full
+bidirectional multi-machine sync as separate, bigger future work; this epic's "share access,
+not values" scope is intentionally narrower than that too.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference
