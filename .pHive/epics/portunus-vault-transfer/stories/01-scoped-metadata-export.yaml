@@ -1,7 +1,7 @@
 id: 01-scoped-metadata-export
 epic: portunus-vault-transfer
 title: portunus vault access export -- scoped, plain-JSON, metadata-only bundle (registry + bindings, never a value)
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: []

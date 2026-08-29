@@ -133,3 +133,89 @@ def write_bundle(bundle: dict, out: Optional[str] = None) -> Path:
     path = Path(out) if out else Path.cwd() / DEFAULT_BUNDLE_FILENAME
     path.write_text(json.dumps(bundle, indent=2))
     return path
+
+
+def _write_reference(registry: Registry, entry: dict, state: str, backend: str) -> None:
+    registry.add(
+        name=entry["name"],
+        sm_name=entry["sm_name"],
+        scope=entry.get("scope", ""),
+        kind=entry.get("kind", ""),
+        state=state,
+        approval=entry.get("approval", ""),
+        org=entry.get("org", ""),
+        project=entry.get("project", ""),
+        provider=entry.get("provider", ""),
+        env=entry.get("env", ""),
+        tags=entry.get("tags", {}),
+        description=entry.get("description", ""),
+        purpose=entry.get("purpose", ""),
+        injected_as=entry.get("injected_as", {}),
+        group=entry.get("group", ""),
+        related=entry.get("related", []),
+        backend=backend,
+        repo=entry.get("repo", ""),
+        source_files=entry.get("source_files", []),
+    )
+
+
+def import_bundle(
+    bundle: dict,
+    registry: Registry,
+    vault_bindings: Dict[str, VaultBinding],
+    rotation_bindings: Dict[str, RotationBinding],
+    force: bool = False,
+) -> dict:
+    """Reconstructs registry entries + bindings on the target from a Story 01
+    bundle. The one piece of real logic: resolved_backend=="local" always
+    forces state="requested" on import, regardless of the source's own
+    state -- the value literally doesn't exist anywhere the target can
+    reach. Every other backend's state (and its precomputed resolved_backend,
+    pinned into the target's own ref.backend field -- never re-derived here,
+    design-discussion.md §2a) transfers as exported. A per-reference
+    conflict never aborts the rest of the batch (matches drop_bulk's own
+    established precedent). `vault_bindings`/`rotation_bindings` are the
+    target's own current dicts -- mutated in place (upsert, never clobbering
+    an unrelated existing binding); the caller persists them via
+    save_vault_bindings()/save_rotation_bindings() after this returns."""
+    report: Dict[str, list] = {"created": [], "updated": [], "conflicted": [], "skipped": []}
+
+    for entry in bundle.get("references", []):
+        name = entry["name"]
+        resolved_backend = entry.get("resolved_backend", "")
+        state = "requested" if resolved_backend == "local" else entry.get("state", "enabled")
+        existing = registry.get(name)
+
+        if existing is None:
+            _write_reference(registry, entry, state, resolved_backend)
+            report["created"].append(name)
+            continue
+
+        same_identity = existing.sm_name == entry["sm_name"] and existing.backend == resolved_backend
+        if same_identity:
+            if existing.state == state:
+                report["skipped"].append(name)
+            else:
+                _write_reference(registry, entry, state, resolved_backend)
+                report["updated"].append(name)
+            continue
+
+        if not force:
+            report["conflicted"].append({
+                "name": name,
+                "existing_sm_name": existing.sm_name,
+                "existing_backend": existing.backend,
+                "new_sm_name": entry["sm_name"],
+                "new_backend": resolved_backend,
+            })
+            continue
+
+        _write_reference(registry, entry, state, resolved_backend)
+        report["updated"].append(name)
+
+    for project, raw in bundle.get("vault_bindings", {}).items():
+        vault_bindings[project] = VaultBinding(**raw)
+    for provider, raw in bundle.get("rotation_bindings", {}).items():
+        rotation_bindings[provider] = RotationBinding(**raw)
+
+    return report
