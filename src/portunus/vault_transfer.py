@@ -22,7 +22,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, Optional
 
-from .backend import VaultBinding
+from .backend import BackendError, VaultBinding
+from .broker import ApprovalRequired, NotAuthorized, NotInjectable
 from .registry import Reference, Registry
 from .rotation import RotationBinding
 
@@ -217,5 +218,57 @@ def import_bundle(
         vault_bindings[project] = VaultBinding(**raw)
     for provider, raw in bundle.get("rotation_bindings", {}).items():
         rotation_bindings[provider] = RotationBinding(**raw)
+
+    return report
+
+
+def _reachable_boundary(_value: str) -> str:
+    """resolve_call()'s boundary sink for verify -- structurally ignores its
+    own argument entirely (verified by AST test) and always returns the
+    same literal. This is the ONLY place a resolved value ever flows in
+    this module, and even here it's discarded on arrival."""
+    return "reachable"
+
+
+def verify_access(
+    registry: Registry,
+    resolver,
+    vault_bindings: Dict[str, VaultBinding],
+    project: str = "",
+) -> dict:
+    """Real per-reference reachability check via resolver.resolve_call() --
+    the same boundary-safe fetch mechanism a real resolve/ask/mcp call
+    uses, with a boundary that discards the result instead of acting on
+    it. Failures are translated into actionable hints, never a raw
+    traceback. One bad reference never aborts the batch (matches
+    build_bundle/import_bundle's own established precedent)."""
+    report: Dict[str, list] = {"reachable": [], "needs_drop": [], "needs_auth": [], "failed": []}
+
+    for ref in registry:
+        if project and ref.project != project:
+            continue
+        template = "{{secret:%s}}" % ref.name
+        try:
+            resolver.resolve_call(template, _reachable_boundary)
+            report["reachable"].append(ref.name)
+        except NotInjectable:
+            report["needs_drop"].append({
+                "name": ref.name,
+                "hint": f"portunus drop {ref.name} {ref.sm_name} --stdin",
+            })
+        except BackendError:
+            binding = vault_bindings.get(ref.project)
+            account = binding.account if binding and binding.account else "<account>"
+            proj = ref.project or "<project>"
+            report["needs_auth"].append({
+                "name": ref.name,
+                "hint": (
+                    f"portunus auth login {account}, or grant IAM access: "
+                    f"gcloud projects add-iam-policy-binding {proj} "
+                    f"--member=user:{account} --role=roles/secretmanager.secretAccessor"
+                ),
+            })
+        except (ApprovalRequired, NotAuthorized) as exc:
+            report["failed"].append({"name": ref.name, "hint": str(exc)})
 
     return report
