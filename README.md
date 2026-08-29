@@ -612,6 +612,50 @@ not a merge). CLI-only by design — no MCP tool, no UI surface: an archive cont
 secret in your vault should never be triggerable by an LLM-facing tool without you directly
 running the command yourself.
 
+### Vault access transfer: scoped, plain-JSON, no values (`vault access`)
+
+`portunus vault access export/import/verify` shares *working access* to some or all of a
+vault between two Portunus instances — distinct from `vault export`/`import` above, which
+moves the whole vault including every value. A `vault access` bundle carries registry
+pointers and bindings only: it structurally cannot contain a secret value, so it's plain
+JSON, never passphrase-locked.
+
+```bash
+portunus vault access export --project my-gcp-project --out access.json
+portunus --home /path/to/second/vault vault access import access.json
+portunus --home /path/to/second/vault vault access verify
+```
+
+`export` accepts `--project`/`--org`/`--tags k=v,...` filters (AND semantics; no filter means
+everything) and stamps each reference with a `resolved_backend` field — computed once, on the
+exporting instance, the same way every other command resolves which backend a reference
+actually uses (explicit override → project binding → the exporting instance's own global
+default). `import` reads that field rather than re-deriving it, since only the exporting
+instance ever knew its own global default. A reference whose `resolved_backend` is `"local"`
+always lands as `state=requested` on import, regardless of its state on the source — the
+value lives only on the source machine, so anything else would be a silent lie about
+readiness; a human fulfills it with `portunus drop`. Every other backend's pointer (GCP/AWS/
+etc.) transfers as-is — no value ever needs to move, since the value lives with the cloud
+provider, not locally. A conflicting name (same reference, different `sm_name`/backend)
+refuses that one entry and reports it clearly, without aborting the rest of the batch; pass
+`--force` to overwrite it.
+
+`verify` makes a real per-reference reachability check through the same boundary-safe
+`resolve_call()` a real `resolve`/`ask`/`mcp` call uses — the resolved value is handed to a
+boundary that immediately discards it, never printed or returned. Failures become actionable
+hints: a `state=requested` reference reports the exact `portunus drop` command; a real
+auth/IAM failure reports the `portunus auth login`/`gcloud …` commands naming the binding's
+own account and project. `verify` is CLI-only (no MCP tool) — it can trigger real backend API
+calls across every reference in the registry in one invocation, so it's a human-initiated
+batch action, the same posture `vault export`/`import` already have.
+
+Note: running any command against a fresh `PORTUNUS_HOME` — including `vault access
+import`/`verify` on a throwaway target — causes an unused `master.key` to be generated as a
+pre-existing side effect of how the local backend is constructed (a long-standing behavior
+of every command, not something `vault access` introduces). It's an inert Fernet key, never
+applied to any data; `vault.enc.json`, the file that would actually hold an encrypted value,
+is never created by `vault access` alone.
+
 ### Target a different vault (`--home`)
 
 ```bash

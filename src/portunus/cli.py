@@ -62,6 +62,7 @@ from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
+from .vault_transfer import build_bundle, import_bundle, verify_access, write_bundle
 
 # Distinct exit codes so scripts can branch on the failure mode without
 # parsing stderr text. 1 is the pre-existing generic-error code (_err()).
@@ -1337,6 +1338,96 @@ def cmd_vault_import(args) -> int:
     return 0
 
 
+def cmd_vault_access_export(args) -> int:
+    """Scoped, plain-JSON, metadata-only bundle of registry+bindings info
+    (never a secret value -- see vault_transfer.py) so a second Portunus
+    instance can gain working access without a full-vault backup/restore.
+    Distinct from `vault export` (backup.py): never passphrase-locked,
+    because it structurally cannot contain a secret value."""
+    registry, audit, _, _ = _build()
+    vault_bindings = load_vault_bindings()
+    rotation_bindings = load_rotation_bindings()
+    try:
+        bundle = build_bundle(
+            registry, vault_bindings, rotation_bindings,
+            project=args.project, org=args.org, tags=args.tags,
+        )
+    except ValueError as exc:
+        return _err(str(exc))
+    path = write_bundle(bundle, args.out)
+    audit.append(
+        "vault_access_export", "-",
+        f"exported {len(bundle['references'])} reference(s) -> {path}",
+    )
+    print(f"exported {len(bundle['references'])} reference(s) -> {path}")
+    return 0
+
+
+def cmd_vault_access_import(args) -> int:
+    """Reverse of `vault access export` -- see vault_transfer.py::import_bundle().
+    A per-reference conflict never aborts the batch (matches drop_bulk's own
+    precedent); pass --force to overwrite a conflicting entry."""
+    try:
+        raw = Path(args.bundle).read_text()
+    except OSError as exc:
+        return _err(f"could not read bundle: {exc}")
+    try:
+        bundle = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return _err(f"invalid bundle JSON: {exc}")
+
+    registry, audit, _, _ = _build()
+    vault_bindings = load_vault_bindings()
+    rotation_bindings = load_rotation_bindings()
+    report = import_bundle(bundle, registry, vault_bindings, rotation_bindings, force=args.force)
+    save_vault_bindings(vault_bindings)
+    save_rotation_bindings(rotation_bindings)
+
+    audit.append(
+        "vault_access_import", "-",
+        f"created={len(report['created'])} updated={len(report['updated'])} "
+        f"conflicted={len(report['conflicted'])} skipped={len(report['skipped'])} "
+        f"from {args.bundle}",
+    )
+    print(
+        f"created {len(report['created'])}, updated {len(report['updated'])}, "
+        f"skipped {len(report['skipped'])}, conflicted {len(report['conflicted'])}"
+    )
+    for conflict in report["conflicted"]:
+        print(
+            f"  conflict: {conflict['name']} -- "
+            f"existing sm_name={conflict['existing_sm_name']!r} backend={conflict['existing_backend']!r} "
+            f"vs bundle sm_name={conflict['new_sm_name']!r} backend={conflict['new_backend']!r} "
+            f"(use --force to overwrite)"
+        )
+    return 0
+
+
+def cmd_vault_access_verify(args) -> int:
+    """Real per-reference reachability check -- see vault_transfer.py::
+    verify_access(). CLI-only, no MCP tool (design-discussion.md §4):
+    triggers real backend API calls across potentially every reference in
+    the registry on one invocation, a human-initiated batch operation the
+    same way `vault export`/`import` already are."""
+    registry, _, _, resolver = _build(project=args.project or "")
+    vault_bindings = load_vault_bindings()
+    report = verify_access(registry, resolver, vault_bindings, project=args.project)
+
+    print(
+        f"reachable {len(report['reachable'])}, "
+        f"needs-drop {len(report['needs_drop'])}, "
+        f"needs-auth {len(report['needs_auth'])}, "
+        f"failed {len(report['failed'])}"
+    )
+    for entry in report["needs_drop"]:
+        print(f"  {entry['name']}: {entry['hint']}")
+    for entry in report["needs_auth"]:
+        print(f"  {entry['name']}: {entry['hint']}")
+    for entry in report["failed"]:
+        print(f"  {entry['name']}: {entry['hint']}")
+    return 0
+
+
 def _view_to_dict(view) -> dict:
     return {"name": view.name, "description": view.description, "ref_names": view.ref_names}
 
@@ -2216,6 +2307,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace existing vault state in PORTUNUS_HOME (full replace, not merge)",
     )
     vault_import.set_defaults(func=cmd_vault_import)
+
+    vault_access = vault_sub.add_parser(
+        "access",
+        help="scoped, plain-JSON access-info transfer between Portunus instances (no secret values)",
+    )
+    vault_access_sub = vault_access.add_subparsers(dest="access_action", required=True)
+
+    vault_access_export = vault_access_sub.add_parser(
+        "export",
+        help="export a scoped, plain-JSON bundle of registry+bindings metadata (never a value)",
+    )
+    vault_access_export.add_argument("--project", default="", help="filter to one project")
+    vault_access_export.add_argument("--org", default="", help="filter to one org")
+    vault_access_export.add_argument(
+        "--tags", default="", help="filter by tag(s), e.g. --tags repo=my-repo,env=prod",
+    )
+    vault_access_export.add_argument(
+        "--out", help="output bundle path (default: ./portunus-vault-access.json)",
+    )
+    vault_access_export.set_defaults(func=cmd_vault_access_export)
+
+    vault_access_import = vault_access_sub.add_parser(
+        "import",
+        help="import a scoped access-info bundle -- reconstructs registry entries + bindings",
+    )
+    vault_access_import.add_argument("bundle", help="path to a bundle written by `vault access export`")
+    vault_access_import.add_argument(
+        "--force", action="store_true",
+        help="overwrite a conflicting entry (different sm_name/backend) instead of refusing it",
+    )
+    vault_access_import.set_defaults(func=cmd_vault_access_import)
+
+    vault_access_verify = vault_access_sub.add_parser(
+        "verify",
+        help="real per-reference reachability check -- boundary-safe, never prints a value",
+    )
+    vault_access_verify.add_argument("--project", default="", help="filter to one project")
+    vault_access_verify.set_defaults(func=cmd_vault_access_verify)
 
     vw = sub.add_parser(
         "views", help="named, human-curated reference collections for ad-hoc task clustering",

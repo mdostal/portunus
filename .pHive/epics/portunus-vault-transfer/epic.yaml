@@ -1,0 +1,47 @@
+name: portunus-vault-transfer
+title: portunus vault access export|import|verify -- share vault access between instances, without ever moving a value
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  User's own framing: "we need a way to be able to have an import export / copy / or transfer
+  of vault access info between portunus instances -- portunus can already inject so i think it
+  should be able to help setup and get that going as well or oauth it etc."
+
+  Distinct from `portunus vault export/import` (already ships full-vault, passphrase-locked,
+  local-value backup/restore) and NOT bidirectional sync (explicitly deferred by
+  portunus-vault-backup's own design-discussion §4 as separate, bigger future work). This epic
+  covers the real remaining gap: letting a SECOND Portunus instance gain working access to some
+  or all of what a FIRST instance's vault already exposes -- for the majority of real, enabled
+  references (GCP-backed), the value lives in GCP, not locally, so only registry metadata +
+  vault-bindings config ever need to move, never a value. `portunus vault access export`
+  produces a plain (never passphrase-locked -- it never contains a value) JSON bundle scoped by
+  --project/--org/--tags; `import` recreates registry entries + bindings on the target
+  (local-only references land honestly as state=requested, never a silent lie that they're
+  ready); `verify` reuses the existing Resolver.resolve_call() boundary-safe fetch to prove
+  real end-to-end reachability per reference and translate any failure into an actionable hint
+  (`portunus auth login <account>`, the exact IAM grant command, or `portunus drop`) --
+  literally "portunus can already inject so it should help get that going."
+
+stories:
+  - id: 01-scoped-metadata-export
+    title: portunus vault access export -- scoped, plain-JSON, metadata-only bundle (registry + bindings, never a value)
+    complexity: medium
+    depends_on: []
+    status: shipped
+  - id: 02-import-and-reconciliation
+    title: portunus vault access import -- reconstructs registry + bindings, local-only refs land as state=requested, collision handling
+    complexity: medium
+    depends_on: [01-scoped-metadata-export]
+    status: shipped
+  - id: 03-boundary-safe-verify
+    title: portunus vault access verify -- real per-reference reachability check via resolve_call, actionable auth/IAM/drop hints
+    complexity: medium
+    depends_on: [02-import-and-reconciliation]
+    status: shipped
+  - id: 04-closeout
+    title: docs, version bump, live proof (scoped export of the real vault's metadata, imported + verified against a throwaway --home)
+    complexity: low
+    depends_on: [03-boundary-safe-verify]
+    status: shipped

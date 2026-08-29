@@ -1,0 +1,93 @@
+id: 01-scoped-metadata-export
+epic: portunus-vault-transfer
+title: portunus vault access export -- scoped, plain-JSON, metadata-only bundle (registry + bindings, never a value)
+status: shipped
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  New `vault_transfer.py` module (matching backup.py's own separate-module-per-concern
+  precedent). `build_bundle(project="", org="", tags="")` filters `Registry`'s references via
+  the existing `Reference.matches_tag()` (no registry.py changes -- `--project`/`--org` are
+  just `matches_tag("project", ...)`/`matches_tag("org", ...)` sugar over the same mechanism
+  `--tags` already uses; `--tags repo=<name>` already works today since `repo` is one of
+  `_STRUCTURED_TAG_FIELDS`). No filter = every reference, matching `reg json`'s own
+  no-filter-means-everything convention. For every matched reference, bundles its full
+  `to_dict()` plus its project's `VaultBinding` (if any) and `RotationBinding` (if any),
+  deduplicated (many references can share one project/binding). Never passphrase-locked --
+  the bundle structurally cannot contain a value (design-discussion.md §2): no `master.key`,
+  no `vault.enc.json`, only `Reference`/`VaultBinding`/`RotationBinding` fields, all
+  independently confirmed non-secret by their own docstrings. Each exported reference also
+  carries a precomputed `resolved_backend` field (local/gcp/aws/...), calculated via the SOURCE
+  instance's own real backend router (the same one `_build()` already assembles) -- this is
+  the only point where "which backend does this actually use" is knowable, since it depends on
+  the exporting instance's own global fallback, which the target doesn't share (design-
+  discussion.md §2a). Story 02 (import) only ever reads this field; it never re-derives
+  precedence itself.
+
+acceptance_criteria:
+  - "Given no filters, when `portunus vault access export` runs, then the bundle contains every reference in the registry plus every project's binding that at least one exported reference actually uses"
+  - "Given `--project P`, when export runs, then the bundle contains only references with `project == P`, plus P's own VaultBinding/RotationBinding if configured -- no unrelated project's binding leaks in"
+  - "Given `--org O`, when export runs, then only references with `org == O` are included"
+  - "Given `--tags repo=event-api`, when export runs, then only references with `repo == \"event-api\"` are included -- reusing the exact same matches_tag() mechanism `find`/`resolve_by_tags` already use, not a new matching implementation"
+  - "Given multiple filters combined (e.g. --project P --tags env=prod), when export runs, then only references matching ALL of them are included (AND semantics, matching --tags' own existing multi-key AND behavior)"
+  - "Given a reference whose project has no configured VaultBinding, when export runs, then the bundle still includes the reference (bindings are optional metadata, not required)"
+  - "Given the bundle's JSON, when inspected structurally (AST/schema check, not just eyeballing), then no key or nested value anywhere in it can ever be a decrypted secret value -- verified by asserting the bundle-building code never imports or calls anything from localvault.py/backend.py's access()/SecretBackend"
+  - "Given `--out path`, when export runs, then the bundle is written there; given no --out, then it defaults to a sensible current-directory filename distinct from vault export's own default (e.g. portunus-vault-access.json, never colliding with portunus-vault-export.pvault)"
+  - "Given a reference with an explicit `backend` override, a reference relying on its project's VaultBinding.backend, and a reference relying on the global PORTUNUS_BACKEND fallback (no override, no binding), when export runs, then each one's `resolved_backend` field reflects what it ACTUALLY resolves to on the source instance right now -- proven by comparing against the same router `_build()` assembles for every other command, not a separately-reasoned-about duplicate"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for no-filter (everything), each individual filter, combined filters (AND), binding/rotation-binding inclusion + dedup, the never-a-value structural guard, and the default output path.
+    agent: tester
+  - id: implement
+    description: New vault_transfer.py with build_bundle()/write_bundle(); cmd_vault_access_export in cli.py; argparse wiring under `vault access export`.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backup.py
+      purpose: "the sibling `vault export` module -- separate-module-per-concern precedent this story follows; NOT reused directly (backup.py's export_archive() is whole-vault + passphrase, a different shape), but its file-writing/module-organization conventions are"
+    - path: src/portunus/registry.py
+      purpose: "Reference.matches_tag() (registry.py:95) and _STRUCTURED_TAG_FIELDS (registry.py, includes org/project/env/repo) -- the exact filtering mechanism this story reuses, not reinvents"
+    - path: src/portunus/backend.py
+      purpose: "load_vault_bindings() + VaultBinding -- confirmed non-secret by its own docstring (backend.py:63-83)"
+    - path: src/portunus/rotation.py
+      purpose: "load_rotation_bindings() + RotationBinding"
+    - path: src/portunus/cli.py
+      purpose: "_parse_tags() (cli.py:230) -- the existing k=v,k2=v2 parser this story's --tags flag reuses exactly; _make_backend_router() (cli.py:77) and _build() -- the real backend-precedence router this story calls to compute each reference's resolved_backend field (design-discussion.md §2a), never reimplemented"
+
+files_to_modify:
+  - file: src/portunus/vault_transfer.py
+    change: "new module -- build_bundle()/write_bundle()"
+  - file: src/portunus/cli.py
+    change: "cmd_vault_access_export + `vault access export` subparser"
+
+design_decisions:
+  - decision: "plain JSON, never passphrase-locked, unlike vault export"
+    rationale: "design-discussion.md §2 -- the bundle structurally cannot contain a value; locking a file with no secret in it would be theater and would incorrectly imply it's more sensitive than it is"
+  - decision: "reuse matches_tag() for --project/--org filtering too, not a separate code path"
+    rationale: "one matching implementation, not two -- --project P is exactly matches_tag(\"project\", P), already proven correct by every existing tag-based lookup in this codebase"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "structural AST test asserts vault_transfer.py's export path never imports SecretBackend/LocalEncryptedBackend/anything with an access() method -- this module has zero legitimate reason to ever see a value"
+
+risks:
+  - severity: low
+    description: "a human could have pasted something sensitive into a free-text description/purpose/tags field, which this bundle would then export verbatim"
+    mitigation: "design-discussion.md §2 self-grill -- same pre-existing risk `reg json`/`portunus report`/leak-scan already exist to catch, not a new risk this command introduces; no new mitigation invented here"
+
+references:
+  - path: .pHive/epics/portunus-vault-transfer/docs/design-discussion.md
+    relevant_excerpt: "§1 (command surface), §2 (why plain JSON)"
+  - path: .pHive/epics/portunus-vault-transfer/docs/research-brief.md
+    relevant_excerpt: "§2 (what access info actually is)"
