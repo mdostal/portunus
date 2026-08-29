@@ -689,7 +689,7 @@ seeded with a direct copy of the real `~/.portunus/registry.json` (410 real refe
 time -- metadata only, `registry.json` structurally has no value field, so this is exactly as
 safe to copy as any other read of it) -- never the real backend's stored values, never the real
 live `PORTUNUS_HOME` itself. One real scoped policy was configured for one real project
-(`personalsites-487021`); enforcement turned on for the throwaway copy only. Result: the matching
+(`demo-project-483920`); enforcement turned on for the throwaway copy only. Result: the matching
 principal resolved successfully, a non-matching principal was genuinely denied
 (`NotAuthorized`), and — checked against all 410 real references, not just the one under test —
 every reference outside that one configured project's scope stayed fully resolvable for an
