@@ -1,7 +1,7 @@
 id: 03-boundary-safe-verify
 epic: portunus-vault-transfer
 title: portunus vault access verify -- real per-reference reachability check via resolve_call, actionable auth/IAM/drop hints
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [02-import-and-reconciliation]

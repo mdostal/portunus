@@ -1,7 +1,7 @@
 id: 04-closeout
 epic: portunus-vault-transfer
 title: docs, version bump, live proof (scoped export of the real vault's metadata, imported + verified against a throwaway --home)
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [03-boundary-safe-verify]

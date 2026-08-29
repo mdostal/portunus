@@ -29,19 +29,19 @@ stories:
     title: portunus vault access export -- scoped, plain-JSON, metadata-only bundle (registry + bindings, never a value)
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-import-and-reconciliation
     title: portunus vault access import -- reconstructs registry + bindings, local-only refs land as state=requested, collision handling
     complexity: medium
     depends_on: [01-scoped-metadata-export]
-    status: pending
+    status: shipped
   - id: 03-boundary-safe-verify
     title: portunus vault access verify -- real per-reference reachability check via resolve_call, actionable auth/IAM/drop hints
     complexity: medium
     depends_on: [02-import-and-reconciliation]
-    status: pending
+    status: shipped
   - id: 04-closeout
     title: docs, version bump, live proof (scoped export of the real vault's metadata, imported + verified against a throwaway --home)
     complexity: low
     depends_on: [03-boundary-safe-verify]
-    status: pending
+    status: shipped

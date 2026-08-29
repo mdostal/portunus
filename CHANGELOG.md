@@ -4,6 +4,31 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-08-29
+
+### Added
+
+- **`portunus vault access export/import/verify`** — scoped, plain-JSON sharing of *working
+  access* to a vault between two Portunus instances, distinct from `vault export`/`import`
+  (which moves the whole vault including every value). A bundle carries registry pointers +
+  bindings only — it structurally cannot contain a secret value, so it's never
+  passphrase-locked. Each exported reference carries a `resolved_backend` field, computed once
+  on the exporting instance (mirroring `_make_backend_router`'s own precedence) and never
+  re-derived on import, since only the exporter knows its own global backend default. A
+  `resolved_backend="local"` reference always lands as `state=requested` on import regardless
+  of its source state — the value lives only on the source machine — while every other
+  backend's pointer transfers unchanged, since the value lives with the cloud provider, not
+  locally. Conflicting entries (same name, different `sm_name`/backend) are refused without
+  `--force` and reported clearly, without aborting the rest of the batch. `verify` makes a real
+  per-reference reachability check through the same boundary-safe `resolve_call()` a real
+  `resolve`/`ask`/`mcp` call uses, translating failures into actionable `portunus drop`/`gcloud`/
+  `portunus auth login` hints instead of a raw traceback; CLI-only, no MCP tool, since it can
+  trigger real backend API calls across the whole registry in one invocation. Live-verified
+  against a real, scoped export of the actual vault, imported and verified against a throwaway
+  `--home` — see `docs/architecture.md` §18 for the full live-proof record, including a real
+  finding about an unused `master.key` artifact this epic's own proof surfaced (pre-existing,
+  unrelated to this feature, left as a known gap).
+
 ## [0.26.0] - 2026-08-19
 
 ### Added
