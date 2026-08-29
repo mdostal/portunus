@@ -22,7 +22,7 @@ acceptance_criteria:
   - "Given README.md and docs/architecture.md, when read after this story, then both describe `portunus vault access export/import/verify`, how it differs from `vault export/import` (metadata vs. whole-vault-with-values), and the resolved_backend/state=requested mechanics"
   - "Given CHANGELOG.md, when read after this story, then it has an entry for this epic under the new version"
   - "Given the version files (pyproject.toml, manifest.json, tauri.conf.json, Cargo.toml, __init__.py), when checked, then all are in lockstep at the new minor version"
-  - "Given a real scoped export of the actual vault (e.g. --project personalsites-487021), when imported into a throwaway --home and verified, then the reported readiness genuinely matches what a real resolve attempt would show -- a live proof, not a synthetic fixture"
+  - "Given a real scoped export of the actual vault (e.g. --project demo-project-483920), when imported into a throwaway --home and verified, then the reported readiness genuinely matches what a real resolve attempt would show -- a live proof, not a synthetic fixture"
   - "Given the live-proof throwaway --home, when inspected afterward, then it contains only registry/bindings metadata -- confirmed directly (not just assumed) that no value-bearing file (vault.enc.json, master.key) was ever created as a side effect of import/verify alone"
 
 methodology: tdd
