@@ -62,7 +62,7 @@ from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
-from .vault_transfer import build_bundle, write_bundle
+from .vault_transfer import build_bundle, import_bundle, write_bundle
 
 # Distinct exit codes so scripts can branch on the failure mode without
 # parsing stderr text. 1 is the pre-existing generic-error code (_err()).
@@ -1363,6 +1363,46 @@ def cmd_vault_access_export(args) -> int:
     return 0
 
 
+def cmd_vault_access_import(args) -> int:
+    """Reverse of `vault access export` -- see vault_transfer.py::import_bundle().
+    A per-reference conflict never aborts the batch (matches drop_bulk's own
+    precedent); pass --force to overwrite a conflicting entry."""
+    try:
+        raw = Path(args.bundle).read_text()
+    except OSError as exc:
+        return _err(f"could not read bundle: {exc}")
+    try:
+        bundle = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return _err(f"invalid bundle JSON: {exc}")
+
+    registry, audit, _, _ = _build()
+    vault_bindings = load_vault_bindings()
+    rotation_bindings = load_rotation_bindings()
+    report = import_bundle(bundle, registry, vault_bindings, rotation_bindings, force=args.force)
+    save_vault_bindings(vault_bindings)
+    save_rotation_bindings(rotation_bindings)
+
+    audit.append(
+        "vault_access_import", "-",
+        f"created={len(report['created'])} updated={len(report['updated'])} "
+        f"conflicted={len(report['conflicted'])} skipped={len(report['skipped'])} "
+        f"from {args.bundle}",
+    )
+    print(
+        f"created {len(report['created'])}, updated {len(report['updated'])}, "
+        f"skipped {len(report['skipped'])}, conflicted {len(report['conflicted'])}"
+    )
+    for conflict in report["conflicted"]:
+        print(
+            f"  conflict: {conflict['name']} -- "
+            f"existing sm_name={conflict['existing_sm_name']!r} backend={conflict['existing_backend']!r} "
+            f"vs bundle sm_name={conflict['new_sm_name']!r} backend={conflict['new_backend']!r} "
+            f"(use --force to overwrite)"
+        )
+    return 0
+
+
 def _view_to_dict(view) -> dict:
     return {"name": view.name, "description": view.description, "ref_names": view.ref_names}
 
@@ -2262,6 +2302,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", help="output bundle path (default: ./portunus-vault-access.json)",
     )
     vault_access_export.set_defaults(func=cmd_vault_access_export)
+
+    vault_access_import = vault_access_sub.add_parser(
+        "import",
+        help="import a scoped access-info bundle -- reconstructs registry entries + bindings",
+    )
+    vault_access_import.add_argument("bundle", help="path to a bundle written by `vault access export`")
+    vault_access_import.add_argument(
+        "--force", action="store_true",
+        help="overwrite a conflicting entry (different sm_name/backend) instead of refusing it",
+    )
+    vault_access_import.set_defaults(func=cmd_vault_access_import)
 
     vw = sub.add_parser(
         "views", help="named, human-curated reference collections for ad-hoc task clustering",
