@@ -1,0 +1,84 @@
+id: 02-import-and-reconciliation
+epic: portunus-vault-transfer
+title: portunus vault access import -- reconstructs registry + bindings, local-only refs land as state=requested, collision handling
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-scoped-metadata-export]
+
+description: |
+  `import_bundle(bundle, force=False)` reads a Story 01 bundle and, for each reference, calls
+  `Registry.add()` directly (no registry.py changes -- add() already accepts every metadata
+  field plus an explicit `state`, design-discussion.md §3). The ONE piece of real logic: if the
+  bundle's precomputed `resolved_backend` (Story 01, never re-derived here) is `"local"`, force
+  `state="requested"` regardless of the source's own state -- the value lives only on the
+  source machine, so landing it as anything other than an honest "needs a human to `portunus
+  drop` it" would be a silent lie about readiness. Every other backend's state transfers as
+  exported unchanged (importing the pointer really is sufficient once auth/IAM catches up --
+  no local value ever required for those). Also upserts every bundled `VaultBinding`/
+  `RotationBinding` via the existing `save_vault_bindings()`/`save_rotation_bindings()`.
+
+acceptance_criteria:
+  - "Given a bundle entry with resolved_backend=gcp and state=enabled, when import runs, then the target registry gets that reference with state=enabled UNCHANGED -- no value needed, the pointer alone is sufficient"
+  - "Given a bundle entry with resolved_backend=local (regardless of its original state on the source), when import runs, then the target registry gets that reference with state=requested -- never enabled, never claiming a value exists that doesn't"
+  - "Given a bundle with a project's VaultBinding, when import runs, then the target's vault-bindings.json gets that binding via the real save_vault_bindings() path -- not a hand-rolled write"
+  - "Given a name that doesn't exist on the target yet, when import runs, then it's created cleanly, no --force required"
+  - "Given a name that already exists on the target with the SAME sm_name and resolved_backend, when import runs again (re-running after a partial cycle), then it's a safe no-op overwrite -- no --force required for an unchanged re-import"
+  - "Given a name that already exists on the target with a DIFFERENT sm_name or resolved_backend, when import runs WITHOUT --force, then it refuses that one entry and reports the conflict clearly (name, old vs new sm_name/backend) -- but still processes every other non-conflicting entry in the same bundle rather than aborting the whole import"
+  - "Given the same conflicting case WITH --force, when import runs, then the target's entry is overwritten to match the bundle -- matching vault import's own existing --force-means-full-replace posture, scoped here to the one conflicting reference"
+  - "Given import completes, when its output is inspected, then it reports counts (created/updated/conflicted/skipped) and lists every conflict by name -- never silent about what it actually did"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the resolved_backend=local forcing rule, unchanged-state passthrough for other backends, binding/rotation-binding upsert, clean-create, safe-no-op re-import, conflict-without-force (partial success), conflict-with-force (overwrite), and the summary report shape.
+    agent: tester
+  - id: implement
+    description: import_bundle() in vault_transfer.py; cmd_vault_access_import in cli.py; `vault access import` subparser with --force.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm a conflict in one reference never aborts the rest of the batch -- matches drop-bulk's own existing "one malformed entry doesn't abort the batch" precedent.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/registry.py
+      purpose: "Registry.add() -- accepts every metadata field + explicit state in one call (registry.py, confirmed no changes needed); Registry.request() as the semantic precedent for the state=requested posture"
+    - path: src/portunus/backend.py
+      purpose: "save_vault_bindings() -- the real upsert path this story calls, not a hand-rolled write"
+    - path: src/portunus/rotation.py
+      purpose: "save_rotation_bindings()"
+    - path: src/portunus/cli.py
+      purpose: "cmd_drop_bulk's own 'a malformed entry doesn't abort the rest of the batch' precedent (drop-bulk) -- this story's conflict handling follows the same shape"
+
+files_to_modify:
+  - file: src/portunus/vault_transfer.py
+    change: "import_bundle() -- the resolved_backend=local forcing rule, collision detection, bindings upsert"
+  - file: src/portunus/cli.py
+    change: "cmd_vault_access_import + `vault access import --force` subparser"
+
+design_decisions:
+  - decision: "resolved_backend=local always forces state=requested, regardless of the source's own state"
+    rationale: "design-discussion.md §3 -- the value literally doesn't exist anywhere the target can reach; any other state would silently claim otherwise, exactly the kind of lie Registry.request()'s existing semantics already exist to prevent for agent-initiated asks"
+  - decision: "a per-reference conflict never aborts the whole batch"
+    rationale: "matches drop_bulk's own established precedent (a malformed entry doesn't abort the rest) -- consistency across this codebase's bulk-operation commands"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "import_bundle() never imports/calls anything from localvault.py/backend.py's access() -- it only ever writes registry/bindings metadata, structurally verified the same way Story 01's export path is"
+
+risks:
+  - severity: medium
+    description: "a stale/malicious bundle could claim resolved_backend=gcp for a reference that's actually local on the source, tricking a human into thinking it's ready without a value transfer"
+    mitigation: "out of scope to defend against an adversarial bundle (same trust model as vault import's own passphrase-protected archive -- if you're importing someone's bundle, you're already trusting its contents); Story 03's verify step is the real safety net here -- it proves reachability for real rather than trusting the bundle's own claim"
+
+references:
+  - path: .pHive/epics/portunus-vault-transfer/docs/design-discussion.md
+    relevant_excerpt: "§2a (resolved_backend captured at export time), §3 (import mechanics)"

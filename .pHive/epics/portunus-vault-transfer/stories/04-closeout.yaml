@@ -1,0 +1,81 @@
+id: 04-closeout
+epic: portunus-vault-transfer
+title: docs, version bump, live proof (scoped export of the real vault's metadata, imported + verified against a throwaway --home)
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [03-boundary-safe-verify]
+
+description: |
+  Documents the full `portunus vault access export/import/verify` flow (README.md, docs/
+  architecture.md), bumps the version, and runs a real live proof: export a real, scoped slice
+  of the actual vault's metadata (never a value -- structurally impossible per Story 01), import
+  it into a throwaway --home (never the real live PORTUNUS_HOME), run `verify` against that
+  throwaway home, and confirm the reported readiness matches reality (GCP-backed references
+  genuinely reachable if the throwaway home's own gcloud identity has access, local-only
+  references correctly reported as needing `portunus drop`). Also documents, as explicit
+  follow-up (not built in this epic, per design-discussion.md's self-grill), selective
+  local-value transfer as a real, separate, deliberately deferred capability distinct from this
+  epic's metadata-only scope.
+
+acceptance_criteria:
+  - "Given README.md and docs/architecture.md, when read after this story, then both describe `portunus vault access export/import/verify`, how it differs from `vault export/import` (metadata vs. whole-vault-with-values), and the resolved_backend/state=requested mechanics"
+  - "Given CHANGELOG.md, when read after this story, then it has an entry for this epic under the new version"
+  - "Given the version files (pyproject.toml, manifest.json, tauri.conf.json, Cargo.toml, __init__.py), when checked, then all are in lockstep at the new minor version"
+  - "Given a real scoped export of the actual vault (e.g. --project personalsites-487021), when imported into a throwaway --home and verified, then the reported readiness genuinely matches what a real resolve attempt would show -- a live proof, not a synthetic fixture"
+  - "Given the live-proof throwaway --home, when inspected afterward, then it contains only registry/bindings metadata -- confirmed directly (not just assumed) that no value-bearing file (vault.enc.json, master.key) was ever created as a side effect of import/verify alone"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing test for the live-proof scenario shape (throwaway --home seeded from a real scoped export, import, verify, and a direct filesystem check that no value-bearing file exists in the throwaway home).
+    agent: tester
+  - id: implement
+    description: Write docs, bump version, run the live proof for real against the actual vault (read-only export side; all writes confined to the throwaway --home).
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit, push, open PR into dev, merge on local verification, promote dev->main, cut the release.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: feature documentation surface, same place every prior epic's closeout story documents new capabilities
+    - path: docs/architecture.md
+      purpose: new numbered section for the access-transfer flow, following this doc's established per-epic section convention
+    - path: CHANGELOG.md
+      purpose: version entry
+    - path: .pHive/epics/portunus-vault-backup/docs/design-discussion.md
+      purpose: "the sibling epic's own design-discussion -- §4's deferred-sync reasoning this epic's docs should cross-reference, not silently duplicate or contradict"
+
+files_to_modify:
+  - file: README.md
+    change: "document vault access export/import/verify, distinct from vault export/import"
+  - file: docs/architecture.md
+    change: "new numbered section for the access-transfer flow"
+  - file: CHANGELOG.md
+    change: version entry
+  - file: pyproject.toml
+    change: version bump (minor)
+
+design_decisions:
+  - decision: "live proof runs against a throwaway --home seeded from a real scoped export, never the real live PORTUNUS_HOME as an import/verify target"
+    rationale: "matches this session's own standing vault-safety discipline -- verification must never risk mutating or locking the operator's real, in-daily-use vault; the EXPORT side reading the real vault is safe (read-only, metadata-only, already proven by Story 01's own structural guard) but import/verify's writes/API-calls are confined to a disposable target"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "the live-proof's own final check (no value-bearing file in the throwaway home) is itself a direct, structural proof of this epic's central claim -- not just documentation asserting it"
+
+risks:
+  - severity: low
+    description: "the live proof's GCP-backed references may not actually be reachable from whatever identity runs the live-proof step, making 'verify' report auth/IAM gaps that are expected in a test environment, not real bugs"
+    mitigation: "the live proof's acceptance criterion is that verify's REPORT matches reality (whatever that reality is), not that every reference reports reachable -- an accurately-reported auth gap is a passing proof, not a failure"
+
+references:
+  - path: .pHive/epics/portunus-vault-transfer/docs/design-discussion.md
+    relevant_excerpt: "self-grill (deferred selective-local-value-transfer follow-up)"
+  - path: .pHive/epics/portunus-vault-backup/docs/design-discussion.md
+    relevant_excerpt: "§4 (the deferred-sync decision this epic's docs should cross-reference)"

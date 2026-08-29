@@ -1,0 +1,91 @@
+id: 03-boundary-safe-verify
+epic: portunus-vault-transfer
+title: portunus vault access verify -- real per-reference reachability check via resolve_call, actionable auth/IAM/drop hints
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [02-import-and-reconciliation]
+
+description: |
+  `verify_access(registry, resolver, project="")` attempts a REAL fetch of every matching
+  reference through `Resolver.resolve_call()` with a boundary that discards the value
+  immediately (`lambda v: "reachable"`) -- the exact pattern
+  `test_boundary_receives_value_but_it_is_not_returned` already proves never leaks
+  (design-discussion.md §4). This is the literal answer to "portunus can already inject so it
+  should help get that going": the same injection machinery a real `resolve`/`ask`/`mcp` call
+  uses, with a boundary that throws the result away instead of acting on it. Failures are
+  translated into ACTIONABLE hints, never a raw traceback: `NotInjectable` (a local-only
+  reference still in state=requested, per Story 02) -> "run `portunus drop <name> <sm_name>
+  --stdin`"; `BackendError` (a real auth/IAM failure from GcloudBackend.access) -> "run
+  `portunus auth login <account>`, or grant IAM access: `gcloud projects add-iam-policy-binding
+  <project> --member=user:<account> --role=roles/secretmanager.secretAccessor`" (using the
+  binding's own known account/project, not a generic message). CLI-only, no MCP tool -- matches
+  `vault export`/`import`'s own "a human initiates this, not an agent on its own" precedent
+  (design-discussion.md §4 self-grill), here because verify triggers real backend API calls
+  across potentially hundreds of references on one invocation, not because of value exposure.
+
+acceptance_criteria:
+  - "Given a reference that resolves cleanly, when verify runs, then it reports 'reachable' for that name -- and the real value is never printed, returned, or logged anywhere in verify's own output (structurally checked, not just eyeballed)"
+  - "Given a reference still in state=requested (Story 02's local-only landing), when verify runs, then it reports the exact `portunus drop <name> <sm_name> --stdin` hint, not a raw NotInjectable traceback"
+  - "Given a reference whose backend raises BackendError (simulated auth/IAM failure), when verify runs, then it reports an actionable hint naming the binding's own account and project in the suggested gcloud command -- not a generic 'auth failed' message"
+  - "Given `--project P`, when verify runs, then only P's references are checked -- consistent with export's own --project filter shape"
+  - "Given no filter, when verify runs, then every reference in the registry is checked"
+  - "Given verify's own output, when inspected, then it never imports anything that would let it print a value directly (structural AST check, same discipline as Story 01/02's export/import guards) -- resolve_call's own boundary-safety is the only path a value ever takes, and even that path only ever produces the literal string 'reachable', never the value itself"
+  - "Given verify checks 300+ references in one run (a real-scale proof, not just a handful), when it completes, then it doesn't crash on the first failure -- every reference is independently checked and reported, one bad reference never aborts the batch"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for reachable/needs-drop/needs-auth-or-iam classification, the --project filter, no-filter-means-everything, the never-a-value structural guard, and the batch-doesn't-abort-on-one-failure behavior at real scale (300+ synthetic references).
+    agent: tester
+  - id: implement
+    description: verify_access() in vault_transfer.py; cmd_vault_access_verify in cli.py; `vault access verify` subparser (CLI-only, no MCP tool).
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm resolve_call's boundary is the ONLY place a value ever flows, and that boundary never does anything but return the fixed string "reachable" -- this story's one hard invariant.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/resolver.py
+      purpose: "Resolver.resolve_call() (resolver.py:94) -- the exact boundary-safe fetch mechanism this story reuses; `del resolved` in its own finally block is the existing proof pattern"
+    - path: tests/test_resolver.py
+      purpose: "test_boundary_receives_value_but_it_is_not_returned -- the existing proof this story's own new tests mirror for verify's specific boundary (a discard-only callable, not just a capturing one)"
+    - path: src/portunus/broker.py
+      purpose: "NotInjectable's hints dict pattern (the 'requested' -> 'a human must fulfill it via `portunus drop`' shape) -- this story's own hint messages follow the same convention"
+    - path: src/portunus/backend.py
+      purpose: "BackendError -- what GcloudBackend.access raises on a real auth/IAM failure"
+
+files_to_modify:
+  - file: src/portunus/vault_transfer.py
+    change: "verify_access() -- resolve_call-based reachability check + hint translation"
+  - file: src/portunus/cli.py
+    change: "cmd_vault_access_verify + `vault access verify` subparser"
+
+design_decisions:
+  - decision: "CLI-only, no MCP tool"
+    rationale: "design-discussion.md §4 self-grill -- verify triggers real backend API calls across potentially hundreds of references on one invocation (quota/cost/IAM-error-surfacing side effects), matching vault export/import's own 'a human initiates this' posture, for a different reason than value exposure"
+  - decision: "boundary returns a fixed literal string, never anything derived from the value"
+    rationale: "the one hard invariant this story exists to prove -- resolve_call already guarantees the resolved text is scrubbed from its own frame after the boundary call, but the boundary itself must independently never construct its return value FROM the input it receives"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "verify_access()'s boundary callable is structurally verified (AST) to ignore its own argument entirely -- always returns the same literal, never `v` or anything derived from it"
+
+risks:
+  - severity: low
+    description: "running verify across hundreds of GCP-backed references makes hundreds of real API calls -- could be slow or hit a rate limit"
+    mitigation: "accepted v1 tradeoff, matching this project's own precedent elsewhere (portunus_sync has the same shape) -- a real, human-triggered batch operation, not something run silently/automatically; revisit only if it becomes a real complaint"
+
+references:
+  - path: .pHive/epics/portunus-vault-transfer/docs/design-discussion.md
+    relevant_excerpt: "§4 (verification), §4 self-grill (CLI-only reasoning)"
+  - path: .pHive/epics/portunus-vault-transfer/docs/research-brief.md
+    relevant_excerpt: "§4 (verification without touching a value)"
