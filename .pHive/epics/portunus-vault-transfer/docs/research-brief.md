@@ -33,7 +33,7 @@ actual *access* (GCP IAM, WIF, `gcloud auth login`) sorted, not just the local b
 `Reference` (registry.py) never carries a value -- only metadata (name, sm_name, org, project,
 env, tags, description, purpose, group, related, backend, repo, source_files). For a
 GCP-backed reference (the majority of this vault's real, `state=enabled` entries --
-`personalsites-487021-google_generative_ai_api_key` et al.), the *value* lives in GCP Secret
+`demo-project-483920-google_generative_ai_api_key` et al.), the *value* lives in GCP Secret
 Manager, not locally at all. The only things a second instance actually needs to reach that
 same value are:
 
