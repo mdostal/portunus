@@ -62,6 +62,7 @@ from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
+from .vault_transfer import build_bundle, write_bundle
 
 # Distinct exit codes so scripts can branch on the failure mode without
 # parsing stderr text. 1 is the pre-existing generic-error code (_err()).
@@ -1337,6 +1338,31 @@ def cmd_vault_import(args) -> int:
     return 0
 
 
+def cmd_vault_access_export(args) -> int:
+    """Scoped, plain-JSON, metadata-only bundle of registry+bindings info
+    (never a secret value -- see vault_transfer.py) so a second Portunus
+    instance can gain working access without a full-vault backup/restore.
+    Distinct from `vault export` (backup.py): never passphrase-locked,
+    because it structurally cannot contain a secret value."""
+    registry, audit, _, _ = _build()
+    vault_bindings = load_vault_bindings()
+    rotation_bindings = load_rotation_bindings()
+    try:
+        bundle = build_bundle(
+            registry, vault_bindings, rotation_bindings,
+            project=args.project, org=args.org, tags=args.tags,
+        )
+    except ValueError as exc:
+        return _err(str(exc))
+    path = write_bundle(bundle, args.out)
+    audit.append(
+        "vault_access_export", "-",
+        f"exported {len(bundle['references'])} reference(s) -> {path}",
+    )
+    print(f"exported {len(bundle['references'])} reference(s) -> {path}")
+    return 0
+
+
 def _view_to_dict(view) -> dict:
     return {"name": view.name, "description": view.description, "ref_names": view.ref_names}
 
@@ -2216,6 +2242,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace existing vault state in PORTUNUS_HOME (full replace, not merge)",
     )
     vault_import.set_defaults(func=cmd_vault_import)
+
+    vault_access = vault_sub.add_parser(
+        "access",
+        help="scoped, plain-JSON access-info transfer between Portunus instances (no secret values)",
+    )
+    vault_access_sub = vault_access.add_subparsers(dest="access_action", required=True)
+
+    vault_access_export = vault_access_sub.add_parser(
+        "export",
+        help="export a scoped, plain-JSON bundle of registry+bindings metadata (never a value)",
+    )
+    vault_access_export.add_argument("--project", default="", help="filter to one project")
+    vault_access_export.add_argument("--org", default="", help="filter to one org")
+    vault_access_export.add_argument(
+        "--tags", default="", help="filter by tag(s), e.g. --tags repo=my-repo,env=prod",
+    )
+    vault_access_export.add_argument(
+        "--out", help="output bundle path (default: ./portunus-vault-access.json)",
+    )
+    vault_access_export.set_defaults(func=cmd_vault_access_export)
 
     vw = sub.add_parser(
         "views", help="named, human-curated reference collections for ad-hoc task clustering",
