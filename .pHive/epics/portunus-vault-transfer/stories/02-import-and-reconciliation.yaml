@@ -1,7 +1,7 @@
 id: 02-import-and-reconciliation
 epic: portunus-vault-transfer
 title: portunus vault access import -- reconstructs registry + bindings, local-only refs land as state=requested, collision handling
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [01-scoped-metadata-export]

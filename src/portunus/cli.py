@@ -62,7 +62,7 @@ from .adapters import AdapterError, EnvVarAdapter, FileAdapter
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
-from .vault_transfer import build_bundle, import_bundle, write_bundle
+from .vault_transfer import build_bundle, import_bundle, verify_access, write_bundle
 
 # Distinct exit codes so scripts can branch on the failure mode without
 # parsing stderr text. 1 is the pre-existing generic-error code (_err()).
@@ -1403,6 +1403,31 @@ def cmd_vault_access_import(args) -> int:
     return 0
 
 
+def cmd_vault_access_verify(args) -> int:
+    """Real per-reference reachability check -- see vault_transfer.py::
+    verify_access(). CLI-only, no MCP tool (design-discussion.md §4):
+    triggers real backend API calls across potentially every reference in
+    the registry on one invocation, a human-initiated batch operation the
+    same way `vault export`/`import` already are."""
+    registry, _, _, resolver = _build(project=args.project or "")
+    vault_bindings = load_vault_bindings()
+    report = verify_access(registry, resolver, vault_bindings, project=args.project)
+
+    print(
+        f"reachable {len(report['reachable'])}, "
+        f"needs-drop {len(report['needs_drop'])}, "
+        f"needs-auth {len(report['needs_auth'])}, "
+        f"failed {len(report['failed'])}"
+    )
+    for entry in report["needs_drop"]:
+        print(f"  {entry['name']}: {entry['hint']}")
+    for entry in report["needs_auth"]:
+        print(f"  {entry['name']}: {entry['hint']}")
+    for entry in report["failed"]:
+        print(f"  {entry['name']}: {entry['hint']}")
+    return 0
+
+
 def _view_to_dict(view) -> dict:
     return {"name": view.name, "description": view.description, "ref_names": view.ref_names}
 
@@ -2313,6 +2338,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="overwrite a conflicting entry (different sm_name/backend) instead of refusing it",
     )
     vault_access_import.set_defaults(func=cmd_vault_access_import)
+
+    vault_access_verify = vault_access_sub.add_parser(
+        "verify",
+        help="real per-reference reachability check -- boundary-safe, never prints a value",
+    )
+    vault_access_verify.add_argument("--project", default="", help="filter to one project")
+    vault_access_verify.set_defaults(func=cmd_vault_access_verify)
 
     vw = sub.add_parser(
         "views", help="named, human-curated reference collections for ad-hoc task clustering",
