@@ -44,6 +44,7 @@ export default function DetailDrawer({
   onLeakStatusChanged,
   onClose,
   onRotate,
+  onFulfill,
   onMoved,
   onSelectRelated,
 }: {
@@ -53,6 +54,7 @@ export default function DetailDrawer({
   onLeakStatusChanged?: () => void;
   onClose: () => void;
   onRotate: (ref: PortunusReference) => void;
+  onFulfill: (ref: PortunusReference) => void;
   onMoved: () => void;
   onSelectRelated: (ref: PortunusReference) => void;
 }) {
@@ -472,6 +474,15 @@ export default function DetailDrawer({
           generating a new value exists yet, and this keeps the same one
           human-plaintext-entry point (Grill U1) instead of adding a second. */}
       <div className="inject-target-row">
+        {/* portunus-secure-entry Story 03: a state=requested reference (an
+            agent's own `portunus ask "add ..."` already captured every
+            other field) gets a one-click path into AddSecretForm, fully
+            pre-filled -- the human only has to type the value. */}
+        {reference.state === "requested" && (
+          <button className="btn solid" onClick={() => onFulfill(reference)}>
+            Fulfill…
+          </button>
+        )}
         <button className="btn quiet" onClick={() => onRotate(reference)}>
           Rotate…
         </button>

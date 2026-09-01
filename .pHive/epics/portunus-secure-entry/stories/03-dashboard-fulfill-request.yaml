@@ -1,7 +1,7 @@
 id: 03-dashboard-fulfill-request
 epic: portunus-secure-entry
 title: wire state=requested references into AddSecretForm/DetailDrawer as a one-click Fulfill action, plus a ?fulfill=<name> deep link
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [01-trim-whitespace]
