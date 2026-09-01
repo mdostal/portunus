@@ -4,6 +4,27 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-01
+
+### Added
+
+- **Masked, trimmed, agent-openable secret entry (portunus-secure-entry).** `cmd_drop`'s
+  `--stdin`/`--value-file` read now `.strip()`s surrounding whitespace instead of only the
+  trailing newline — a copy-pasted leading/trailing space or `\r` previously corrupted the
+  stored value silently; the web dashboard's `/api/drop` route inherits the fix for free.
+  Omitting both `--stdin` and `--value-file` now prompts interactively via `getpass` (masked,
+  entered twice, refusing on a mismatch) — for a human at their own terminal, since an agent's
+  own tool-execution channel has no TTY and can't itself use this mode (verified directly:
+  `getpass()` against closed/empty stdin raises `EOFError` immediately, caught and reported
+  cleanly rather than as a raw traceback). The already-real `AddSecretForm` dashboard now has a
+  one-click "Fulfill…" action on any `state=requested` reference (from `portunus ask "add
+  ..."`), pre-filled from every metadata field the agent already captured, plus a
+  `?fulfill=<name>` deep link. New **`portunus ui open [--fulfill NAME]`** is the one piece an
+  agent's own non-interactive tool call can actually run itself — fire-and-forget, opens a
+  browser tab pointed at that pre-filled form, refusing clearly before ever opening a
+  misleading or unreachable URL. Live-verified end to end via Playwright and a real dev server —
+  see `docs/architecture.md` §19.
+
 ## [0.27.0] - 2026-08-29
 
 ### Added

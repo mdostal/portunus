@@ -1,7 +1,7 @@
 id: 04-ui-open-command
 epic: portunus-secure-entry
 title: "portunus ui open [--fulfill NAME] -- agent-openable, fire-and-forget dashboard launch; closeout + version bump"
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [03-dashboard-fulfill-request]

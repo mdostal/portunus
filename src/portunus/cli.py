@@ -12,10 +12,13 @@ import getpass
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import webbrowser
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -1448,6 +1451,57 @@ def cmd_vault_access_verify(args) -> int:
     return 0
 
 
+_DEFAULT_UI_URL = "http://localhost:3000"
+
+
+def _ui_reachable(url: str, timeout: float = 1.5) -> bool:
+    """A fast, bounded TCP-connect probe -- never an indefinite hang
+    (matches this codebase's own pattern of bounded operations, e.g. the
+    registry/audit lock timeouts). Deliberately not an HTTP GET: this only
+    needs to know something is listening, not fetch/parse a page."""
+    parsed = urlparse(url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def cmd_ui_open(args) -> int:
+    """Opens the web dashboard for a human -- fire-and-forget, no TTY
+    needed, so an agent's own (necessarily non-interactive) tool call can
+    actually run this, unlike `portunus drop`'s interactive mode
+    (portunus-secure-entry Story 02). Never touches a value: this command
+    only ever constructs a URL and calls webbrowser.open() -- the deep
+    link (?fulfill=<name>) points at Story 03's own pre-fill wiring in the
+    dashboard, which is where a human would actually type the value."""
+    base_url = os.environ.get("PORTUNUS_UI_URL", _DEFAULT_UI_URL)
+    url = base_url
+
+    if args.fulfill:
+        registry, _, _, _ = _build()
+        ref = registry.get(args.fulfill)
+        if ref is None:
+            return _err(f"no reference named {args.fulfill!r}")
+        if ref.state != "requested":
+            return _err(
+                f"{args.fulfill!r} is not a pending request (state={ref.state})"
+            )
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}fulfill={args.fulfill}"
+
+    if not _ui_reachable(base_url):
+        return _err(
+            f"no local UI is running at {base_url} -- start one: cd ui && npm run dev"
+        )
+
+    webbrowser.open(url)
+    print(f"opened {url}")
+    return 0
+
+
 def _view_to_dict(view) -> dict:
     return {"name": view.name, "description": view.description, "ref_names": view.ref_names}
 
@@ -2583,6 +2637,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     up_run.add_argument("--yes", action="store_true", help="install without prompting (for scripts/cron)")
     up_run.set_defaults(func=cmd_update_run)
+
+    ui_p = sub.add_parser(
+        "ui", help="open the web dashboard for a human -- fire-and-forget, safe for an agent's own tool call",
+    )
+    ui_sub = ui_p.add_subparsers(dest="action", required=True)
+
+    ui_open = ui_sub.add_parser(
+        "open",
+        help="open the vault UI in a browser (PORTUNUS_UI_URL, default http://localhost:3000)",
+    )
+    ui_open.add_argument(
+        "--fulfill", default="",
+        help="a state=requested reference name -- deep-links straight into its pre-filled Fulfill form",
+    )
+    ui_open.set_defaults(func=cmd_ui_open)
 
     return p
 
