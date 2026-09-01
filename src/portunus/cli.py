@@ -12,10 +12,13 @@ import getpass
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import webbrowser
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -683,8 +686,10 @@ def cmd_session_remove(args) -> int:
 
 def cmd_drop(args) -> int:
     """Put a secret INTO Arca. Harness-side only: the value never enters the
-    LLM chat, ~/.claude, or a provider — it comes from stdin or a local file
-    the human/harness prepared out-of-band, never from an inline argv flag.
+    LLM chat, ~/.claude, or a provider — it comes from stdin, a local file
+    the human/harness prepared out-of-band, or (portunus-secure-entry Story
+    02) an interactive masked prompt for a human at their own terminal --
+    never from an inline argv flag.
 
     Lands in state=dropped (fail-closed); `portunus state <name> enabled` is
     the separate, explicit step that makes it injectable.
@@ -697,12 +702,30 @@ def cmd_drop(args) -> int:
             "(unset PORTUNUS_BACKEND or set it to unset/local)"
         )
     if args.stdin:
-        value = sys.stdin.readline().rstrip("\n")
-    else:
+        value = sys.stdin.readline().strip()
+    elif args.value_file:
         try:
-            value = Path(args.value_file).read_text().rstrip("\n")
+            value = Path(args.value_file).read_text().strip()
         except OSError as exc:
             return _err(f"cannot read --value-file: {exc}")
+    else:
+        # Interactive mode: for a HUMAN at their own terminal, not an
+        # agent's tool call -- an agent's own (necessarily non-interactive)
+        # tool-execution channel has no TTY; getpass() against closed/empty
+        # stdin raises EOFError immediately (verified directly), caught
+        # below and reported cleanly rather than a raw traceback. Prompted
+        # twice, since masked input has zero visual feedback -- the same
+        # reason passwd/ssh-keygen confirm twice.
+        try:
+            value = getpass.getpass("value: ").strip()
+            confirm = getpass.getpass("value (confirm): ").strip()
+        except EOFError:
+            return _err(
+                "no interactive input available -- use --stdin or --value-file "
+                "in a non-interactive context (e.g. from an agent)"
+            )
+        if value != confirm:
+            return _err("values did not match, nothing dropped")
     if not value:
         return _err("empty secret value; nothing dropped")
     try:
@@ -1425,6 +1448,57 @@ def cmd_vault_access_verify(args) -> int:
         print(f"  {entry['name']}: {entry['hint']}")
     for entry in report["failed"]:
         print(f"  {entry['name']}: {entry['hint']}")
+    return 0
+
+
+_DEFAULT_UI_URL = "http://localhost:3000"
+
+
+def _ui_reachable(url: str, timeout: float = 1.5) -> bool:
+    """A fast, bounded TCP-connect probe -- never an indefinite hang
+    (matches this codebase's own pattern of bounded operations, e.g. the
+    registry/audit lock timeouts). Deliberately not an HTTP GET: this only
+    needs to know something is listening, not fetch/parse a page."""
+    parsed = urlparse(url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def cmd_ui_open(args) -> int:
+    """Opens the web dashboard for a human -- fire-and-forget, no TTY
+    needed, so an agent's own (necessarily non-interactive) tool call can
+    actually run this, unlike `portunus drop`'s interactive mode
+    (portunus-secure-entry Story 02). Never touches a value: this command
+    only ever constructs a URL and calls webbrowser.open() -- the deep
+    link (?fulfill=<name>) points at Story 03's own pre-fill wiring in the
+    dashboard, which is where a human would actually type the value."""
+    base_url = os.environ.get("PORTUNUS_UI_URL", _DEFAULT_UI_URL)
+    url = base_url
+
+    if args.fulfill:
+        registry, _, _, _ = _build()
+        ref = registry.get(args.fulfill)
+        if ref is None:
+            return _err(f"no reference named {args.fulfill!r}")
+        if ref.state != "requested":
+            return _err(
+                f"{args.fulfill!r} is not a pending request (state={ref.state})"
+            )
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}fulfill={args.fulfill}"
+
+    if not _ui_reachable(base_url):
+        return _err(
+            f"no local UI is running at {base_url} -- start one: cd ui && npm run dev"
+        )
+
+    webbrowser.open(url)
+    print(f"opened {url}")
     return 0
 
 
@@ -2154,9 +2228,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="override which backend this one reference uses (default: '' -- follow the "
              "project's VaultBinding/PORTUNUS_BACKEND as normal)",
     )
-    src = dr.add_mutually_exclusive_group(required=True)
+    src = dr.add_mutually_exclusive_group(required=False)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
-    src.add_argument("--value-file", help="read the value from this local file")
+    src.add_argument(
+        "--value-file",
+        help="read the value from this local file (default, if neither this nor --stdin is "
+             "given: prompt interactively, masked, twice)",
+    )
     dr.set_defaults(func=cmd_drop)
 
     drb = sub.add_parser(
@@ -2559,6 +2637,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     up_run.add_argument("--yes", action="store_true", help="install without prompting (for scripts/cron)")
     up_run.set_defaults(func=cmd_update_run)
+
+    ui_p = sub.add_parser(
+        "ui", help="open the web dashboard for a human -- fire-and-forget, safe for an agent's own tool call",
+    )
+    ui_sub = ui_p.add_subparsers(dest="action", required=True)
+
+    ui_open = ui_sub.add_parser(
+        "open",
+        help="open the vault UI in a browser (PORTUNUS_UI_URL, default http://localhost:3000)",
+    )
+    ui_open.add_argument(
+        "--fulfill", default="",
+        help="a state=requested reference name -- deep-links straight into its pre-filled Fulfill form",
+    )
+    ui_open.set_defaults(func=cmd_ui_open)
 
     return p
 

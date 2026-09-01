@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { LeakSummary, PortunusReference } from "./types";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import type { AddSecretDraft, LeakSummary, PortunusReference } from "./types";
 import Console from "./components/Console";
 import VaultMap from "./components/VaultMap";
 import AskBar from "./components/AskBar";
@@ -14,7 +15,59 @@ import AboutPage from "./components/AboutPage";
 
 type Tab = "console" | "map" | "project" | "settings" | "about";
 
+/** {a: "1", b: "2"} -> "a=1,b=2" -- same convention as DetailDrawer's own
+ * local dictToKvString (not imported from there to keep this a plain,
+ * dependency-free helper; both independently avoid ui/lib/portunus.ts,
+ * which pulls in node:child_process and must never load in a client
+ * component). */
+function dictToKvString(dict: Record<string, string>): string {
+  return Object.entries(dict)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(",");
+}
+
+/** A state=requested reference already carries every metadata field an
+ * agent's own `portunus ask "add ..."` knew (portunus-secure-entry Story
+ * 03) -- this is a straight field-for-field mapping into AddSecretForm's
+ * draft shape, no data invented or guessed. `backend` is deliberately
+ * omitted: PortunusReference doesn't expose it today (a separate, larger
+ * change to the /api/registry response shape, out of this story's scope) --
+ * AddSecretForm's own "(project default)" default applies instead. */
+function referenceToDraft(ref: PortunusReference): Partial<AddSecretDraft> {
+  return {
+    name: ref.name,
+    sm_name: ref.sm_name,
+    kind: ref.kind,
+    scope: ref.scope,
+    org: ref.org,
+    provider: ref.provider,
+    project: ref.project,
+    env: ref.env,
+    tags: dictToKvString(ref.tags),
+    description: ref.description,
+    purpose: ref.purpose,
+    injected_as: dictToKvString(ref.injected_as),
+    group: ref.group,
+    related: ref.related.join(","),
+    repo: ref.repo,
+    source_files: ref.source_files.join(","),
+  };
+}
+
 export default function Home() {
+  return (
+    // useSearchParams() (the ?fulfill=<name> deep link, portunus-secure-
+    // entry Story 03) opts this page into a Suspense boundary at build/
+    // prerender time -- Next.js requires one even though this app never
+    // statically prerenders in practice (client-fetched data, output:
+    // "standalone"). The fallback is never visible in normal use.
+    <Suspense fallback={<div className="shell" />}>
+      <HomeInner />
+    </Suspense>
+  );
+}
+
+function HomeInner() {
   const [tab, setTab] = useState<Tab>("console");
   const [askOpen, setAskOpen] = useState(false);
   const [refs, setRefs] = useState<PortunusReference[]>([]);
@@ -23,6 +76,14 @@ export default function Home() {
   const [selected, setSelected] = useState<PortunusReference | null>(null);
   const [addDraftProvider, setAddDraftProvider] = useState<string | null>(null);
   const [rotateDraft, setRotateDraft] = useState<PortunusReference | null>(null);
+  // portunus-secure-entry Story 03: the target of a "Fulfill" action (a
+  // one-click path from a state=requested reference into AddSecretForm,
+  // fully pre-filled) -- either the DetailDrawer button or a ?fulfill=<name>
+  // deep link (Story 04's `portunus ui open --fulfill`).
+  const [fulfillDraft, setFulfillDraft] = useState<PortunusReference | null>(null);
+  const [fulfillError, setFulfillError] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const fulfillParamHandled = useRef(false);
   // First-run setup wizard (Slice 8) -- null while unknown (avoids a flash
   // of the wizard OR the main app before we actually know), then true/false
   // from `portunus vault status`. Checked once per load; the wizard's own
@@ -76,7 +137,28 @@ export default function Home() {
     refresh();
   }, [refresh]);
 
-  const addOpen = addDraftProvider !== null || rotateDraft !== null;
+  // Runs once, after the first successful registry load -- never re-fires
+  // on a later refresh() (e.g. right after the human successfully submits
+  // the fulfill form), which would otherwise misreport a just-fulfilled
+  // reference as "no longer pending."
+  useEffect(() => {
+    if (fulfillParamHandled.current || refs.length === 0) return;
+    const name = searchParams.get("fulfill");
+    fulfillParamHandled.current = true;
+    if (!name) return;
+    const ref = refs.find((r) => r.name === name);
+    if (!ref) {
+      setFulfillError(`No reference named "${name}" was found.`);
+      return;
+    }
+    if (ref.state !== "requested") {
+      setFulfillError(`"${name}" is not a pending request (current state: ${ref.state}).`);
+      return;
+    }
+    setFulfillDraft(ref);
+  }, [refs, searchParams]);
+
+  const addOpen = addDraftProvider !== null || rotateDraft !== null || fulfillDraft !== null;
 
   if (needsSetup) {
     return (
@@ -129,6 +211,14 @@ export default function Home() {
         <main className="main">
           {loading && <p className="inline-status">loading registry…</p>}
           {error && <p className="inline-status error">✗ {error}</p>}
+          {fulfillError && (
+            <p className="inline-status error">
+              ✗ {fulfillError}{" "}
+              <button className="btn quiet" onClick={() => setFulfillError(null)}>
+                dismiss
+              </button>
+            </p>
+          )}
           {!loading && !error && tab === "console" && (
             <Console refs={refs} onSelect={setSelected} leakMap={leakMap} />
           )}
@@ -158,6 +248,10 @@ export default function Home() {
               setRotateDraft(ref);
               setSelected(null);
             }}
+            onFulfill={(ref) => {
+              setFulfillDraft(ref);
+              setSelected(null);
+            }}
             onMoved={() => {
               setSelected(null);
               refresh();
@@ -178,15 +272,19 @@ export default function Home() {
                   project: rotateDraft.project,
                   env: rotateDraft.env,
                 }
+              : fulfillDraft
+              ? referenceToDraft(fulfillDraft)
               : { provider: addDraftProvider || "" }
           }
           onClose={() => {
             setAddDraftProvider(null);
             setRotateDraft(null);
+            setFulfillDraft(null);
           }}
           onAdded={() => {
             setAddDraftProvider(null);
             setRotateDraft(null);
+            setFulfillDraft(null);
             refresh();
           }}
         />

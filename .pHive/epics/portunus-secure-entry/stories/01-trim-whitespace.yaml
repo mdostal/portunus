@@ -1,0 +1,69 @@
+id: 01-trim-whitespace
+epic: portunus-secure-entry
+title: trim surrounding whitespace at cmd_drop's value-entry choke (--stdin and --value-file)
+status: shipped
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  `cmd_drop` (cli.py) currently applies only `.rstrip("\n")` to a value read via --stdin
+  (`sys.stdin.readline()`) or --value-file (`Path(...).read_text()`). A leading/trailing space,
+  tab, or `\r` -- a real, common artifact of copy-pasting a token from a web page or a
+  Windows-authored file -- silently corrupts the stored value with no error anywhere; it just
+  fails to authenticate later, disconnected from the entry mistake. Fix: `.strip()` (both ends,
+  all whitespace) at this one choke point. The web dashboard's `/api/drop` route pipes its own
+  value straight to `portunus drop --stdin`, so it inherits this fix for free -- no duplicate
+  trim logic needed there (design-discussion.md §1).
+
+acceptance_criteria:
+  - "Given a --stdin value with leading/trailing spaces, when drop runs, then the stored value has them stripped"
+  - "Given a --stdin value with a trailing \\r (Windows-style paste), when drop runs, then the stored value has it stripped"
+  - "Given a --value-file whose content has leading/trailing whitespace (including extra blank lines), when drop runs, then the stored value has it stripped"
+  - "Given a value that is ALL whitespace, when drop runs, then it's treated as empty (the existing 'empty secret value; nothing dropped' refusal fires) -- not stored as a whitespace-only value"
+  - "Given a value with meaningful INTERNAL whitespace (e.g. a token containing a space in the middle), when drop runs, then only the leading/trailing whitespace is removed -- internal whitespace is untouched"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for --stdin/--value-file leading/trailing whitespace stripping, the \r case, the all-whitespace-means-empty case, and the internal-whitespace-preserved case.
+    agent: tester
+  - id: implement
+    description: Change cmd_drop's value assignment from .rstrip("\n") to .strip() for both the --stdin and --value-file branches.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: "cmd_drop (cli.py:684) -- the one real value-entry choke this story fixes"
+    - path: ui/app/api/drop/route.ts
+      purpose: "pipes straight to `portunus drop --stdin` -- inherits this fix without its own change"
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: "cmd_drop's --stdin/--value-file read: .rstrip(\"\\n\") -> .strip()"
+
+design_decisions:
+  - decision: "trim once, at cmd_drop, not separately in the web route too"
+    rationale: "design-discussion.md §1 -- one implementation, not two; the web route already funnels through this exact command"
+  - decision: "no opt-out flag for whitespace-significant secrets"
+    rationale: "design-discussion.md §1 self-grill -- vanishingly rare in practice, every mainstream secret-entry surface trims by default for the same reason; a one-line follow-up if ever needed"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "no change to how/where the value flows -- still del value after store(), still never logged/returned; this story only changes what characters survive the trim, not the flow"
+
+risks:
+  - severity: low
+    description: "a real secret that legitimately needs leading/trailing whitespace would now be silently altered"
+    mitigation: "design-discussion.md §1 self-grill -- accepted, matches industry-standard secret-entry behavior; the current behavior (silent corruption from an ACCIDENTAL space) is strictly worse"
+
+references:
+  - path: .pHive/epics/portunus-secure-entry/docs/design-discussion.md
+    relevant_excerpt: "§1 (whitespace trimming)"
