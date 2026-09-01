@@ -1,0 +1,91 @@
+id: 04-ui-open-command
+epic: portunus-secure-entry
+title: "portunus ui open [--fulfill NAME] -- agent-openable, fire-and-forget dashboard launch; closeout + version bump"
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [03-dashboard-fulfill-request]
+
+description: |
+  The one piece of this epic with no existing partial implementation: a CLI command an agent's
+  own (non-interactive) tool call CAN successfully run, since it only ever opens a browser tab
+  and returns immediately -- no TTY, no waiting on human input. `portunus ui open` probes
+  `PORTUNUS_UI_URL` (default `http://localhost:3000`) with a short-timeout reachability check,
+  then `webbrowser.open()`s it (stdlib, cross-platform -- no per-OS branching). `--fulfill NAME`
+  looks the name up in the local registry first and refuses clearly (never opens a browser to a
+  broken/misleading URL) unless it exists and is `state=requested`; on success it appends
+  `?fulfill=<name>` to the URL, landing the human straight in Story 03's pre-filled form. Also
+  closes out the epic: README/architecture.md docs, CHANGELOG entry, version bump, and a real
+  live proof (a running `npm run dev`, `portunus ask "add ..."` to create a real pending
+  request, then `portunus ui open --fulfill <name>` opening a real browser tab landed on the
+  pre-filled form).
+
+acceptance_criteria:
+  - "Given the UI is reachable at PORTUNUS_UI_URL, when `portunus ui open` runs with no flags, then a browser opens to that URL"
+  - "Given the UI is NOT reachable, when `portunus ui open` runs, then it reports a clear, actionable message (start it with `cd ui && npm run dev`) and never opens a browser to a broken page"
+  - "Given `--fulfill NAME` where NAME exists and is state=requested, when `ui open` runs and the UI is reachable, then the browser opens to `<url>?fulfill=NAME`"
+  - "Given `--fulfill NAME` where NAME does not exist, when `ui open` runs, then it refuses clearly BEFORE opening any browser -- no misleading tab opened"
+  - "Given `--fulfill NAME` where NAME exists but is NOT state=requested, when `ui open` runs, then it refuses clearly, naming the reference's actual current state"
+  - "Given PORTUNUS_UI_URL is set to a non-default value, when `ui open` runs, then that URL is used instead of the http://localhost:3000 default"
+  - "Given README.md and docs/architecture.md, when read after this story, then both describe the full secure-entry flow: trim (Story 01), interactive masked prompt (Story 02), dashboard Fulfill/deep-link (Story 03), and `ui open` (this story) -- and explicitly note that an agent's own tool call cannot itself run the interactive prompt (Story 02), only `ui open`"
+  - "Given the version files (pyproject.toml, manifest.json, tauri.conf.json, Cargo.toml, __init__.py), when checked, then all are in lockstep at the new minor version"
+  - "Given a real live proof (a running dev server, a real portunus ask-created pending request, then ui open --fulfill against it), when run, then a real browser tab opens landed on the correctly pre-filled form -- not a synthetic fixture"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the reachability-gated open/no-open branches, the --fulfill existence/state validation (refuses before any webbrowser.open call -- mock webbrowser.open and assert call/no-call), and the PORTUNUS_UI_URL override.
+    agent: tester
+  - id: implement
+    description: cmd_ui_open in cli.py; `ui open [--fulfill NAME]` subparser; docs; version bump.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Full suite green, npm run build clean, live proof (real dev server + real ask-created pending request + real ui open --fulfill), commit, push, open PR into dev, merge on local verification, promote dev->main, cut the release.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: "new cmd_ui_open + `ui open` subparser; reuses the existing Registry lookup pattern (registry.get()) for the --fulfill validation, no new registry method needed"
+    - path: README.md
+      purpose: "documents `npm run dev` -> http://localhost:3000 as the existing default this story's PORTUNUS_UI_URL default matches"
+    - path: .pHive/epics/portunus-vault-transfer/docs/design-discussion.md
+      purpose: "§4's own CLI-only reasoning precedent -- this story's design-discussion §4 self-grill explicitly compares against and distinguishes from it"
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: "new cmd_ui_open; `ui open [--fulfill NAME]` subparser"
+  - file: README.md
+    change: "document the full secure-entry flow (trim, interactive prompt, dashboard fulfill, ui open)"
+  - file: docs/architecture.md
+    change: "new numbered section for this epic"
+  - file: CHANGELOG.md
+    change: version entry
+  - file: pyproject.toml
+    change: version bump (minor)
+
+design_decisions:
+  - decision: "webbrowser.open(), not per-OS `open`/`xdg-open`/`start` shelling"
+    rationale: "design-discussion.md §4 -- Python stdlib already handles this cross-platform; no reason to reimplement"
+  - decision: "no packaged-desktop-app launch, no dev-server auto-start"
+    rationale: "design-discussion.md §4 self-grill -- both deliberately deferred as separate, real scope (research-brief.md §4)"
+  - decision: "CLI-only, no MCP tool"
+    rationale: "design-discussion.md §4 self-grill -- an agent's normal shell-command tool already does everything an MCP tool would; nothing for an MCP wrapper to add"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "this command never touches a value -- structurally, it only ever constructs a URL string and calls webbrowser.open()/does a reachability probe; the --fulfill validation reads only registry metadata (name/state), same as every other name-lookup in this codebase"
+
+risks:
+  - severity: low
+    description: "the reachability probe itself could be slow/hang on an unusual network config"
+    mitigation: "a short, explicit timeout on the probe (matching this codebase's own pattern of bounded operations, e.g. the registry/audit lock timeouts) -- never an indefinite hang"
+
+references:
+  - path: .pHive/epics/portunus-secure-entry/docs/design-discussion.md
+    relevant_excerpt: "§4 (portunus ui open)"
+  - path: .pHive/epics/portunus-secure-entry/docs/research-brief.md
+    relevant_excerpt: "§4 (scope boundary -- what's deliberately deferred)"
