@@ -1,7 +1,7 @@
 id: 01-trim-whitespace
 epic: portunus-secure-entry
 title: trim surrounding whitespace at cmd_drop's value-entry choke (--stdin and --value-file)
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: []

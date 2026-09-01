@@ -1,7 +1,7 @@
 id: 02-interactive-masked-prompt
 epic: portunus-secure-entry
 title: portunus drop interactive mode -- getpass-based, masked, confirm-twice, when neither --stdin nor --value-file is given
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [01-trim-whitespace]

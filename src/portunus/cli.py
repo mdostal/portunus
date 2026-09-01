@@ -683,8 +683,10 @@ def cmd_session_remove(args) -> int:
 
 def cmd_drop(args) -> int:
     """Put a secret INTO Arca. Harness-side only: the value never enters the
-    LLM chat, ~/.claude, or a provider — it comes from stdin or a local file
-    the human/harness prepared out-of-band, never from an inline argv flag.
+    LLM chat, ~/.claude, or a provider — it comes from stdin, a local file
+    the human/harness prepared out-of-band, or (portunus-secure-entry Story
+    02) an interactive masked prompt for a human at their own terminal --
+    never from an inline argv flag.
 
     Lands in state=dropped (fail-closed); `portunus state <name> enabled` is
     the separate, explicit step that makes it injectable.
@@ -698,11 +700,29 @@ def cmd_drop(args) -> int:
         )
     if args.stdin:
         value = sys.stdin.readline().strip()
-    else:
+    elif args.value_file:
         try:
             value = Path(args.value_file).read_text().strip()
         except OSError as exc:
             return _err(f"cannot read --value-file: {exc}")
+    else:
+        # Interactive mode: for a HUMAN at their own terminal, not an
+        # agent's tool call -- an agent's own (necessarily non-interactive)
+        # tool-execution channel has no TTY; getpass() against closed/empty
+        # stdin raises EOFError immediately (verified directly), caught
+        # below and reported cleanly rather than a raw traceback. Prompted
+        # twice, since masked input has zero visual feedback -- the same
+        # reason passwd/ssh-keygen confirm twice.
+        try:
+            value = getpass.getpass("value: ").strip()
+            confirm = getpass.getpass("value (confirm): ").strip()
+        except EOFError:
+            return _err(
+                "no interactive input available -- use --stdin or --value-file "
+                "in a non-interactive context (e.g. from an agent)"
+            )
+        if value != confirm:
+            return _err("values did not match, nothing dropped")
     if not value:
         return _err("empty secret value; nothing dropped")
     try:
@@ -2154,9 +2174,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="override which backend this one reference uses (default: '' -- follow the "
              "project's VaultBinding/PORTUNUS_BACKEND as normal)",
     )
-    src = dr.add_mutually_exclusive_group(required=True)
+    src = dr.add_mutually_exclusive_group(required=False)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
-    src.add_argument("--value-file", help="read the value from this local file")
+    src.add_argument(
+        "--value-file",
+        help="read the value from this local file (default, if neither this nor --stdin is "
+             "given: prompt interactively, masked, twice)",
+    )
     dr.set_defaults(func=cmd_drop)
 
     drb = sub.add_parser(

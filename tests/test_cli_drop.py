@@ -74,9 +74,16 @@ def test_drop_never_writes_plaintext_to_disk_or_audit(home):
     assert drops[0]["secret"] == "dostal-shared-test"
 
 
-def test_drop_requires_stdin_or_value_file(home, capsys):
-    with pytest.raises(SystemExit):
-        main(["drop", "shared-test", "dostal-shared-test"])
+def test_drop_neither_stdin_nor_value_file_prompts_interactively(home, monkeypatch, capsys):
+    """portunus-secure-entry Story 02: neither flag given no longer raises
+    SystemExit at parse time -- it falls into the getpass-based interactive
+    mode instead (see the dedicated interactive-mode tests below)."""
+    calls = iter([SECRET, SECRET])
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: next(calls))
+    rc = main(["drop", "shared-test", "dostal-shared-test"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert SECRET not in out
 
 
 def test_drop_accepts_provider_project_env_tags(home, capsys):
@@ -211,3 +218,83 @@ def test_drop_stdin_preserves_internal_whitespace(home, monkeypatch, capsys):
         assert open(path).read() == f"key={inner}"
     finally:
         os.unlink(path)
+
+
+# --- portunus-secure-entry Story 02: interactive masked prompt ---------------
+
+def test_drop_interactive_prompts_twice_and_stores_on_match(home, monkeypatch, capsys):
+    calls = iter([f"  {SECRET}  ", f"  {SECRET}  "])
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: next(calls))
+    rc = main(["drop", "shared-test", "dostal-shared-test"])
+    assert rc == 0
+    capsys.readouterr()
+
+    main(["state", "shared-test", "enabled"])
+    capsys.readouterr()
+    main(["resolve", f"key={{{{secret:shared-test}}}}"])
+    path = capsys.readouterr().out.strip()
+    try:
+        assert open(path).read() == f"key={SECRET}"  # trimmed, same as Story 01
+    finally:
+        os.unlink(path)
+
+
+def test_drop_interactive_mismatch_refuses_and_stores_nothing(home, monkeypatch, capsys):
+    calls = iter([SECRET, SECRET + "-typo"])
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: next(calls))
+    rc = main(["drop", "shared-test", "dostal-shared-test"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "did not match" in err
+    assert SECRET not in err
+
+    from portunus import Registry
+    assert "shared-test" not in Registry()
+
+
+def test_drop_stdin_never_triggers_getpass(home, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{SECRET}\n"))
+    called = []
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: called.append(1) or SECRET)
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--stdin"])
+    assert rc == 0
+    assert called == []
+
+
+def test_drop_value_file_never_triggers_getpass(home, monkeypatch, capsys):
+    value_file = home / "value.txt"
+    value_file.write_text(SECRET + "\n")
+    called = []
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: called.append(1) or SECRET)
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--value-file", str(value_file)])
+    assert rc == 0
+    assert called == []
+
+
+def test_drop_interactive_empty_after_trim_is_refused(home, monkeypatch, capsys):
+    calls = iter(["   ", "   "])
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: next(calls))
+    rc = main(["drop", "shared-test", "dostal-shared-test"])
+    assert rc == 1
+    assert "empty secret value" in capsys.readouterr().err
+
+    from portunus import Registry
+    assert "shared-test" not in Registry()
+
+
+def test_drop_interactive_eof_is_caught_cleanly_not_a_raw_traceback(home, monkeypatch, capsys):
+    """Verified directly: getpass() against closed/empty stdin (exactly what
+    an agent's own non-interactive tool call provides) raises EOFError
+    immediately -- this must become a clean CLI error, never an uncaught
+    traceback."""
+    def _raise(*a, **k):
+        raise EOFError()
+
+    monkeypatch.setattr("getpass.getpass", _raise)
+    rc = main(["drop", "shared-test", "dostal-shared-test"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "portunus:" in err  # the normal _err()-formatted message, not a traceback
+
+    from portunus import Registry
+    assert "shared-test" not in Registry()
