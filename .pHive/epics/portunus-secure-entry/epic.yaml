@@ -29,19 +29,19 @@ stories:
     title: trim surrounding whitespace at cmd_drop's value-entry choke (--stdin and --value-file)
     complexity: low
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-interactive-masked-prompt
     title: portunus drop interactive mode -- getpass-based, masked, confirm-twice, when neither --stdin nor --value-file is given
     complexity: low
     depends_on: [01-trim-whitespace]
-    status: pending
+    status: shipped
   - id: 03-dashboard-fulfill-request
     title: wire state=requested references into AddSecretForm/DetailDrawer as a one-click Fulfill action, plus a ?fulfill=<name> deep link
     complexity: medium
     depends_on: [01-trim-whitespace]
-    status: pending
+    status: shipped
   - id: 04-ui-open-command
     title: portunus ui open [--fulfill NAME] -- agent-openable, fire-and-forget dashboard launch; closeout + version bump
     complexity: medium
     depends_on: [03-dashboard-fulfill-request]
-    status: pending
+    status: shipped

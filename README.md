@@ -271,14 +271,27 @@ entirely — prefer them over host bind-mounts unless you specifically need host
 
 ### Drop a secret into Arca (harness-side only)
 
-`drop` is how a value gets into the local-encrypted vault — from stdin or a local file, **never** an
-inline flag (it would land in shell history / `ps`) and never through an LLM turn. It lands in
-`state=dropped` (fail-closed) so a separate, explicit `enable` is required before it's injectable:
+`drop` is how a value gets into the local-encrypted vault — from stdin, a local file, or an
+interactive masked prompt, **never** an inline flag (it would land in shell history / `ps`) and
+never through an LLM turn. It lands in `state=dropped` (fail-closed) so a separate, explicit
+`enable` is required before it's injectable. Surrounding whitespace (a real, common artifact of
+copy-pasting a token from a web page or a Windows-authored file) is always trimmed:
 
 ```bash
 portunus drop shared-anthropic dostal-shared-anthropic --value-file /path/to/value   # or --stdin
 portunus state shared-anthropic enabled     # now injectable
 portunus state shared-anthropic locked      # optional: freeze further changes, still injectable
+```
+
+Omit both `--stdin` and `--value-file` for an interactive, masked prompt (no terminal echo,
+entered twice, refusing unless both entries match) — for a human at their own terminal, not an
+agent's tool call: an agent's own tool-execution channel is fundamentally non-interactive (no
+live TTY), so this mode only ever helps a human running the command themselves:
+
+```bash
+portunus drop shared-anthropic dostal-shared-anthropic
+value:
+value (confirm):
 ```
 
 ### Register a reference to an out-of-band secret (name → Secret Manager location)
@@ -656,6 +669,28 @@ of every command, not something `vault access` introduces). It's an inert Fernet
 applied to any data; `vault.enc.json`, the file that would actually hold an encrypted value,
 is never created by `vault access` alone.
 
+### Fulfilling a pending request (`portunus ui open`)
+
+`portunus ask "add ..."` (below) creates a value-less, `state=requested` placeholder — an agent
+already captured every metadata field it knew (org/provider/project/env/tags), but a human still
+has to supply the actual value. `portunus ui open [--fulfill NAME]` is the one command an
+agent's own tool call CAN run itself to make that easy: it only ever opens a browser tab and
+returns immediately (no TTY, no waiting on human input), landing the human straight on the
+existing Standalone UI's "Fulfill" form, pre-filled from that reference's own metadata — they
+only have to type the value:
+
+```bash
+portunus ui open                              # just opens the dashboard
+portunus ui open --fulfill vercel-mdostal     # deep-links straight into that pending request's form
+```
+
+Reads `PORTUNUS_UI_URL` (default `http://localhost:3000`, matching `npm run dev`'s own default
+below). Refuses clearly — before ever opening a browser — if `--fulfill NAME` doesn't exist or
+isn't `state=requested` anymore, and if no UI is reachable at that URL at all (never opens a
+browser to a broken page). The same "Fulfill…" action is also reachable by hand: click any
+`requested`-state reference in the Console/Project Explorer, then "Fulfill…" in its detail
+drawer.
+
 ### Target a different vault (`--home`)
 
 ```bash
@@ -818,7 +853,10 @@ form is the one deliberate human-plaintext-entry point (mirroring `portunus drop
 value is piped to the CLI via stdin only, never an argv element, never logged. A secret's
 org/provider/project/env/repo/source_files/description/purpose/injected_as metadata is viewable
 and editable from the detail drawer's Move form — never a value, always through the same
-`portunus retag` path.
+`portunus retag` path. A `state=requested` reference (an agent's own `portunus ask "add ..."`)
+gets a "Fulfill…" action in its detail drawer that opens this same add-secret form already
+pre-filled from everything the agent captured — see "Fulfilling a pending request" above for
+the `?fulfill=<name>` deep link and `portunus ui open --fulfill` that point straight at it.
 
 **Missing-metadata signal.** A reference with no `description`/`purpose`/`org`/`project`/`tags`
 gets a "⚠ missing metadata" badge everywhere it renders, plus a real clickable Metadata facet

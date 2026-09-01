@@ -791,6 +791,62 @@ own §4 (portunus-vault-backup design-discussion.md) — the sibling decision to
 bidirectional multi-machine sync as separate, bigger future work; this epic's "share access,
 not values" scope is intentionally narrower than that too.
 
+## 19. Masked, trimmed, agent-openable secret entry (portunus-secure-entry)
+
+**The problem was never the value's flow — it was the human/agent handoff.** `cmd_drop` already
+got the hard invariant right (`del value` after `store()`, never the audit log, never an argv
+flag); the real gap was UX: an agent's own tool-execution channel is fundamentally
+non-interactive — it runs a command to completion and captures stdout/stderr, with no live TTY
+a human can type into. So an agent literally cannot itself run a masked prompt and hand it to a
+human; verified directly, not assumed — `getpass.getpass()` against closed/empty stdin (exactly
+what an agent's own tool call provides) raises `EOFError` immediately, not a hang. This epic's
+four pieces exist specifically for that handoff moment: a human entering a value while an agent
+is mid-task.
+
+**Whitespace, trimmed once, at the one real choke.** `cmd_drop`'s `--stdin`/`--value-file` read
+previously applied only `.rstrip("\n")` — a leading/trailing space or `\r` (a classic
+copy-paste artifact) silently corrupted the stored value with no error anywhere. Now `.strip()`
+at that one assignment; the web dashboard's `/api/drop` route pipes straight to this same
+command, so it inherits the fix for free — one implementation, not two.
+
+**`portunus drop`'s interactive mode is for a human, not an agent — and degrades safely either
+way.** When neither `--stdin` nor `--value-file` is given, `getpass.getpass()` prompts twice
+(masked, no echo), refusing unless both entries match — the same reason `passwd`/`ssh-keygen`
+confirm twice: masked input has zero visual feedback, so a typo is otherwise silent. If an
+agent's own tool call somehow reaches this branch anyway (closed/empty stdin), the resulting
+`EOFError` is caught and reported as the same kind of clean, actionable CLI error every other
+failure mode in this codebase already gets — never a raw traceback.
+
+**The dashboard already existed — this epic wired the missing connection.**
+`ui/app/components/AddSecretForm.tsx` (a masked `type="password"` field, POSTing to
+`/api/drop`, which pipes to `portunus drop --stdin`) and `Registry.request()`'s
+`state=requested` placeholders (from `portunus ask "add ..."`) both predate this epic — they
+just weren't connected. `DetailDrawer` now shows a "Fulfill…" action (only when
+`state === "requested"`) that opens `AddSecretForm` pre-filled from every metadata field the
+agent already captured, mirroring the existing rotate-flow pre-fill exactly. A `?fulfill=<name>`
+query param does the same on page load — the deep link `portunus ui open --fulfill` points a
+browser at. (`useSearchParams()` required wrapping the page in a `Suspense` boundary — a
+Next.js build-time requirement, not a behavior change.)
+
+**`portunus ui open` is the one piece an agent CAN run itself.** Unlike the interactive drop
+prompt, this command only ever constructs a URL and calls `webbrowser.open()` (Python stdlib,
+cross-platform — no per-OS branching) — no TTY needed, returns immediately. A short, bounded
+TCP-connect probe (`_ui_reachable()`, explicit timeout — matching this codebase's own pattern of
+bounded operations, e.g. the registry/audit lock timeouts) runs first, so it never opens a
+browser to a dead connection; `--fulfill NAME` is validated against the registry (exists,
+`state=requested`) *before* that probe even runs, so it never opens a misleading URL either.
+Deliberately does NOT launch the packaged desktop app (same Next.js UI wrapped in Tauri per §6 —
+opening the web UI is functionally equivalent) or auto-start the dev server (a separate, real
+process-lifecycle feature) — both explicitly deferred, not silently dropped.
+
+**Live-verified, not just unit-tested.** A real `portunus ask "add ..."` call created a genuine
+`state=requested` reference; against a real `npm run dev` server, both the DetailDrawer button
+and a `?fulfill=<name>` URL (via Playwright) landed on an identically pre-filled form, and
+submitting a value with deliberate leading/trailing whitespace stored it correctly trimmed and
+resolved cleanly. Separately, `portunus ui open --fulfill <name>` against that same real server
+was confirmed to open a real browser tab — the dev server's own request log shows the exact
+`GET /?fulfill=<name> 200` hit landing.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference
