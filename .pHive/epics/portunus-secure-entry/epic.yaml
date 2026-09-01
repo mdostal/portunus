@@ -1,0 +1,47 @@
+name: portunus-secure-entry
+title: masked, trimmed, agent-openable secret entry -- portunus drop's interactive prompt, the dashboard's fulfill-request flow, and `portunus ui open`
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  User's own framing: "we need a way for an agent using portunus to open a place to enter the
+  key and have it get saved without being viewed -- this can be a portunus dashboard that the
+  agent can open, a tool, a TUI that obfuscates and hides it and does trim on surrounding
+  whitespace etc -- we just need a way to enter keys easily when fighting our agents."
+
+  An agent's own tool-execution channel is fundamentally non-interactive -- it cannot hand a
+  live TTY to a human, so it can't itself run a masked prompt. The real fix spans four small,
+  additive pieces: (1) trim surrounding whitespace at cmd_drop's one real value-entry choke
+  (the CLI's --stdin/--value-file read, which the existing AddSecretForm/api/drop web dashboard
+  already funnels through) -- today only the trailing newline is stripped, so a copy-pasted
+  leading/trailing space silently corrupts the stored value; (2) an interactive, masked,
+  confirm-twice prompt mode for `portunus drop` when neither --stdin nor --value-file is given,
+  for a human at a bare terminal; (3) wiring the already-real `state=requested` placeholders
+  (from `portunus ask "add ..."`) into the already-real `AddSecretForm`/`DetailDrawer` dashboard
+  as a one-click "Fulfill" action, plus a `?fulfill=<name>` deep-link query param; (4) a new
+  `portunus ui open [--fulfill NAME]` CLI command an agent CAN successfully run (fire-and-forget,
+  no TTY needed) to pop that dashboard open for the human, pointed straight at the pending
+  request.
+
+stories:
+  - id: 01-trim-whitespace
+    title: trim surrounding whitespace at cmd_drop's value-entry choke (--stdin and --value-file)
+    complexity: low
+    depends_on: []
+    status: pending
+  - id: 02-interactive-masked-prompt
+    title: portunus drop interactive mode -- getpass-based, masked, confirm-twice, when neither --stdin nor --value-file is given
+    complexity: low
+    depends_on: [01-trim-whitespace]
+    status: pending
+  - id: 03-dashboard-fulfill-request
+    title: wire state=requested references into AddSecretForm/DetailDrawer as a one-click Fulfill action, plus a ?fulfill=<name> deep link
+    complexity: medium
+    depends_on: [01-trim-whitespace]
+    status: pending
+  - id: 04-ui-open-command
+    title: portunus ui open [--fulfill NAME] -- agent-openable, fire-and-forget dashboard launch; closeout + version bump
+    complexity: medium
+    depends_on: [03-dashboard-fulfill-request]
+    status: pending

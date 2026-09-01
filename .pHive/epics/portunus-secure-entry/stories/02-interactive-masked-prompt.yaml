@@ -1,0 +1,75 @@
+id: 02-interactive-masked-prompt
+epic: portunus-secure-entry
+title: portunus drop interactive mode -- getpass-based, masked, confirm-twice, when neither --stdin nor --value-file is given
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [01-trim-whitespace]
+
+description: |
+  Today `cmd_drop` requires either --stdin or --value-file -- there is no interactive masked
+  prompt at all. This is the literal "a TUI that obfuscates and hides it" half of the user's
+  ask: when a human is at a bare terminal (no browser/UI running, e.g. SSH'd into a headless
+  box) and neither flag is given, prompt via `getpass.getpass()` (stdlib, cross-platform, no
+  terminal echo) TWICE, refusing to proceed unless both entries match -- catching a typo before
+  anything is stored, since masked input has zero visual feedback. The confirmed value flows
+  through the exact same `value = ...` variable, `.strip()` (Story 01), `del value` scrub, and
+  `backend.store()` call every other entry mode already uses -- no parallel code path. An agent
+  cannot itself invoke this mode usefully (its own tool-execution channel has no TTY; verified
+  directly -- `getpass()` against closed/empty stdin raises `EOFError` immediately, not a hang)
+  -- this exists for a HUMAN, working alongside an agent, to run themselves in their own
+  terminal when the agent tells them to. A bare `EOFError` from that case is caught and turned
+  into the same kind of clean, actionable CLI error every other failure mode in this codebase
+  already gets -- never a raw traceback.
+
+acceptance_criteria:
+  - "Given neither --stdin nor --value-file, when drop runs, then it prompts for the value twice via getpass (no terminal echo)"
+  - "Given the two masked entries match, when drop runs, then the (trimmed) value is stored exactly as the existing --stdin/--value-file paths already do"
+  - "Given the two masked entries DO NOT match, when drop runs, then it refuses clearly ('values did not match, nothing dropped') and stores nothing -- no partial/silent store"
+  - "Given --stdin IS passed, when drop runs, then the interactive prompt is never triggered -- existing --stdin behavior (including Story 01's trim) is byte-identical"
+  - "Given --value-file IS passed, when drop runs, then the interactive prompt is never triggered -- existing --value-file behavior is byte-identical"
+  - "Given the interactive value ends up empty or whitespace-only after trimming, when drop runs, then the existing 'empty secret value; nothing dropped' refusal fires, same as the other two entry modes"
+  - "Given getpass raises EOFError (e.g. closed/empty stdin, such as an agent's own non-interactive tool call), when drop runs, then it's caught and reported as a clean, actionable CLI error -- never a raw Python traceback"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the getpass-twice-and-match flow, the mismatch-refusal, the empty-after-trim refusal, the EOFError-caught-cleanly case, and that --stdin/--value-file are unaffected (mock getpass.getpass, assert it's never called when either flag is present).
+    agent: tester
+  - id: implement
+    description: Add the interactive branch to cmd_drop, gated on `not args.stdin and not args.value_file`, with EOFError caught and reported cleanly.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: "cmd_drop (cli.py:684) and its argparse definition -- --stdin/--value-file are already mutually-aware flags; this story adds the neither-given branch"
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: "cmd_drop gains a getpass-based interactive branch when neither --stdin nor --value-file is given"
+
+design_decisions:
+  - decision: "confirm twice (like passwd/ssh-keygen), not once"
+    rationale: "design-discussion.md §2 -- masked input has zero visual feedback; a second entry is cheap insurance against a silent typo, the standard UX for this exact problem"
+  - decision: "rely on getpass's own TTY-fallback behavior rather than reimplementing it"
+    rationale: "design-discussion.md §2 self-grill -- getpass already falls back to a visible input() with a warning on a non-TTY stream; no new handling needed"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "the interactive value flows through the exact same variable/scrub/store path every other entry mode uses -- structurally verified by the tests reusing the same assertions Story 01's tests already make about the stored value"
+
+risks:
+  - severity: low
+    description: "an agent might try to run `portunus drop` without --stdin/--value-file inside its own non-interactive tool call"
+    mitigation: "documented explicitly in this story's own description and in the closeout docs (Story 04) -- this mode is for a human's own terminal, not an agent's tool call; verified directly that getpass() against closed/empty stdin raises EOFError immediately (not a hang), and this story catches that and reports it as a clean, actionable error rather than a raw traceback"
+
+references:
+  - path: .pHive/epics/portunus-secure-entry/docs/design-discussion.md
+    relevant_excerpt: "§2 (interactive masked CLI prompt)"

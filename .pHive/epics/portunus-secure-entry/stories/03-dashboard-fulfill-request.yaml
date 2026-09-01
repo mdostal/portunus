@@ -1,0 +1,82 @@
+id: 03-dashboard-fulfill-request
+epic: portunus-secure-entry
+title: wire state=requested references into AddSecretForm/DetailDrawer as a one-click Fulfill action, plus a ?fulfill=<name> deep link
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-trim-whitespace]
+
+description: |
+  `portunus ask "add ..."` already creates a `state=requested` placeholder reference with every
+  metadata field the agent knew (org/provider/project/env/tags/description/purpose/etc) but
+  never a value. Today a human looking at that reference in the Console/ProjectExplorer/
+  DetailDrawer has no one-click path into the already-real, already-masked `AddSecretForm` --
+  they'd have to manually retype everything, defeating the point of the agent having already
+  captured it. This story: (1) `DetailDrawer` gains a "Fulfill" action button, shown only when
+  `reference.state === "requested"`, that opens `AddSecretForm` pre-filled from that reference's
+  own metadata -- the exact same pre-fill mechanism `rotateDraft` already uses today, just from
+  a different source object; (2) `page.tsx` reads a `?fulfill=<name>` URL query param on load
+  and, if the name exists and is `state=requested`, auto-opens the same pre-filled form (a clear
+  inline error, not a silent no-op, if the name doesn't exist or isn't `state=requested`
+  anymore). The query param is the deep link Story 04's `portunus ui open --fulfill NAME` opens
+  a browser to.
+
+acceptance_criteria:
+  - "Given a reference with state=requested, when its DetailDrawer is open, then a 'Fulfill' action button is shown (alongside the existing rotate action)"
+  - "Given a reference with any OTHER state, when its DetailDrawer is open, then no 'Fulfill' button is shown"
+  - "Given the Fulfill button is clicked, when AddSecretForm opens, then every metadata field the reference has (name, sm_name, org, provider, project, env, tags, description, purpose, injected_as, group, related, repo, source_files) is pre-filled -- the human only has to type the value"
+  - "Given the page loads with ?fulfill=<name> where <name> exists and is state=requested, then AddSecretForm auto-opens pre-filled the same way the button does"
+  - "Given the page loads with ?fulfill=<name> where <name> does NOT exist, then a clear inline error is shown -- not a silent no-op, not a crash"
+  - "Given the page loads with ?fulfill=<name> where <name> exists but is NOT state=requested (e.g. already fulfilled in another tab), then a clear inline message explains that, rather than silently opening a stale form"
+  - "Given `npm run build`, when run after this story, then it completes with zero TypeScript errors"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests (or, if this UI has no existing component test harness, a documented manual test script run against `npm run dev` -- match whatever this repo's existing UI story precedent uses) for the Fulfill button visibility, pre-fill completeness, and all three ?fulfill query-param cases.
+    agent: tester
+  - id: implement
+    description: DetailDrawer's Fulfill button + wiring; page.tsx's ?fulfill query-param read/validate/open logic.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: npm run build, live smoke test against `npm run dev`, commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: ui/app/page.tsx
+      purpose: "owns AddSecretForm's `initial` prop today via rotateDraft -- this story adds a second source (a fulfill target) feeding the same prop, plus the ?fulfill query-param read"
+    - path: ui/app/components/DetailDrawer.tsx
+      purpose: "onRotate's existing action-button pattern (line ~475) -- this story's Fulfill button mirrors it exactly"
+    - path: ui/app/components/AddSecretForm.tsx
+      purpose: "already accepts a partial `initial` draft and already masks the value field -- no changes needed here, only new callers"
+    - path: ui/app/types.ts
+      purpose: "PortunusReference already carries every field AddSecretForm's AddSecretDraft needs -- no new type needed, just a mapping function"
+
+files_to_modify:
+  - file: ui/app/components/DetailDrawer.tsx
+    change: "add a Fulfill action button, visible only when state===\"requested\""
+  - file: ui/app/page.tsx
+    change: "wire the Fulfill button's target reference into AddSecretForm's initial prop; read/validate/act on ?fulfill=<name>"
+
+design_decisions:
+  - decision: "reuse AddSecretForm/the rotateDraft pre-fill pattern exactly, no new component"
+    rationale: "design-discussion.md §3 -- a state=requested reference is a strict superset of what a rotate draft already supplies; one pre-fill mechanism, not two"
+  - decision: "a query param, not a dedicated pending-requests list view"
+    rationale: "design-discussion.md §3 self-grill -- the immediate ask is a single openable entry point Story 04 can deep-link to; a list view is real future work, additive on top of this same pre-fill path, not blocked by this story"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "no change to AddSecretForm's own value handling (still local component state only, still a single POST to /api/drop, still cleared on success) -- this story only changes what pre-fills the OTHER, non-secret fields"
+
+risks:
+  - severity: low
+    description: "a ?fulfill=<name> link could be shared/bookmarked and opened after the request was already fulfilled or the name reused for something else"
+    mitigation: "acceptance criteria above require a clear inline message for both the not-found and no-longer-requested cases -- never a silent stale-form open"
+
+references:
+  - path: .pHive/epics/portunus-secure-entry/docs/design-discussion.md
+    relevant_excerpt: "§3 (wiring state=requested into the dashboard)"
