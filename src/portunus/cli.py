@@ -697,10 +697,10 @@ def cmd_drop(args) -> int:
             "(unset PORTUNUS_BACKEND or set it to unset/local)"
         )
     if args.stdin:
-        value = sys.stdin.readline().rstrip("\n")
+        value = sys.stdin.readline().strip()
     else:
         try:
-            value = Path(args.value_file).read_text().rstrip("\n")
+            value = Path(args.value_file).read_text().strip()
         except OSError as exc:
             return _err(f"cannot read --value-file: {exc}")
     if not value:

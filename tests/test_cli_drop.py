@@ -2,6 +2,7 @@
 default (local-encrypted) backend. Proves the acceptance criterion from
 DOS-726 directly: zero plaintext in stdout/stderr, the vault file, or the
 audit log at any point in the lifecycle."""
+import io
 import os
 
 import pytest
@@ -129,3 +130,84 @@ def test_drop_backend_defaults_empty(home, capsys):
     from portunus import Registry
     ref = Registry().require("shared-test")
     assert ref.backend == ""
+
+
+def test_drop_stdin_trims_leading_and_trailing_whitespace(home, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"  {SECRET}  \n"))
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--stdin"])
+    assert rc == 0
+    capsys.readouterr()
+
+    main(["state", "shared-test", "enabled"])
+    capsys.readouterr()
+    rc = main(["resolve", f"key={{{{secret:shared-test}}}}"])
+    assert rc == 0
+    path = capsys.readouterr().out.strip()
+    try:
+        assert open(path).read() == f"key={SECRET}"
+    finally:
+        os.unlink(path)
+
+
+def test_drop_stdin_trims_a_trailing_carriage_return(home, monkeypatch, capsys):
+    """A classic artifact of copy-pasting a token from a Windows-authored
+    file: readline() includes the \\r before its trailing \\n."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"{SECRET}\r\n"))
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--stdin"])
+    assert rc == 0
+    capsys.readouterr()
+
+    main(["state", "shared-test", "enabled"])
+    capsys.readouterr()
+    main(["resolve", f"key={{{{secret:shared-test}}}}"])
+    path = capsys.readouterr().out.strip()
+    try:
+        assert open(path).read() == f"key={SECRET}"
+    finally:
+        os.unlink(path)
+
+
+def test_drop_value_file_trims_leading_and_trailing_whitespace(home, capsys):
+    value_file = home / "value.txt"
+    value_file.write_text(f"\n\n  {SECRET}  \n\n")
+
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--value-file", str(value_file)])
+    assert rc == 0
+    capsys.readouterr()
+
+    main(["state", "shared-test", "enabled"])
+    capsys.readouterr()
+    main(["resolve", f"key={{{{secret:shared-test}}}}"])
+    path = capsys.readouterr().out.strip()
+    try:
+        assert open(path).read() == f"key={SECRET}"
+    finally:
+        os.unlink(path)
+
+
+def test_drop_stdin_all_whitespace_is_treated_as_empty(home, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO("   \t  \n"))
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--stdin"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "empty secret value" in err
+
+    from portunus import Registry
+    assert "shared-test" not in Registry()
+
+
+def test_drop_stdin_preserves_internal_whitespace(home, monkeypatch, capsys):
+    inner = "SECRET WITH SPACE-0xCAFE"
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"  {inner}  \n"))
+    rc = main(["drop", "shared-test", "dostal-shared-test", "--stdin"])
+    assert rc == 0
+    capsys.readouterr()
+
+    main(["state", "shared-test", "enabled"])
+    capsys.readouterr()
+    main(["resolve", f"key={{{{secret:shared-test}}}}"])
+    path = capsys.readouterr().out.strip()
+    try:
+        assert open(path).read() == f"key={inner}"
+    finally:
+        os.unlink(path)
