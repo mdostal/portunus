@@ -17,12 +17,20 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Protocol, runtime_checkable
 
-from .auth import AuditChain, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
+from .auth import (
+    AuditChain,
+    AuthError,
+    EnvOIDCTokenSource,
+    GCPWorkloadIdentityAuth,
+    OAuthAccessToken,
+    OAuthRefreshTokenAuth,
+)
 from .filelock import flock_path
 from .paths import home
 
@@ -417,6 +425,89 @@ class AzureKeyVaultBackend:
             "Azure Key Vault backend is not yet implemented -- "
             "request it: https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
         )
+
+
+class OAuthBackend:
+    """A generic OAuth 2.0 refresh->access token broker
+    (portunus-oauth-token-broker). `sm_name` encodes `"<provider>:
+    <account>"` -- an opaque, backend-specific identifier, the same role
+    GCP Secret Manager's own sm_name already plays; no new SecretBackend
+    Protocol parameter needed.
+
+    `local_backend` (duck-typed -- e.g. `LocalEncryptedBackend` in
+    practice, not imported directly here to avoid a circular import with
+    localvault.py, mirroring SyncingBackend's own `local` parameter
+    above) is where the credential bundle actually lives; this backend
+    only ever calls its `load_oauth_credential(provider, account)`.
+    Defaults to a real `LocalEncryptedBackend()` (deferred import) when
+    not supplied, for standalone use; `_make_backend_router` passes the
+    already-constructed shared "local" instance explicitly.
+
+    Mints once per `sm_name`, then reuses the cached access token
+    in-memory (this process only, never written to disk) until it's
+    within `skew_seconds` of `expires_at` -- mirrors
+    GCPWorkloadIdentityAuth/OIDCToken.expired()'s existing skew-check
+    convention exactly.
+    """
+
+    def __init__(
+        self,
+        local_backend: Optional[object] = None,
+        audit: Optional[AuditChain] = None,
+        transport=None,
+        skew_seconds: int = 30,
+    ):
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend  # deferred: avoids a circular import
+            local_backend = LocalEncryptedBackend()
+        self.local_backend = local_backend
+        self.audit = audit or AuditChain()
+        self.transport = transport
+        self.skew_seconds = skew_seconds
+        self._cache: Dict[str, OAuthAccessToken] = {}
+
+    def _cached(self, sm_name: str) -> Optional[OAuthAccessToken]:
+        token = self._cache.get(sm_name)
+        if token is None:
+            return None
+        if token.expires_at and token.expires_at <= int(time.time()) + self.skew_seconds:
+            return None
+        return token
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        cached = self._cached(sm_name)
+        if cached is not None:
+            return cached.access_token
+
+        if ":" not in sm_name:
+            raise BackendError(
+                f"oauth backend: sm_name must be 'provider:account', got {sm_name!r}"
+            )
+        provider, account = sm_name.split(":", 1)
+        try:
+            record = self.local_backend.load_oauth_credential(provider, account)
+        except BackendError as exc:
+            raise BackendError(f"oauth backend: {exc}") from exc
+
+        credential = record["credential"]
+        try:
+            auth = OAuthRefreshTokenAuth(
+                token_endpoint=credential["token_endpoint"],
+                client_id=credential["client_id"],
+                client_secret=credential["client_secret"],
+                refresh_token=credential["refresh_token"],
+                identity=sm_name,
+                audit=self.audit,
+                transport=self.transport,
+            )
+            minted = auth.mint()
+        except (AuthError, KeyError) as exc:
+            raise BackendError(
+                f"oauth backend: could not mint access token for {sm_name}: {exc}"
+            ) from exc
+
+        self._cache[sm_name] = minted
+        return minted.access_token
 
 
 class SyncingBackend:

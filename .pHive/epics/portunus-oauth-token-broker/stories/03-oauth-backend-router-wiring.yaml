@@ -1,7 +1,7 @@
 id: 03-oauth-backend-router-wiring
 epic: portunus-oauth-token-broker
 title: OAuthBackend -- a SecretBackend adapter that mints (and in-memory-caches) an access token on .access(), wired into _make_backend_router
-status: pending
+status: shipped
 complexity: medium
 methodology: tdd
 depends_on: [02-credential-storage]

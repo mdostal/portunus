@@ -29,7 +29,8 @@ from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
 from .backend import (
     AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, DopplerBackend,
-    GcloudBackend, InfisicalBackend, MockBackend, OnePasswordConnectBackend, SyncingBackend,
+    GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
+    SyncingBackend,
     VaultBinding, VaultServerBackend, load_vault_bindings, save_vault_bindings,
 )
 from .backup import ExportError, export_archive, import_archive
@@ -109,6 +110,8 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
             inst = OnePasswordConnectBackend()
         elif kind == "azure":
             inst = AzureKeyVaultBackend()
+        elif kind == "oauth":
+            inst = OAuthBackend(local_backend=_for_kind("local"), audit=audit)
         else:
             inst = fallback_backend
         instances[kind] = inst
@@ -2327,7 +2330,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
-        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth"),
         default="",
         help="override which backend this one reference uses (default: '' -- follow the "
              "project's VaultBinding/PORTUNUS_BACKEND as normal)",
@@ -2421,7 +2424,7 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_set.add_argument("project")
     bnd_set.add_argument(
         "--backend",
-        choices=("local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure"),
+        choices=("local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth"),
         default="",
         help="which vault backend serves this project's secrets (default: gcp; "
              "vault/infisical/doppler/onepassword/azure are stubs, not yet implemented)",
