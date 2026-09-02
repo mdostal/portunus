@@ -4,6 +4,29 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-09-02
+
+### Added
+
+- **Generic OAuth 2.0 token broker (portunus-oauth-token-broker).** The legitimate answer to
+  "capture a Gmail session": Portunus is storage + minting only, never the consent flow itself
+  (that stays a one-time, provider-legitimate bootstrap outside Portunus — e.g. `gcloud auth
+  application-default login --scopes=...`, the same delegation precedent `portunus auth login`
+  already established). New `portunus oauth store/list/remove` stores a refresh-token credential
+  bundle encrypted at rest (mirrors the existing session vault's exact plumbing, under a distinct
+  `oauth:` namespace, deliberately TTL-free since the provider itself is the real authority on
+  validity). New `--backend oauth` mints short-lived access tokens on demand via the standard
+  OAuth 2.0 refresh_token grant (`OAuthRefreshTokenAuth`, mirroring `GCPWorkloadIdentityAuth`'s
+  exact shape but generic across providers), cached in-memory until near expiry. Zero
+  Resolver-side changes — an oauth reference flows through the exact same
+  resolve/resolve_exec/resolve_to_tempfile boundary paths every other secret already uses.
+  Multiple accounts per provider is first-class: `(provider, account)` namespacing, live-verified
+  with two real, distinct Google accounts minting genuinely different access tokens. See
+  `docs/architecture.md` §20 for the full research/design trail, an SSL-cert environment gap
+  found and documented (not a Portunus bug), and a real mid-proof mistake (a boolean-comparison
+  bug briefly printed a live short-lived access token to this session's own output) disclosed and
+  fixed rather than glossed over.
+
 ## [0.28.0] - 2026-09-01
 
 ### Added

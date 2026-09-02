@@ -831,6 +831,58 @@ missing, per-project, so a stale credential shows up before an injection call fa
 Neither command ever touches a secret value — only account emails and gcloud's own credential
 metadata.
 
+### OAuth token broker: store a refresh token, mint access tokens on demand
+
+`portunus oauth store/list/remove` + `--backend oauth` let Portunus hold a provider-issued OAuth
+refresh token and mint short-lived access tokens from it on demand, injected only at the
+boundary — the same safety shape every other secret already gets.
+
+**What this is NOT**: Portunus does not run any OAuth consent/browser-redirect flow itself, and
+this is not browser-session-cookie capture. The one-time consent step — obtaining the refresh
+token in the first place — happens entirely outside Portunus, through whatever mechanism already
+legitimately covers the scope you need (e.g. `gcloud auth application-default login
+--scopes=...` for GCP-adjacent access — the same delegation precedent `portunus auth login`
+already established for `gcloud auth login`, just pointed at the *portable* credential file
+instead of `gcloud`'s own internal one). Portunus's job starts once you hand it the resulting
+credential bundle.
+
+```bash
+# Bootstrap (outside Portunus) -- writes ~/.config/gcloud/application_default_credentials.json
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform
+
+# Hand Portunus the resulting bundle (never inline -- stdin/--value-file only)
+python3 -c "import json; d=json.load(open('$HOME/.config/gcloud/application_default_credentials.json')); \
+  print(json.dumps({'client_id': d['client_id'], 'client_secret': d['client_secret'], \
+  'refresh_token': d['refresh_token'], 'token_endpoint': 'https://oauth2.googleapis.com/token'}))" \
+  | portunus oauth store google personal --stdin
+
+# Point a reference at it (sm_name encodes "<provider>:<account>")
+portunus drop my-gmail-token "google:personal" --backend oauth --stdin <<< "unused-placeholder"
+portunus state my-gmail-token enabled
+portunus resolve "Authorization: Bearer {{secret:my-gmail-token}}"   # a real, live, short-lived access token
+```
+
+Multiple accounts under one vault is a first-class case, not an afterthought: `oauth store`
+namespaces by `(provider, account)`, so `google:personal` and `google:firefly-events` (or any
+other label) coexist as fully independent credentials — separate mint, separate resolve,
+separate `oauth remove` — the same "many sub-vaults/accounts under one Portunus" shape
+`org`/`project` scoping already gives every other reference. Live-verified with two real,
+distinct Google accounts: both minted genuinely different access tokens, confirmed via
+independent SHA-256 digests (never by comparing raw values) — see `docs/architecture.md` §20.
+
+An access token is cached in-memory (this process only, never written to disk) until close to
+its own expiry, then re-minted automatically — no re-bootstrap needed until the *refresh* token
+itself expires or is revoked (which is entirely up to the provider, not Portunus). A failed mint
+(expired/revoked refresh token) reports a clean `BackendError`, the same as any other backend's
+auth failure — `portunus vault access verify` (portunus-vault-transfer) already translates that
+into an actionable hint pointing back at the bootstrap command.
+
+**Troubleshooting**: if minting fails with an SSL certificate error on macOS, it's almost always
+a stock python.org installer issue (its bundled Python doesn't automatically pick up the system
+CA trust store) — run that Python version's own `Install Certificates.command`, or set
+`SSL_CERT_FILE` to `python3 -c "import certifi; print(certifi.where())"`'s output. Not a
+Portunus bug; the same fix applies to any Python HTTPS client on an affected install.
+
 ## Standalone UI
 
 A localhost-only Next.js app under `ui/` — Console (default tab, faceted table + detail

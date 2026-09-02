@@ -847,6 +847,82 @@ resolved cleanly. Separately, `portunus ui open --fulfill <name>` against that s
 was confirmed to open a real browser tab — the dev server's own request log shows the exact
 `GET /?fulfill=<name> 200` hit landing.
 
+## 20. Generic OAuth 2.0 token broker (portunus-oauth-token-broker)
+
+**The right-sized answer to "capture a Gmail session."** A browser session cookie is a
+continuously-used, full-account bearer credential with no single boundary call site to inject
+it at -- structurally incompatible with Portunus's core invariant. An OAuth access token is the
+legitimate version of the same underlying ask: scoped, short-lived, revocable independently of
+the account's actual login session, and a plain string -- exactly the shape every other secret
+already is. Full research/design/CBA trail: `.pHive/epics/portunus-oauth-token-broker/docs/`.
+
+**Portunus is storage + minting only -- never the consent flow.** The one-time OAuth bootstrap
+(obtaining a refresh token) happens entirely outside Portunus, through whatever mechanism
+already legitimately covers the target scope. This isn't a corner cut for time -- it's a
+deliberate scope boundary: Google's own verification/CASA requirements for sensitive/restricted
+scopes are a real, recurring administrative cost that Portunus's own engineering cannot pay
+down regardless of how well it's built (research-brief.md §4). Building a consent-flow runner
+into Portunus would take on that cost as if it were solvable code; it isn't.
+
+**Storage reuses the session vault's exact plumbing, under a distinct namespace.**
+`LocalEncryptedBackend.store_oauth_credential()`/`load_oauth_credential()`/
+`list_oauth_credentials()`/`remove_oauth_credential()` mirror `store_session()`'s encrypted-
+storage mechanics exactly (`self.store()`/`self.access()` underneath, the same namespace-part
+sanitization) but under `oauth:<provider>:<account>`, not `session:<site>:<account>` -- and
+deliberately TTL-free, unlike sessions. A stored refresh token's real expiry authority is the
+provider itself (a failed refresh grant IS the signal), not a client-side guess; inventing a TTL
+here would be exactly the kind of lie an arbitrary `state=enabled` would have been in
+portunus-vault-transfer's own local-only-reference handling.
+
+**Minting mirrors `GCPWorkloadIdentityAuth.mint()`'s exact shape, generalized.**
+`OAuthRefreshTokenAuth` (auth.py) is the same transport-injection/audit-identity-only pattern
+already established for WIF token exchange, but for the standard RFC 6749 §6 refresh_token
+grant every OAuth 2.0 provider implements at their own `token_endpoint` -- one class covers
+Google, GitHub, Microsoft, etc., not a Google-specific one.
+
+**Zero Resolver-side changes -- `OAuthBackend` is just another `SecretBackend`.** `sm_name`
+encodes `"<provider>:<account>"`, the same opaque-identifier role GCP Secret Manager's own
+`sm_name` already plays; no new Protocol parameter. `.access()` returns a plain access-token
+string, so `resolve`/`resolve_exec`/`resolve_to_tempfile` need no changes at all -- proven
+directly by resolving a real reference through the actual `Registry`/`Broker`/`Resolver` stack,
+not by reasoning about it. An in-memory access-token cache (this process only, never persisted)
+reuses `GCPWorkloadIdentityAuth`/`OIDCToken.expired()`'s existing skew-check convention exactly.
+`local_backend` is duck-typed rather than imported directly (mirrors `SyncingBackend`'s own
+`local` parameter) to avoid a circular import between backend.py and localvault.py.
+
+**Multiple accounts per provider is a first-class case, live-verified with two real, distinct
+Google accounts, not synthetic fixtures.** `(provider, account)` namespacing means
+`google:personal` and `google:firefly-events` coexist as fully independent credentials. The live
+proof bootstrapped both via `gcloud auth application-default login` against the real ADC file,
+minted a genuine access token for each, and confirmed they were actually different values --
+by comparing SHA-256 digests, never by printing or diffing raw tokens. A real mistake happened
+and was caught during this: an early verification script used `a != b and a and b` to report
+"are these different," which in Python returns the last truthy operand (the raw token) instead
+of a boolean -- it printed a live access token into the session's own output. Caught immediately,
+disclosed to the user without minimizing it, the leaked (short-lived, ~1hr, cloud-platform-scope
+only) access token's temp files were deleted, and the check was rewritten to compare digests,
+never raw values. Documented here rather than glossed over, matching this project's own standing
+discipline: real findings from a live proof get recorded, not smoothed away.
+
+**Real finding, not assumed**: minting failed initially in this session's own Python environment
+with an SSL certificate verification error -- a stock python.org macOS installer issue (its
+Python doesn't automatically inherit the system CA trust store), unrelated to Portunus's own
+code; confirmed by the fact that `curl` reached the same endpoint fine while `urllib` didn't.
+Fixed for the proof via `SSL_CERT_FILE` pointed at `certifi`'s bundle; documented as a
+troubleshooting note in README.md rather than worked around in Portunus's own code, since it's
+an environment prerequisite common to any Python HTTPS client on an affected install, not
+something specific to this feature.
+
+**Explicitly deferred, not silently dropped**: a Standalone UI surface for entering an OAuth
+credential -- the user's own follow-up ask after the live proof, distinct from this story's
+scope. The shape requested: a dashboard entry point (mirroring `AddSecretForm`'s own
+metadata-rich pattern from portunus-secure-entry) that captures account/provider metadata
+alongside the credential, with an explicit call-out of which fields Portunus can auto-fill
+(e.g. reading a local `gcloud` ADC file directly, sparing the raw JSON-piping one-liner this
+epic's own README documents as the v1 bootstrap) versus which fields genuinely need human
+input (the account label, which provider, any additional metadata). Real, tracked, not
+executed here -- a natural next story once this ships.
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

@@ -1,7 +1,7 @@
 id: 04-closeout
 epic: portunus-oauth-token-broker
 title: docs, version bump, live proof against a real GCP-adjacent OAuth token (never a Gmail-restricted scope)
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [03-oauth-backend-router-wiring]
