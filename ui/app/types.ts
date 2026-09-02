@@ -1,5 +1,16 @@
 // Client-safe types (no node built-ins) shared by API routes and components.
 
+// One project's entry from `portunus bindings show --json` / /api/bindings
+// (GitHub issue #128) -- account is a local gcloud identity selector,
+// wif_audience is WIF infrastructure topology; neither is a credential
+// (see VaultBinding's own docstring in backend.py), so neither is masked.
+export interface VaultBindingInfo {
+  backend: string;
+  sync_mode: string;
+  account: string;
+  wif_audience: string;
+}
+
 export interface PortunusReference {
   name: string;
   sm_name: string;
