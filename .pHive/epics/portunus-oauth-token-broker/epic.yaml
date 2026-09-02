@@ -49,4 +49,4 @@ stories:
     title: a Standalone UI dashboard for entering an OAuth credential -- metadata-rich, auto-fill vs. manual-input called out explicitly
     complexity: medium
     depends_on: [04-closeout]
-    status: pending
+    status: shipped

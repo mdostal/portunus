@@ -862,6 +862,18 @@ portunus state my-gmail-token enabled
 portunus resolve "Authorization: Bearer {{secret:my-gmail-token}}"   # a real, live, short-lived access token
 ```
 
+**Or skip the one-liner entirely**: the Standalone UI's "+ Add OAuth credential" button opens a
+metadata-rich entry form (name/provider/account/org/project/env/tags/description/purpose/
+injected_as/group/related/repo/source_files — the same field set `AddSecretForm` already gives
+regular secrets) with an explicit choice between two credential sources: **auto-fill from a
+detected local `gcloud` ADC file** (read directly by the Next.js server; the `client_id`/
+`client_secret`/`refresh_token` values are never sent to or shown in the browser — the form
+shows only "detected: yes/no," never the values themselves) or **enter manually** (masked
+`client_secret`/`refresh_token` fields, same `type="password"` discipline as every other secret
+value in this UI). One submit both stores the credential (`portunus oauth store`) and registers
+the pointing reference (`portunus drop --backend oauth`) — no behavioral difference from doing
+both by hand.
+
 Multiple accounts under one vault is a first-class case, not an afterthought: `oauth store`
 namespaces by `(provider, account)`, so `google:personal` and `google:firefly-events` (or any
 other label) coexist as fully independent credentials — separate mint, separate resolve,
