@@ -561,6 +561,86 @@ def _session_backend(resolver):
     return backend
 
 
+def _oauth_backend(resolver):
+    """OAuth credential commands are a LocalEncryptedBackend-only
+    capability -- not part of the generic SecretBackend protocol
+    GcloudBackend/MockBackend implement. Mirrors _session_backend's exact
+    same hasattr check."""
+    backend = resolver.backend
+    if not hasattr(backend, "store_oauth_credential"):
+        return None
+    return backend
+
+
+def cmd_oauth_store(args) -> int:
+    """Store an OAuth credential bundle. Mirrors session store's
+    stdin-only-in discipline exactly: the credential JSON comes from
+    stdin or a local file, never an inline argv flag."""
+    _registry, _audit, broker, resolver = _build()
+    backend = _oauth_backend(resolver)
+    if backend is None:
+        return _err("oauth commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+
+    if args.stdin:
+        raw = sys.stdin.read()
+    else:
+        try:
+            raw = Path(args.value_file).read_text()
+        except OSError as exc:
+            return _err(f"cannot read --value-file: {exc}")
+    try:
+        credential = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return _err(f"invalid credential JSON: {exc}")
+
+    try:
+        backend.store_oauth_credential(args.provider, args.account, credential)
+    except ValueError as exc:
+        return _err(str(exc))
+
+    key = backend.oauth_key(args.provider, args.account)
+    broker.audit.append("oauth_store", key, "stored")
+    print(f"stored oauth credential for {args.provider} / {args.account}")
+    return 0
+
+
+def cmd_oauth_list(args) -> int:
+    """Metadata for every stored OAuth credential -- never a credential
+    field."""
+    _registry, _audit, _broker, resolver = _build()
+    backend = _oauth_backend(resolver)
+    if backend is None:
+        return _err("oauth commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+    credentials = backend.list_oauth_credentials()
+    if args.json:
+        print(json.dumps(credentials))
+    else:
+        if not credentials:
+            print("(no oauth credentials stored)")
+        for view in credentials:
+            ns = view["namespace"]
+            print(f"  {ns['provider']} / {ns['account']}")
+    return 0
+
+
+def cmd_oauth_remove(args) -> int:
+    """Remove a stored OAuth credential. Confirms by namespace only."""
+    _registry, _audit, broker, resolver = _build()
+    backend = _oauth_backend(resolver)
+    if backend is None:
+        return _err("oauth commands require the local-encrypted backend "
+                     "(unset PORTUNUS_BACKEND or set it to unset/local)")
+    existed = backend.remove_oauth_credential(args.provider, args.account)
+    if not existed:
+        return _err(f"no such oauth credential: {args.provider} / {args.account}")
+    key = backend.oauth_key(args.provider, args.account)
+    broker.audit.append("oauth_remove", key, "removed")
+    print(f"removed oauth credential for {args.provider} / {args.account}")
+    return 0
+
+
 def cmd_session_store(args) -> int:
     """Store a browser/login session. Mirrors drop's stdin-only-in
     discipline exactly: the session JSON blob comes from stdin or a local
@@ -2198,6 +2278,30 @@ def build_parser() -> argparse.ArgumentParser:
     ses_remove.add_argument("site")
     ses_remove.add_argument("account")
     ses_remove.set_defaults(func=cmd_session_remove)
+
+    oa = sub.add_parser(
+        "oauth", help="OAuth credential storage (local-encrypted backend only) -- see backend=oauth",
+    )
+    oa_sub = oa.add_subparsers(dest="action", required=True)
+
+    oa_store = oa_sub.add_parser(
+        "store", help="store an OAuth credential bundle (value via --stdin or --value-file, never inline)",
+    )
+    oa_store.add_argument("provider")
+    oa_store.add_argument("account")
+    oa_src = oa_store.add_mutually_exclusive_group(required=True)
+    oa_src.add_argument("--stdin", action="store_true", help="read the credential JSON from stdin")
+    oa_src.add_argument("--value-file", help="read the credential JSON from this local file")
+    oa_store.set_defaults(func=cmd_oauth_store)
+
+    oa_list = oa_sub.add_parser("list", help="list every stored OAuth credential's metadata (never a payload)")
+    oa_list.add_argument("--json", action="store_true")
+    oa_list.set_defaults(func=cmd_oauth_list)
+
+    oa_remove = oa_sub.add_parser("remove", help="remove a stored OAuth credential")
+    oa_remove.add_argument("provider")
+    oa_remove.add_argument("account")
+    oa_remove.set_defaults(func=cmd_oauth_remove)
 
     dr = sub.add_parser(
         "drop",

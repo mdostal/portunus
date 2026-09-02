@@ -29,6 +29,7 @@ from .backend import BackendError
 from .paths import home
 
 SESSION_SCHEMA = "portunus.session.v1"
+OAUTH_CREDENTIAL_SCHEMA = "portunus.oauth-credential.v1"
 
 _LOCK_POLL_INTERVAL = 0.05
 _LOCK_TIMEOUT = 10.0
@@ -253,6 +254,86 @@ class LocalEncryptedBackend:
         """Remove a stored browser/login session."""
         return self.remove(self.session_key(site, account))
 
+    # --- OAuth credential storage (portunus-oauth-token-broker) -----------
+    # A distinct `oauth:` namespace from `session:` above -- a human
+    # scanning `portunus session list` shouldn't have to guess whether an
+    # entry is a Playwright storageState or an OAuth credential bundle.
+    # Deliberately TTL-free, unlike sessions: a stored refresh token's real
+    # expiry authority is the provider itself (a failed refresh grant IS
+    # the expiry signal), not a client-side guess -- inventing one here
+    # would be exactly the kind of lie an arbitrary state=enabled would
+    # have been in portunus-vault-transfer's own local-only-reference
+    # handling.
+    @staticmethod
+    def oauth_key(provider: str, account: str) -> str:
+        """Return the stable Arca namespace for a provider/account OAuth
+        credential."""
+        provider = _namespace_part(provider, "provider")
+        account = _namespace_part(account, "account")
+        return f"oauth:{quote(provider, safe='')}:{quote(account, safe='')}"
+
+    def store_oauth_credential(
+        self, provider: str, account: str, credential: Any,
+    ) -> Dict[str, Any]:
+        """Encrypt and persist an OAuth credential bundle (typically
+        client_id/client_secret/refresh_token/token_endpoint -- any
+        JSON-serializable object, same latitude store_session() already
+        gives sessions)."""
+        provider = _namespace_part(provider, "provider")
+        account = _namespace_part(account, "account")
+        record = {
+            "schema": OAUTH_CREDENTIAL_SCHEMA,
+            "namespace": {"provider": provider, "account": account},
+            "credential": credential,
+        }
+        try:
+            payload = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError):
+            raise ValueError("credential must be JSON-serializable") from None
+        self.store(self.oauth_key(provider, account), payload)
+        return self.inspect_oauth_credential(provider, account)
+
+    def load_oauth_credential(self, provider: str, account: str) -> Dict[str, Any]:
+        """Decrypt and return a complete stored OAuth credential record --
+        exactly as sensitive as a secret value (mirrors load_session's own
+        discipline)."""
+        key = self.oauth_key(provider, account)
+        try:
+            record = json.loads(self.access(key))
+        except json.JSONDecodeError as exc:
+            raise BackendError(f"local vault: invalid oauth credential record for {key}") from exc
+        if not isinstance(record, dict) or record.get("schema") != OAUTH_CREDENTIAL_SCHEMA:
+            raise BackendError(f"local vault: invalid oauth credential record for {key}")
+        return record
+
+    def inspect_oauth_credential(self, provider: str, account: str) -> Dict[str, Any]:
+        """Non-secret namespace-only metadata -- never the credential
+        fields."""
+        record = self.load_oauth_credential(provider, account)
+        return _oauth_credential_view(record)
+
+    def list_oauth_credentials(self) -> List[Dict[str, Any]]:
+        """Enumerate every stored OAuth credential's metadata view --
+        never a credential field. A corrupt/undecryptable entry is
+        skipped, not fatal, mirroring list_sessions' own graceful-
+        degradation posture."""
+        results = []
+        for sm_name in self._load():
+            if not sm_name.startswith("oauth:"):
+                continue
+            try:
+                record = json.loads(self.access(sm_name))
+            except (BackendError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict) or record.get("schema") != OAUTH_CREDENTIAL_SCHEMA:
+                continue
+            results.append(_oauth_credential_view(record))
+        return results
+
+    def remove_oauth_credential(self, provider: str, account: str) -> bool:
+        """Remove a stored OAuth credential."""
+        return self.remove(self.oauth_key(provider, account))
+
 
 def _is_expired(record: Dict[str, Any]) -> bool:
     expires_at = record.get("ttl", {}).get("expires_at")
@@ -271,6 +352,16 @@ def _session_view(record: Dict[str, Any]) -> Dict[str, Any]:
         "ttl": dict(record["ttl"]),
         "rotation": dict(record["rotation"]),
         "expired": _is_expired(record),
+    }
+
+
+def _oauth_credential_view(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Non-secret namespace-only metadata view -- never the credential
+    payload. Shared by inspect_oauth_credential() and
+    list_oauth_credentials() so there is one shape, not two."""
+    return {
+        "schema": record["schema"],
+        "namespace": dict(record["namespace"]),
     }
 
 
