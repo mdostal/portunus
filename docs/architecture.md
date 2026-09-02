@@ -913,15 +913,24 @@ troubleshooting note in README.md rather than worked around in Portunus's own co
 an environment prerequisite common to any Python HTTPS client on an affected install, not
 something specific to this feature.
 
-**Explicitly deferred, not silently dropped**: a Standalone UI surface for entering an OAuth
-credential -- the user's own follow-up ask after the live proof, distinct from this story's
-scope. The shape requested: a dashboard entry point (mirroring `AddSecretForm`'s own
-metadata-rich pattern from portunus-secure-entry) that captures account/provider metadata
-alongside the credential, with an explicit call-out of which fields Portunus can auto-fill
-(e.g. reading a local `gcloud` ADC file directly, sparing the raw JSON-piping one-liner this
-epic's own README documents as the v1 bootstrap) versus which fields genuinely need human
-input (the account label, which provider, any additional metadata). Real, tracked, not
-executed here -- a natural next story once this ships.
+**Story 05 (shipped as a same-day follow-up): a Standalone UI entry point.** `OAuthCredentialForm`
+mirrors `AddSecretForm`'s own metadata-rich pattern exactly (same field set: name/provider/
+account/org/project/env/tags/description/purpose/injected_as/group/related/repo/source_files)
+with one addition: an explicit, never-ambiguous choice between two credential sources. Checking
+"auto-fill from local gcloud ADC" hides the manual credential fields entirely and has the
+Next.js server (`/api/oauth-store` GET `?detect=adc`) read `~/.config/gcloud/
+application_default_credentials.json` directly -- the one well-known path this route ever reads
+outside `PORTUNUS_HOME`, never an arbitrary user-supplied one, and only ever opt-in (a checkbox
+the human ticks, never automatic). The values are never sent to or shown in the browser; GET
+only ever reports presence (`{available: true/false}`), never content. Leaving the box unchecked
+shows masked `client_secret`/`refresh_token` fields, same `type="password"` discipline as every
+other secret value in this UI. On submit, the route chains the same two CLI calls a human would
+otherwise run by hand (`portunus oauth store`, then `portunus drop --backend oauth` with the
+full metadata) -- no new storage/minting mechanism, no behavioral fork from a CLI-entered
+credential, confirmed by resolving a form-submitted credential through the real boundary and
+getting back a real `ya29.` access token. Live-verified end to end via Playwright, including a
+direct filesystem check that the real ADC secret never touched the throwaway proof home in
+plaintext.
 
 ## See also
 
