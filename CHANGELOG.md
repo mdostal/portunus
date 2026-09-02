@@ -4,6 +4,18 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-09-02
+
+### Added
+
+- **Settings: vault bindings visibility (fixes #128).** `/api/bindings`' GET route now supports
+  listing every configured binding (`project` param is optional — the CLI's own `portunus
+  bindings show` already supported this, the route just never exposed it). New "Vault bindings"
+  section in Settings shows every project's backend/sync_mode/account at a glance — real, live
+  data, nothing invented or presence-only. Project Explorer remains where a binding is actually
+  edited (unchanged, prior deliberate scope call); this is read-only visibility/audit, which
+  nothing in the UI gave an operator before this.
+
 ## [0.29.0] - 2026-09-02
 
 ### Added
