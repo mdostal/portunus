@@ -10,10 +10,12 @@ import { cleanError, runPortunus } from "@/lib/portunus";
 // topology; see VaultBinding's own docstring in backend.py).
 export async function GET(req: NextRequest) {
   const project = req.nextUrl.searchParams.get("project");
-  if (!project) {
-    return NextResponse.json({ error: "project is required" }, { status: 400 });
-  }
-  const result = await runPortunus(["bindings", "show", project, "--json"]);
+  // No ?project= -- list every configured binding (`portunus bindings show`
+  // with no positional arg already supports this; the route just didn't
+  // expose it -- see GitHub issue #128, the Settings page had nowhere to
+  // ask for "all of them" from).
+  const args = project ? ["bindings", "show", project, "--json"] : ["bindings", "show", "--json"];
+  const result = await runPortunus(args);
   if (result.code !== 0) {
     return NextResponse.json(
       { error: cleanError(result.stderr, "bindings show failed") },
