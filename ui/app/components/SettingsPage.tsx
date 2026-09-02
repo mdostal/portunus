@@ -3,17 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { checkMetadataCompleteness } from "../completeness";
 import { renderReportMarkdown } from "../renderReportMarkdown";
-import type { CrawlCandidate, LeakSummary, PortunusPolicy, PortunusReference } from "../types";
+import type { CrawlCandidate, LeakSummary, PortunusPolicy, PortunusReference, VaultBindingInfo } from "../types";
 
 const SCOPE_TYPES: PortunusPolicy["scope_type"][] = ["org", "project", "env", "repo"];
 
 // Settings (portunus-vault-trust-and-access Slice 7) -- vault-binding
-// management stays in Project Explorer (that epic's own deliberate scope
-// call, not re-litigated here). This page owns two things new to this
-// epic: an org/project hierarchy overview, and role/policy management --
-// EDITABLE, writes genuinely persist (unlike the setup wizard's own
-// literally-disabled roles step), but always visibly labeled as not yet
-// enforced. Never a control that looks live but silently does nothing.
+// EDITING stays in Project Explorer (that epic's own deliberate scope
+// call, not re-litigated here). This page owns: an org/project hierarchy
+// overview, role/policy management (EDITABLE, writes genuinely persist,
+// but always visibly labeled as not yet enforced -- never a control that
+// looks live but silently does nothing), and (GitHub issue #128) a
+// read-only vault-bindings overview -- a single place to see every
+// configured project's backend/sync_mode/account at once, which nothing
+// anywhere else in the UI gave an operator before this; Project Explorer
+// only ever showed one project's binding at a time.
 export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
   const [policies, setPolicies] = useState<Record<string, PortunusPolicy>>({});
   const [policiesError, setPoliciesError] = useState<string | null>(null);
@@ -31,6 +34,22 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
 
   useEffect(() => {
     refreshPolicies();
+  }, []);
+
+  const [bindings, setBindings] = useState<Record<string, VaultBindingInfo>>({});
+  const [bindingsError, setBindingsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/bindings")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && typeof data === "object" && !data.error) {
+          setBindings(data);
+        } else {
+          setBindingsError(data?.error || "failed to load bindings");
+        }
+      })
+      .catch(() => setBindingsError("failed to load bindings"));
   }, []);
 
   async function submitPolicy(e: React.FormEvent) {
@@ -315,6 +334,32 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
               <span>{count}</span>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>Vault bindings</h2>
+        <p className="inline-status">
+          {Object.keys(bindings).length} project{Object.keys(bindings).length === 1 ? "" : "s"}{" "}
+          bound -- which backend, sync mode, and account each project's secrets route through.
+          Edit a project's binding from its own panel in Project Explorer.
+        </p>
+        {bindingsError && <p className="inline-status error">✗ {bindingsError}</p>}
+        <div className="settings-hierarchy-list">
+          {Object.entries(bindings).map(([project, b]) => (
+            <div className="settings-hierarchy-row" key={project}>
+              <span>{project}</span>
+              <span className="policy-actions">
+                {b.backend}
+                {b.sync_mode ? ` · ${b.sync_mode}` : ""}
+                {b.account ? ` · ${b.account}` : ""}
+                {b.wif_audience ? ` · ${b.wif_audience}` : ""}
+              </span>
+            </div>
+          ))}
+          {Object.keys(bindings).length === 0 && !bindingsError && (
+            <p className="inline-status">(no bindings configured)</p>
+          )}
         </div>
       </section>
 
