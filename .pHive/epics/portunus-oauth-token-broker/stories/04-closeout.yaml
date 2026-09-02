@@ -1,0 +1,80 @@
+id: 04-closeout
+epic: portunus-oauth-token-broker
+title: docs, version bump, live proof against a real GCP-adjacent OAuth token (never a Gmail-restricted scope)
+status: shipped
+complexity: low
+methodology: tdd
+depends_on: [03-oauth-backend-router-wiring]
+
+description: |
+  Documents the full `portunus oauth store/list/remove` + `backend=oauth` flow (README.md new
+  section, docs/architecture.md new numbered section), bumps the version, and runs a real live
+  proof: bootstrap a real refresh token via `gcloud auth application-default login
+  --scopes=https://www.googleapis.com/auth/cloud-platform` (a GCP-adjacent scope gcloud's own
+  already-verified client can request without triggering Google's sensitive/restricted-scope
+  verification wall -- cost-benefit-analysis.md's own explicit "prove it here first" guidance),
+  extract the resulting client_id/client_secret/refresh_token from gcloud's own local ADC file,
+  store it via `portunus oauth store`, register a reference with backend=oauth pointing at it,
+  and resolve it for real -- confirming a genuine, live, provider-issued access token comes back
+  at the boundary. Deliberately never touches a Gmail-restricted scope in this proof (the one
+  part of this Google gates, not Portunus's engineering -- research-brief.md §4).
+
+acceptance_criteria:
+  - "Given README.md and docs/architecture.md, when read after this story, then both describe portunus oauth store/list/remove, backend=oauth, and explicitly state what this does NOT do (run a consent flow, capture a browser session) and why (design-discussion.md §1/§4)"
+  - "Given CHANGELOG.md, when read after this story, then it has an entry for this epic under the new version"
+  - "Given the version files (pyproject.toml, manifest.json, tauri.conf.json, Cargo.toml, __init__.py), when checked, then all are in lockstep at the new minor version"
+  - "Given a real refresh token bootstrapped via `gcloud auth application-default login --scopes=...` (a GCP-adjacent, non-restricted scope), when stored via `portunus oauth store` and resolved through a backend=oauth reference, then a real, live, provider-issued access token is confirmed at the boundary -- a live proof, not a synthetic fixture"
+  - "Given the live-proof's own throwaway PORTUNUS_HOME afterward, when inspected, then the stored credential is confirmed encrypted at rest (client_secret/refresh_token do not appear in plaintext anywhere on disk) -- the same direct filesystem proof discipline portunus-vault-transfer's own closeout used"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing test for the live-proof scenario shape (a throwaway --home, a real bootstrapped refresh token stored and resolved, a direct filesystem check for plaintext leakage) -- mirrors portunus-vault-transfer Story 04's own closeout-test pattern.
+    agent: tester
+  - id: implement
+    description: Write docs, bump version, run the live proof for real (read-only against the user's own gcloud ADC bootstrap; all writes confined to a throwaway --home).
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit, push, open PR into dev, merge on local verification, promote dev->main, cut the release.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: README.md
+      purpose: "feature documentation surface, same place every prior epic's closeout story documents new capabilities"
+    - path: docs/architecture.md
+      purpose: "new numbered section for the OAuth broker, following this doc's established per-epic section convention"
+    - path: .pHive/epics/portunus-vault-transfer/stories/04-closeout.yaml
+      purpose: "the exact closeout-story shape (live proof against real infrastructure, direct filesystem plaintext-leakage check) this story mirrors"
+
+files_to_modify:
+  - file: README.md
+    change: "document portunus oauth store/list/remove and backend=oauth, with an explicit 'what this is not' section"
+  - file: docs/architecture.md
+    change: "new numbered section for the OAuth broker"
+  - file: CHANGELOG.md
+    change: version entry
+  - file: pyproject.toml
+    change: version bump (minor)
+
+design_decisions:
+  - decision: "live proof uses a GCP-adjacent scope via gcloud's ADC, never a Gmail-restricted scope"
+    rationale: "cost-benefit-analysis.md's own explicit recommendation -- proves the mechanism independently of the one part of this (Google's verification/CASA process) that Portunus's own engineering cannot fix"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "the live-proof's own final check (no client_secret/refresh_token in plaintext on disk) is itself a direct, structural proof of this epic's central claim, not just documentation asserting it"
+
+risks:
+  - severity: low
+    description: "the live proof's bootstrapped token may not remain valid for long (gcloud's own ADC tokens can be revoked/rotated by the user later) -- an expected, not-a-bug outcome if a re-run fails later"
+    mitigation: "the acceptance criterion is that the proof works AT THE TIME IT'S RUN, matching portunus-vault-transfer Story 04's own 'an accurately-reported gap is a passing proof' precedent"
+
+references:
+  - path: .pHive/epics/portunus-oauth-token-broker/docs/cost-benefit-analysis.md
+    relevant_excerpt: "recommendation + suggested next step (prove it against a non-Gmail scope first)"
+  - path: .pHive/epics/portunus-oauth-token-broker/docs/design-discussion.md
+    relevant_excerpt: "§1, §4 (what this is not)"

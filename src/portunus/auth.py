@@ -258,6 +258,78 @@ class AWSWebIdentityAuth:
         )
 
 
+@dataclass(frozen=True)
+class OAuthAccessToken:
+    access_token: str = field(repr=False)
+    expires_at: int
+    identity: str
+    scope: str = ""
+
+
+class OAuthRefreshTokenAuth:
+    """Exchange a stored OAuth refresh token for a short-lived access token
+    via the standard OAuth 2.0 refresh_token grant (RFC 6749 SS6). Generic
+    across providers -- Google, GitHub, Microsoft, etc. all implement this
+    same grant at their own token_endpoint, so one class covers all of
+    them; mirrors GCPWorkloadIdentityAuth.mint()'s exact shape above.
+
+    Portunus never runs the initial OAuth consent flow itself (see
+    portunus-oauth-token-broker/docs/design-discussion.md) -- client_id/
+    client_secret/refresh_token are supplied from a credential bundle the
+    user bootstrapped through a provider-legitimate mechanism (e.g.
+    `gcloud auth application-default login --scopes=...`) and stored via
+    `portunus oauth store`. This class only ever mints -- it never touches
+    the consent/redirect flow.
+    """
+
+    def __init__(
+        self,
+        token_endpoint: str,
+        client_id: str,
+        client_secret: str,
+        refresh_token: str,
+        identity: str = "",
+        audit: Optional[AuditChain] = None,
+        transport: Optional[GCPTransport] = None,
+        timeout: float = 30.0,
+    ):
+        self.token_endpoint = token_endpoint
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.refresh_token = refresh_token
+        self.identity = identity
+        self.audit = audit or AuditChain()
+        self.transport = transport or _default_gcp_transport
+        self.timeout = timeout
+
+    def mint(self) -> OAuthAccessToken:
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }
+        resp = self.transport(
+            self.token_endpoint,
+            data,
+            {"Content-Type": "application/x-www-form-urlencoded"},
+            self.timeout,
+        )
+        access_token = str(resp.get("access_token", ""))
+        if not access_token:
+            raise AuthError("OAuth refresh grant did not return an access token")
+        expires_in = int(resp.get("expires_in", 0) or 0)
+        expires_at = int(time.time()) + expires_in if expires_in else 0
+        scope = str(resp.get("scope", ""))
+        self.audit.append("credential-mint", self.identity or "oauth", "ok:oauth-refresh")
+        return OAuthAccessToken(
+            access_token=access_token,
+            expires_at=expires_at,
+            identity=self.identity,
+            scope=scope,
+        )
+
+
 def assert_no_long_lived_cloud_keys(
     env: Optional[Mapping[str, str]] = None,
     paths: Optional[Mapping[str, Path]] = None,
