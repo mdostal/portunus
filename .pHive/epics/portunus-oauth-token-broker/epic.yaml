@@ -1,0 +1,47 @@
+name: portunus-oauth-token-broker
+title: generic OAuth 2.0 refresh->access token broker -- store a user-bootstrapped refresh token, mint short-lived access tokens at the boundary
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Follow-on to the portunus-oauth-token-broker research (.pHive/epics/portunus-oauth-token-broker/
+  docs/{research-brief,design-discussion,cost-benefit-analysis}.md) -- user confirmed "reasonable
+  enough, we can grow it later" on the CBA's recommended scope (Option B): Portunus is storage +
+  minting only. The OAuth consent flow (the one-time bootstrap that obtains a refresh token)
+  happens OUTSIDE Portunus, through whatever mechanism already legitimately covers the target
+  scope -- `gcloud auth application-default login --scopes=...` for GCP-adjacent access today
+  (the same delegation precedent `portunus auth login` already established for `gcloud auth
+  login`). Portunus's job starts once the user hands it a `(client_id, client_secret,
+  refresh_token, token_endpoint)` bundle: store it encrypted, mint short-lived access tokens on
+  demand via the standard OAuth 2.0 refresh_token grant, inject only at the boundary through the
+  exact same resolve/resolve_exec/resolve_to_tempfile paths every other secret already uses.
+
+  Explicitly NOT in scope (design-discussion.md §4): Portunus running any OAuth consent/redirect
+  flow itself; anything resembling browser-session-cookie capture; Google's own
+  verification/CASA process for restricted scopes (not solvable by engineering). The live proof
+  (Story 04) is deliberately run against a GCP-adjacent scope via `gcloud auth
+  application-default login`, never a Gmail-restricted scope, so the mechanism is validated
+  independently of the one part of this Google gates rather than Portunus.
+
+stories:
+  - id: 01-refresh-token-mint
+    title: OAuthRefreshTokenAuth -- mint a short-lived access token from a refresh token via the standard OAuth 2.0 refresh_token grant
+    complexity: low
+    depends_on: []
+    status: pending
+  - id: 02-credential-storage
+    title: store/load/list/remove an OAuth credential bundle -- encrypted, TTL-free (the provider is the authority on expiry, not a client-side guess), CLI-wired
+    complexity: medium
+    depends_on: [01-refresh-token-mint]
+    status: pending
+  - id: 03-oauth-backend-router-wiring
+    title: OAuthBackend -- a SecretBackend adapter that mints (and in-memory-caches) an access token on .access(), wired into _make_backend_router
+    complexity: medium
+    depends_on: [02-credential-storage]
+    status: pending
+  - id: 04-closeout
+    title: docs, version bump, live proof against a real GCP-adjacent OAuth token (never a Gmail-restricted scope)
+    complexity: low
+    depends_on: [03-oauth-backend-router-wiring]
+    status: pending

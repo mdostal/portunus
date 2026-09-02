@@ -1,0 +1,72 @@
+id: 01-refresh-token-mint
+epic: portunus-oauth-token-broker
+title: OAuthRefreshTokenAuth -- mint a short-lived access token from a refresh token via the standard OAuth 2.0 refresh_token grant
+status: pending
+complexity: low
+methodology: tdd
+depends_on: []
+
+description: |
+  A new `OAuthRefreshTokenAuth` class in auth.py, mirroring `GCPWorkloadIdentityAuth.mint()`'s
+  exact existing shape (same transport-injection pattern, same audit-identity-only discipline,
+  same frozen-dataclass result type) but generic across providers -- Google, GitHub, Microsoft,
+  etc. all implement the same RFC 6749 §6 refresh_token grant at their own token_endpoint, so one
+  class covers all of them, parameterized by (token_endpoint, client_id, client_secret,
+  refresh_token). POSTs `grant_type=refresh_token` + the three credential fields; parses
+  `access_token`/`expires_in`/`scope` from the JSON response. Reuses `_default_gcp_transport`
+  directly as the default transport (already the exact right shape: form-encoded POST -> JSON) --
+  not a fourth near-duplicate HTTP helper.
+
+acceptance_criteria:
+  - "Given a successful refresh grant, when mint() runs, then it returns an OAuthAccessToken with the access_token, a computed expires_at (now + expires_in), and the response's scope"
+  - "Given the token endpoint's response has no access_token field, when mint() runs, then it raises AuthError with a clear message -- never returns a token-shaped object with an empty string"
+  - "Given mint() succeeds, when the audit log is inspected, then it contains a credential-mint entry with the configured identity and 'ok:oauth-refresh' -- and the refresh_token/client_secret/access_token never appear anywhere in that entry (structurally checked, not just eyeballed)"
+  - "Given a custom transport (the same fake-transport testing pattern GCPWorkloadIdentityAuth's own tests already use), when mint() runs, then the POST body sent to the transport contains exactly grant_type=refresh_token, client_id, client_secret, refresh_token -- no extra/missing fields"
+  - "Given no expires_in in the response, when mint() runs, then expires_at is 0 (matching GCPAccessToken's own existing 'unknown expiry' convention) rather than crashing or guessing"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the successful-mint shape, the missing-access-token error, the audit entry (identity+result only, never token material), the exact POST body fields via a fake transport, and the no-expires_in case.
+    agent: tester
+  - id: implement
+    description: OAuthRefreshTokenAuth + OAuthAccessToken dataclass in auth.py, reusing _default_gcp_transport as the default transport.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/auth.py
+      purpose: "GCPWorkloadIdentityAuth.mint() (auth.py) -- the exact shape this story mirrors (constructor, transport injection, audit-identity-only logging, frozen dataclass result); _default_gcp_transport -- reused directly as this class's own default transport, not reimplemented"
+    - path: tests/test_auth.py
+      purpose: "the existing fake-transport testing pattern for GCPWorkloadIdentityAuth/AWSWebIdentityAuth -- this story's own tests follow the identical shape"
+
+files_to_modify:
+  - file: src/portunus/auth.py
+    change: "new OAuthAccessToken dataclass + OAuthRefreshTokenAuth class"
+
+design_decisions:
+  - decision: "one generic class, not a Google-specific one"
+    rationale: "design-discussion.md §2 -- the refresh_token grant is identical across every OAuth 2.0 provider (RFC 6749 §6); a Google-specific class would just be this same class with a fixed token_endpoint, adding a distinction with no real difference"
+  - decision: "reuse _default_gcp_transport, not a new HTTP helper"
+    rationale: "already exactly the right shape (form-encoded POST -> JSON) -- a fourth near-duplicate transport function would be pure repetition"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "mirrors GCPWorkloadIdentityAuth exactly: refresh_token/client_secret/access_token are never passed to audit.append() (only self.identity and the fixed 'ok:oauth-refresh'/error strings are) -- structurally verified by a dedicated test, not just an assertion in prose"
+
+risks:
+  - severity: low
+    description: "a provider's token endpoint could return an access_token embedded in a differently-shaped response (not all providers are byte-identical to Google's STS response shape)"
+    mitigation: "out of scope for v1 -- this story targets the standard RFC 6749 §6 response shape (access_token/expires_in/scope at the top level), which covers Google, GitHub, and Microsoft's standard endpoints; a provider with a genuinely different response shape is a real, separate follow-up if/when it's actually needed"
+
+references:
+  - path: .pHive/epics/portunus-oauth-token-broker/docs/design-discussion.md
+    relevant_excerpt: "§2 (minting)"
+  - path: .pHive/epics/portunus-oauth-token-broker/docs/cost-benefit-analysis.md
+    relevant_excerpt: "Option B (recommended)"
