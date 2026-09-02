@@ -1,7 +1,7 @@
 id: 01-refresh-token-mint
 epic: portunus-oauth-token-broker
 title: OAuthRefreshTokenAuth -- mint a short-lived access token from a refresh token via the standard OAuth 2.0 refresh_token grant
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: []

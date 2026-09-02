@@ -41,8 +41,10 @@ from .auth import (
     EnvOIDCTokenSource,
     GCPAccessToken,
     AWSSessionCredentials,
+    OAuthAccessToken,
     GCPWorkloadIdentityAuth,
     AWSWebIdentityAuth,
+    OAuthRefreshTokenAuth,
     assert_no_long_lived_cloud_keys,
 )
 
@@ -78,8 +80,10 @@ __all__ = [
     "EnvOIDCTokenSource",
     "GCPAccessToken",
     "AWSSessionCredentials",
+    "OAuthAccessToken",
     "GCPWorkloadIdentityAuth",
     "AWSWebIdentityAuth",
+    "OAuthRefreshTokenAuth",
     "assert_no_long_lived_cloud_keys",
     "__version__",
 ]
