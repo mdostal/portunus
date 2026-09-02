@@ -8,6 +8,7 @@ import VaultMap from "./components/VaultMap";
 import AskBar from "./components/AskBar";
 import DetailDrawer from "./components/DetailDrawer";
 import AddSecretForm from "./components/AddSecretForm";
+import OAuthCredentialForm from "./components/OAuthCredentialForm";
 import ProjectExplorer from "./components/ProjectExplorer";
 import SettingsPage from "./components/SettingsPage";
 import SetupWizard from "./components/SetupWizard";
@@ -75,6 +76,7 @@ function HomeInner() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<PortunusReference | null>(null);
   const [addDraftProvider, setAddDraftProvider] = useState<string | null>(null);
+  const [oauthFormOpen, setOauthFormOpen] = useState(false);
   const [rotateDraft, setRotateDraft] = useState<PortunusReference | null>(null);
   // portunus-secure-entry Story 03: the target of a "Fulfill" action (a
   // one-click path from a state=requested reference into AddSecretForm,
@@ -201,6 +203,9 @@ function HomeInner() {
           <button className="btn quiet" onClick={() => setAddDraftProvider("")}>
             + Add secret
           </button>
+          <button className="btn quiet" onClick={() => setOauthFormOpen(true)}>
+            + Add OAuth credential
+          </button>
           <button className={`btn ${askOpen ? "solid" : "quiet"}`} onClick={() => setAskOpen((v) => !v)}>
             Ask
           </button>
@@ -237,7 +242,7 @@ function HomeInner() {
 
         {askOpen && <AskBar onAdd={() => setAddDraftProvider("")} />}
 
-        {selected && !addOpen && (
+        {selected && !addOpen && !oauthFormOpen && (
           <DetailDrawer
             reference={selected}
             allRefs={refs}
@@ -285,6 +290,16 @@ function HomeInner() {
             setAddDraftProvider(null);
             setRotateDraft(null);
             setFulfillDraft(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {oauthFormOpen && (
+        <OAuthCredentialForm
+          onClose={() => setOauthFormOpen(false)}
+          onAdded={() => {
+            setOauthFormOpen(false);
             refresh();
           }}
         />

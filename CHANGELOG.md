@@ -4,6 +4,22 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-09-02
+
+### Added
+
+- **OAuth credential entry dashboard (portunus-oauth-token-broker Story 05).** A new "+ Add
+  OAuth credential" button in the Standalone UI opens `OAuthCredentialForm` — the same
+  metadata-rich field set `AddSecretForm` already gives regular secrets, with an explicit,
+  never-ambiguous choice between two credential sources: auto-fill from a detected local
+  `gcloud` ADC file (read server-side only — the values are never sent to or shown in the
+  browser, only a `{available: true/false}` presence check crosses that boundary) or manual
+  entry (masked `client_secret`/`refresh_token` fields). Submitting chains the same two CLI
+  calls a human would otherwise run by hand (`portunus oauth store`, then `portunus drop
+  --backend oauth`) — no new storage/minting mechanism, no behavioral fork from a CLI-entered
+  credential. Live-verified end to end: a form-submitted, auto-filled credential resolved to a
+  real access token at the boundary.
+
 ## [0.30.0] - 2026-09-02
 
 ### Added

@@ -640,6 +640,8 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
 .form-field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: var(--steel); }
 .form-row { display: flex; gap: 0.5rem; }
 .form-row .form-field { flex: 1; }
+.oauth-source-choice { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.74rem; color: var(--ink-soft); }
+.oauth-source-choice input[type="checkbox"] { margin-top: 0.15rem; }
 
 @media (max-width: 720px) {
   .layout { flex-direction: column; }
