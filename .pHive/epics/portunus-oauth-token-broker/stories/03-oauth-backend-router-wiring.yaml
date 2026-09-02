@@ -1,0 +1,88 @@
+id: 03-oauth-backend-router-wiring
+epic: portunus-oauth-token-broker
+title: OAuthBackend -- a SecretBackend adapter that mints (and in-memory-caches) an access token on .access(), wired into _make_backend_router
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [02-credential-storage]
+
+description: |
+  A new `OAuthBackend` (backend.py), implementing the same `SecretBackend` Protocol every other
+  backend already does (`.access(sm_name, project="") -> str`). `sm_name` encodes
+  `"<provider>:<account>"` (a single opaque identifier the human chooses when registering the
+  reference, e.g. `sm_name="google:user@gmail.com"` -- the same "opaque provider-specific
+  identifier" role `dostal-shared-anthropic` already plays for GCP Secret Manager; no new
+  SecretBackend Protocol parameter needed). `.access()` loads the stored credential bundle
+  (Story 02), mints an access token via `OAuthRefreshTokenAuth` (Story 01), and returns the
+  access_token string -- exactly like every other backend's `.access()` already returns a plain
+  string, so Resolver/resolve_call/resolve_exec/resolve_to_tempfile need ZERO changes; an OAuth
+  reference flows through the identical boundary-safe paths every other secret already does.
+  Mints once, then reuses the cached token in-memory (this process only, never written to disk)
+  until it's within `expires_at`'s skew window, mirroring `GCPWorkloadIdentityAuth`/
+  `OIDCToken.expired()`'s existing skew-check convention exactly. Wired into
+  `_make_backend_router`'s `_for_kind()` dispatch as `kind == "oauth"`, and added to every
+  `--backend` choices list (cli.py) alongside local/gcp/aws/etc.
+
+acceptance_criteria:
+  - "Given a reference with backend=oauth and sm_name=provider:account pointing at a stored credential, when resolved through the normal resolve/resolve_exec/resolve_to_tempfile paths, then the boundary receives a real access token -- proving no Resolver-side change was needed, the existing boundary-safety tests already cover this backend for free"
+  - "Given the same reference resolved twice in quick succession (well within the token's expiry skew), then the second resolve reuses the cached token -- the mint transport is called exactly once, not twice (a real efficiency + provider-load proof, not just a correctness one)"
+  - "Given the cached token is past its expiry skew, when resolved again, then a fresh mint happens (transport called again) -- the cache never serves a stale/expired token"
+  - "Given sm_name references a provider/account with no stored credential, when .access() runs, then it raises BackendError with a clear message (mirrors GcloudBackend's existing not-found handling) -- never a raw KeyError/AttributeError"
+  - "Given the mint itself fails (a bad/revoked refresh token), when .access() runs, then the underlying AuthError is translated into BackendError -- matching every other backend's own 'auth/access failure -> BackendError' convention, so `vault access verify`'s (already-shipped) BackendError-to-actionable-hint translation covers this backend for free, no new hint-translation code needed"
+  - "Given `_make_backend_router` with a reference whose ref.backend=='oauth', when routed, then it returns an OAuthBackend instance -- proven the same way portunus-vault-transfer's own resolved_backend_kind tests proved GCP/AWS routing: a direct comparison against the real router, not a separately-reasoned-about duplicate"
+  - "Given `portunus drop --backend oauth` (and reg add/retag's own --backend flags), when the choices list is inspected, then 'oauth' is a valid option alongside local/gcp/aws/vault/infisical/doppler/onepassword/azure"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the full resolve-path proof, cache-reuse, cache-expiry-remints, not-found -> BackendError, mint-failure -> BackendError, the real _make_backend_router comparison, and the --backend choices list.
+    agent: tester
+  - id: implement
+    description: OAuthBackend in backend.py; _make_backend_router's oauth kind branch (cli.py); --backend choices list updates across drop/reg add/retag.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm the in-memory cache never persists to disk and never survives past this backend instance's own lifetime (no cross-process/cross-invocation leakage risk).
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: "GcloudBackend's own .access()/not-found-> BackendError shape -- this story's OAuthBackend mirrors it; SecretBackend Protocol (backend.py) -- confirms zero interface change needed"
+    - path: src/portunus/cli.py
+      purpose: "_make_backend_router's _for_kind() dispatch (cli.py ~93-111) -- the oauth branch this story adds; the --backend choices list (cli.py ~2061, ~2151) -- both need 'oauth' added"
+    - path: src/portunus/resolver.py
+      purpose: "_fetch()'s backend.access(ref.sm_name, project=ref.project) call -- confirms OAuthBackend needs no Resolver-side change, it's just another SecretBackend"
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: "new OAuthBackend class"
+  - file: src/portunus/cli.py
+    change: "_make_backend_router's oauth kind branch; --backend choices list (drop/reg add/retag)"
+
+design_decisions:
+  - decision: "sm_name encodes provider:account, no new SecretBackend Protocol parameter"
+    rationale: "design-discussion.md §2 -- keeps the Protocol unchanged across every backend, matching the existing precedent of sm_name being an opaque, backend-specific identifier (GCP's own sm_name is already opaque to the Resolver)"
+  - decision: "in-memory-only cache, process lifetime, same skew convention as GCPWorkloadIdentityAuth"
+    rationale: "design-discussion.md §3 self-grill -- avoids unnecessary re-mint load on the provider's token endpoint without ever persisting a live access token to disk"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "OAuthBackend.access() returns only the access_token string (the same shape/discipline every other backend's .access() already has) -- the resolve-path proof test is the structural evidence this reuses existing boundary-safety rather than needing new checks"
+
+risks:
+  - severity: low
+    description: "an in-memory cache keyed only by sm_name could theoretically serve a token for the wrong account if two references share an sm_name across different OAuthBackend call sites"
+    mitigation: "sm_name already IS the full provider:account identity (design decision above) -- there's no narrower key that could collide; this is the same guarantee GcloudBackend already relies on for its own sm_name uniqueness"
+
+references:
+  - path: .pHive/epics/portunus-oauth-token-broker/docs/design-discussion.md
+    relevant_excerpt: "§2 (boundary injection), self-grill (caching)"
+  - path: .pHive/epics/portunus-vault-transfer/stories/03-boundary-safe-verify.yaml
+    relevant_excerpt: "BackendError -> actionable hint translation this story's own failures feed into for free"
