@@ -868,7 +868,28 @@ other label) coexist as fully independent credentials — separate mint, separat
 separate `oauth remove` — the same "many sub-vaults/accounts under one Portunus" shape
 `org`/`project` scoping already gives every other reference. Live-verified with two real,
 distinct Google accounts: both minted genuinely different access tokens, confirmed via
-independent SHA-256 digests (never by comparing raw values) — see `docs/architecture.md` §20.
+independent SHA-256 digests (never by comparing raw values) — see `docs/architecture.md` §20 and
+`.pHive/epics/portunus-oauth-token-broker/docs/lessons-learned.md`.
+
+**`gcloud auth login` is not `gcloud auth application-default login`** — easy to conflate, two
+different credential stores. `auth login` authenticates the `gcloud` CLI itself (an internal
+SQLite store `portunus auth login` already wraps); `auth application-default login` writes the
+portable JSON file (`~/.config/gcloud/application_default_credentials.json`) the bootstrap above
+actually reads. Running the wrong one produces no error — it just silently authenticates the
+wrong thing (confirmed by the ADC file's own mtime staying unchanged).
+
+**Verifying which account a bootstrapped credential actually belongs to**: `gcloud`'s own
+success output doesn't print the account you picked in the browser — only an unrelated quota
+project, if any. To know for certain (not guess from context), mint a token and ask Google
+directly:
+
+```bash
+portunus resolve --exec curl -sG "https://oauth2.googleapis.com/tokeninfo" \
+  --data-urlencode "access_token={{secret:my-gmail-token}}" | python3 -c "import json,sys; print(json.load(sys.stdin)['email'])"
+```
+
+(uses `resolve --exec`, not `$(...)` substitution — the token never lands in argv/`ps` output,
+same boundary-safety discipline as every other example in this README.)
 
 An access token is cached in-memory (this process only, never written to disk) until close to
 its own expiry, then re-minted automatically — no re-bootstrap needed until the *refresh* token
