@@ -29,19 +29,24 @@ stories:
     title: OAuthRefreshTokenAuth -- mint a short-lived access token from a refresh token via the standard OAuth 2.0 refresh_token grant
     complexity: low
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-credential-storage
     title: store/load/list/remove an OAuth credential bundle -- encrypted, TTL-free (the provider is the authority on expiry, not a client-side guess), CLI-wired
     complexity: medium
     depends_on: [01-refresh-token-mint]
-    status: pending
+    status: shipped
   - id: 03-oauth-backend-router-wiring
     title: OAuthBackend -- a SecretBackend adapter that mints (and in-memory-caches) an access token on .access(), wired into _make_backend_router
     complexity: medium
     depends_on: [02-credential-storage]
-    status: pending
+    status: shipped
   - id: 04-closeout
     title: docs, version bump, live proof against a real GCP-adjacent OAuth token (never a Gmail-restricted scope)
     complexity: low
     depends_on: [03-oauth-backend-router-wiring]
+    status: shipped
+  - id: 05-credential-entry-dashboard
+    title: a Standalone UI dashboard for entering an OAuth credential -- metadata-rich, auto-fill vs. manual-input called out explicitly
+    complexity: medium
+    depends_on: [04-closeout]
     status: pending
