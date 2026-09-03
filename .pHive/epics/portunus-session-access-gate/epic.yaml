@@ -1,0 +1,28 @@
+name: portunus-session-access-gate
+title: role-scoped access gate for session storage + a real Playwright integration proof (re-scoped portunus-session-vault Stories 03+05)
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  Follow-on to GitHub issue #136 (filed from a branch-cleanup audit that found real, unshipped
+  work in feat/PAN-7807/feat/PAN-7835) and portunus-session-vault's own 2026-08-19
+  reconciliation note (Stories 03/05 genuinely unstarted). Re-scoped against current code rather
+  than resurrecting the old branches as-is: Story 03 routes session access through the SAME
+  roles.evaluate() seam portunus-petitio-rbac already shipped (a synthetic, in-memory Reference,
+  never a second gating mechanism); Story 05 turns out not to need new production code at all --
+  verified directly against Playwright's own API that `browser.new_context(storage_state=<path>)`
+  already accepts the exact tempfile path `portunus session load` already prints, so "Story 05"
+  becomes a real integration test proving that already-working chain, not a new injection module.
+
+stories:
+  - id: 01-session-access-gate
+    title: Broker.check_session_access() -- gate `session load` through roles.evaluate(), optional scope metadata on `session store`
+    complexity: medium
+    depends_on: []
+    status: pending
+  - id: 02-playwright-proof-and-closeout
+    title: real Playwright integration test (importorskip-guarded) + docs, version bump, closeout
+    complexity: low
+    depends_on: [01-session-access-gate]
+    status: pending

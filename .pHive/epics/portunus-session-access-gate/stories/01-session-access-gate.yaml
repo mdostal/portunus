@@ -1,0 +1,88 @@
+id: 01-session-access-gate
+epic: portunus-session-access-gate
+title: Broker.check_session_access() -- gate `session load` through roles.evaluate(), optional scope metadata on `session store`
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  New `Broker.check_session_access(site, account, *, org="", project="", env="", tags=None,
+  requester=None)`, mirroring `check_injectable()`'s own policy-check block exactly: constructs a
+  synthetic, in-memory `Reference` (never persisted to the Registry -- design-discussion.md §1)
+  from the given scope metadata, calls `roles.evaluate(roles.load_policies(), requester,
+  synthetic_ref)`, always audits the decision (`would-allow`/`would-deny`), and raises
+  `NotAuthorized` only when the decision denies AND `roles.enforcement_is_on()`. `store_session()`
+  gains optional `org`/`project`/`env`/`tags` kwargs, stored as a new additive `"scope"` key in
+  the existing record shape (no schema version bump). `cmd_session_load` reads that scope via the
+  existing `inspect_session()` call and gates through `check_session_access()` before ever calling
+  `load_session()` for real -- the one payload-exposure boundary, mirroring exactly which single
+  call site `check_injectable()` itself gates (design-discussion.md §3): `session
+  store/remove/inspect/list` stay ungated, matching how `drop`/`retag`/`reg show` are never
+  policy-gated either.
+
+acceptance_criteria:
+  - "Given a session with no scope metadata (or a vault with zero configured policies), when `session load` runs, then it behaves exactly as it does today -- unchanged, matching check_injectable's own permissive-if-unconfigured default"
+  - "Given a session stored with --org/--project/--env/--tags, when a policy exists for that scope excluding the requester, and enforcement is OFF, then `session load` still succeeds, but the audit log gets a would-deny line -- audited, not blocked"
+  - "Given the same setup with enforcement ON, then `session load` raises NotAuthorized (translated to a clean CLI error, not a raw traceback) and the tempfile is never created"
+  - "Given a matching policy that DOES grant the requester's principal, when enforcement is ON, then `session load` succeeds normally"
+  - "Given `session store`/`remove`/`inspect`/`list`, when run against a scoped-and-denied session, then none of them are gated -- they behave identically whether or not a denying policy exists (mirrors check_injectable's own write/metadata-view exemption)"
+  - "Given the synthetic Reference check_session_access() builds, when compared against roles.evaluate()'s own _scope_matches() (getattr(ref, policy.scope_type, \"\")), then every VALID_SCOPE_TYPES attribute (org/project/env/repo) resolves correctly -- proven by testing all four scope types, not just org"
+  - "Given an old session record with no \"scope\" key (pre-this-story), when loaded, then it's treated as all-empty scope (never a KeyError/crash) -- backward compatible with every session already stored"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for the permissive-unconfigured default, would-deny-but-audited-only (enforcement off), NotAuthorized-and-no-tempfile (enforcement on), matching-principal-succeeds, the four ungated commands, all four scope types matching correctly, and backward compatibility with a scope-less record.
+    agent: tester
+  - id: implement
+    description: check_session_access() in broker.py; scope kwargs + record field in store_session() (localvault.py); cmd_session_load wiring + --org/--project/--env/--tags on `session store` (cli.py).
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm check_session_access() never raises when requester is None (matches check_injectable's own None-requester fail-open), and the synthetic Reference is never written to Registry/disk anywhere.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/broker.py
+      purpose: "check_injectable()'s own policy-check block (lines ~119-127) -- the exact pattern this story's check_session_access() mirrors"
+    - path: src/portunus/roles.py
+      purpose: "_scope_matches()/evaluate() -- confirmed fully duck-typed against ref, no Reference subclass or Registry entry needed"
+    - path: src/portunus/localvault.py
+      purpose: "store_session()/_session_view()/inspect_session() -- the record shape this story additively extends with a scope key"
+    - path: src/portunus/cli.py
+      purpose: "cmd_session_load (~601-630) -- gains the gate call; ses_store's argparse block -- gains --org/--project/--env/--tags"
+
+files_to_modify:
+  - file: src/portunus/broker.py
+    change: "new check_session_access() method"
+  - file: src/portunus/localvault.py
+    change: "store_session() gains org/project/env/tags kwargs -> new additive 'scope' record key; _session_view() projects it"
+  - file: src/portunus/cli.py
+    change: "cmd_session_load gates via check_session_access(); ses_store gains --org/--project/--env/--tags"
+
+design_decisions:
+  - decision: "a synthetic, in-memory Reference, never a real Registry entry"
+    rationale: "design-discussion.md §1 -- a session isn't a secret in the same shape (no sm_name/state/approval lifecycle); roles.evaluate() already accepts any duck-typed object, confirmed by reading _scope_matches() directly"
+  - decision: "only session load is gated, not store/remove/inspect/list"
+    rationale: "design-discussion.md §3 -- mirrors check_injectable's own precedent exactly: only the fetch/injection boundary is gated, never writes or metadata-only views, matching drop/retag/reg show's own exemption"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "check_session_access() never touches the session payload -- only namespace/scope metadata (already-safe per inspect_session's own existing discipline) and the Decision's fixed enum reason string ever reach the audit log"
+
+risks:
+  - severity: low
+    description: "a human could configure conflicting scope metadata (e.g. --project set on store but never matching any real policy), leading to unexpected always-allow behavior"
+    mitigation: "matches roles.evaluate()'s own existing permissive-if-unconfigured posture exactly -- not a new risk this story introduces, the same behavior every other reference already has"
+
+references:
+  - path: .pHive/epics/portunus-session-access-gate/docs/design-discussion.md
+    relevant_excerpt: "§1 (synthetic Reference), §3 (only the fetch boundary is gated)"
