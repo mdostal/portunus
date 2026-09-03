@@ -349,7 +349,9 @@ def test_list_sessions_excludes_non_session_vault_entries(home):
 
 def test_inspect_session_output_unchanged_by_the_session_view_refactor(home):
     """Regression: inspect_session()'s existing fields must be identical
-    after extracting _session_view() -- only `expired` is new."""
+    after extracting _session_view() -- `expired` and (portunus-session-
+    access-gate) `scope` are the only additions since this test was
+    first written."""
     backend = LocalEncryptedBackend()
     backend.store_session(
         "example.test", "dostal@example.test", _session_state(),
@@ -360,4 +362,4 @@ def test_inspect_session_output_unchanged_by_the_session_view_refactor(home):
     assert inspection["namespace"] == {"site": "example.test", "account": "dostal@example.test"}
     assert inspection["ttl"]["seconds"] == 3600
     assert inspection["rotation"]["interval_seconds"] == 900
-    assert set(inspection.keys()) == {"schema", "namespace", "ttl", "rotation", "expired"}
+    assert set(inspection.keys()) == {"schema", "namespace", "ttl", "rotation", "scope", "expired"}

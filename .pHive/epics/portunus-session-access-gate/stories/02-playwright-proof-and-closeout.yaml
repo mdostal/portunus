@@ -1,0 +1,82 @@
+id: 02-playwright-proof-and-closeout
+epic: portunus-session-access-gate
+title: real Playwright integration test (importorskip-guarded) + docs, version bump, closeout
+status: shipped
+complexity: low
+methodology: tdd
+depends_on: [01-session-access-gate]
+
+description: |
+  No new production code (research-brief.md §3 -- verified directly against Playwright's own API
+  that `browser.new_context(storage_state=<path>)` already accepts the exact tempfile path
+  `portunus session load` already prints). This story is the proof: a new
+  tests/test_session_playwright_integration.py, guarded by `pytest.importorskip("playwright")`
+  so the core suite never requires the (large, browser-binary-downloading) `playwright` package.
+  Stores a realistic Playwright `storageState`-shaped session via the real `store_session()`,
+  loads it via the real CLI (`portunus session load`), feeds the printed path into a real
+  `sync_playwright()` -> `browser.new_context(storage_state=path)` call, and confirms the
+  resulting context's cookies match what was stored. Also closes out the epic: docs, version
+  bump, and reconciles portunus-session-vault's own epic.yaml (Stories 03/05 now genuinely
+  shipped, via this epic).
+
+acceptance_criteria:
+  - "Given playwright is installed, when the new test runs, then a real browser context is created from a session portunus itself stored and loaded -- proof the existing mechanism genuinely works for its intended consumer, not a synthetic JSON-shape assertion"
+  - "Given playwright is NOT installed, when the full test suite runs, then this test is skipped cleanly (pytest.importorskip) -- the core suite's pass/fail is unaffected either way"
+  - "Given README.md and docs/architecture.md, when read after this story, then both describe the session-access gate and correctly state that no new Playwright-specific module was needed -- the existing `session load` command already bridges to Playwright directly"
+  - "Given the version files, when checked, then all are in lockstep at the new minor version"
+  - "Given .pHive/epics/portunus-session-vault/epic.yaml, when read after this story, then Stories 03 and 05 are marked shipped-via-portunus-session-access-gate, not left open"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: The Playwright integration test itself, written to genuinely fail without Story 01's gate wiring reachable and to genuinely prove real browser-context creation when playwright is installed.
+    agent: tester
+  - id: implement
+    description: Install playwright + a browser binary for this session's own verification; run the live proof for real; write docs.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit, push, open PR into dev, merge on local verification, promote dev->main, cut the release.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/cli.py
+      purpose: "cmd_session_load -- the exact command this story's live proof shells out to, unchanged from Story 01"
+    - path: .pHive/epics/portunus-session-vault/epic.yaml
+      purpose: "the epic this story's own work formally closes out (Stories 03/05)"
+
+files_to_modify:
+  - file: tests/test_session_playwright_integration.py
+    change: "new, importorskip-guarded real Playwright proof"
+  - file: README.md
+    change: "document the session-access gate + confirm no new Playwright module needed"
+  - file: docs/architecture.md
+    change: "new numbered section"
+  - file: CHANGELOG.md
+    change: version entry
+  - file: pyproject.toml
+    change: version bump (minor)
+  - file: .pHive/epics/portunus-session-vault/epic.yaml
+    change: "reconcile Stories 03/05 as shipped-via-portunus-session-access-gate"
+
+design_decisions:
+  - decision: "playwright stays a test-time-only, optional dependency -- never added to pyproject.toml's core deps"
+    rationale: "design-discussion.md §4 self-grill -- importorskip means a fresh clone's test run never needs it; this epic's own closeout installs it once for a genuine live proof, matching this session's 'live proof over synthetic fixture' discipline throughout"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "the live proof's own tempfile cleanup (matching every other resolve-to-tempfile proof this session has run) confirmed directly, not assumed"
+
+risks:
+  - severity: low
+    description: "installing a real browser binary in this environment could be slow/flaky (network-dependent)"
+    mitigation: "accepted -- a one-time cost for this closeout's own live proof; the resulting test is importorskip-guarded so it never becomes a recurring CI dependency/flakiness risk for anyone who hasn't opted in"
+
+references:
+  - path: .pHive/epics/portunus-session-access-gate/docs/design-discussion.md
+    relevant_excerpt: "§4 (the Playwright question, resolved)"
+  - path: .pHive/epics/portunus-session-vault/epic.yaml
+    relevant_excerpt: "2026-08-19 reconciliation note -- the two stories this epic closes out"
