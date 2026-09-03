@@ -127,6 +127,49 @@ class Broker:
                 )
         return ref
 
+    # --- session access gate (portunus-session-access-gate) --------------
+    def check_session_access(
+        self,
+        site: str,
+        account: str,
+        *,
+        org: str = "",
+        project: str = "",
+        env: str = "",
+        repo: str = "",
+        requester: Optional[Identity] = None,
+    ) -> None:
+        """Gate a session's fetch boundary (`session load`) through the
+        exact same roles.evaluate() seam check_injectable() already uses.
+        A session isn't a Registry Reference (no sm_name/state/approval
+        lifecycle) -- roles.evaluate()/_scope_matches() are fully
+        duck-typed, so a synthetic, in-memory Reference (never persisted)
+        is all that's needed, no second gating mechanism.
+
+        Same posture as check_injectable() exactly: `requester is None`
+        fails open; a real requester always gets a would-allow/would-deny
+        audit line; NotAuthorized is raised only when the decision denies
+        AND roles.enforcement_is_on() (permissive-if-unconfigured holds
+        the same way). Only `session load` calls this -- store/remove/
+        inspect/list stay ungated, mirroring check_injectable's own
+        write/metadata-view exemption (drop/retag/reg show aren't gated
+        either).
+        """
+        if requester is None:
+            return
+        synthetic_ref = Reference(
+            name=f"session:{site}:{account}", sm_name="",
+            org=org, project=project, env=env, repo=repo,
+        )
+        decision = roles.evaluate(roles.load_policies(), requester, synthetic_ref)
+        verb = "would-allow" if decision.allow else "would-deny"
+        self.audit.append("session_access", f"{site}:{account}", f"{verb}:{decision.reason}")
+        if not decision.allow and roles.enforcement_is_on():
+            raise NotAuthorized(
+                f"session {site}/{account} is not authorized for {requester.name} "
+                f"— no policy record grants this scope to this identity"
+            )
+
     # --- gate / approve --------------------------------------------------
     def gate(self, name: str, on: bool = True) -> Reference:
         ref = self.registry.set_approval(name, on)
