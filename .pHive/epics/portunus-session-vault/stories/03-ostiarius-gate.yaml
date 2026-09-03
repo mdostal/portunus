@@ -1,7 +1,7 @@
 id: 03-ostiarius-gate
 epic: portunus-session-vault
 title: Ostiarius Role-Scoped Access Gate
-status: needs-replanning  # see epic.yaml -> reconciliation: valid, unstarted capability, but this story's file paths target a different (wrong) codebase
+status: shipped-via-portunus-session-access-gate  # see .pHive/epics/portunus-session-access-gate/ Story 01 (2026-09-02) -- Broker.check_session_access(), routed through the existing roles.evaluate() seam rather than a bespoke owner_role scheme
 complexity: medium
 methodology: tdd
 depends_on:

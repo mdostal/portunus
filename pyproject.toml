@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pantheon-portunus"
-version = "0.31.0"
+version = "0.32.0"
 description = "A standalone, boundary-only secret broker — reference a secret by name, the value is injected only at the execution boundary, never inside an LLM or agent context."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -1,7 +1,7 @@
 id: 02-playwright-proof-and-closeout
 epic: portunus-session-access-gate
 title: real Playwright integration test (importorskip-guarded) + docs, version bump, closeout
-status: pending
+status: shipped
 complexity: low
 methodology: tdd
 depends_on: [01-session-access-gate]

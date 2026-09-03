@@ -37,11 +37,19 @@ file. `cmd_session_load` already does exactly that — writes the full session r
 tempfile and prints only the path.
 
 **This means the "Playwright injection helper" gap doesn't actually exist as a missing piece of
-production code.** `portunus session load <site> <account>` already produces exactly what
-`browser.new_context(storage_state=<printed-path>)` needs — no new module required. What's
-genuinely missing is *proof* that this already-existing mechanism actually works against a real
-Playwright browser context, which is what "Story 05" should become: a real integration test, not
-new production code. This directly resolves the open question the `portunus-session-vault`
+production code — but the live proof (Story 02) caught a real correction to this claim before it
+shipped inaccurately.** `cmd_session_load`'s tempfile holds the *full record*
+(schema/namespace/ttl/rotation/scope/session), not the bare `session` payload — confirmed by
+running an actual Playwright `browser.new_context(storage_state=<printed-path>)` call against it
+and watching it silently fail (Playwright treats an object with no top-level `cookies`/`origins`
+keys as an empty state, not an error). The real bridge is a one-line consumer-side unwrap
+(`json.load(open(path))["session"]`) before handing the payload to Playwright — still no new
+Portunus production code (this is documentation/usage guidance, not a code gap), but "hand the
+printed path straight to Playwright with zero extra steps" was one step too strong as originally
+written here. What's genuinely missing (and what "Story 05" should become) is *proof* that this
+corrected, already-existing mechanism actually works against a real Playwright browser context —
+a real integration test, not new production code. This directly resolves the open question the
+`portunus-session-vault`
 epic's own reconciliation note left unanswered ("Story 05's Playwright-specific framing may
 itself be stale scope... the real shipped capability is a generic login/browser-session store").
 
