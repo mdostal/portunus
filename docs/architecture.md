@@ -932,6 +932,52 @@ getting back a real `ya29.` access token. Live-verified end to end via Playwrigh
 direct filesystem check that the real ADC secret never touched the throwaway proof home in
 plaintext.
 
+## 21. Session-access gate + a corrected Playwright bridge (portunus-session-access-gate)
+
+**Origin: a branch-cleanup audit, not a planned epic.** Cleaning up 30 stale git branches
+(2026-09-02) surfaced two never-merged branches (`feat/PAN-7807`, `feat/PAN-7835`) with real,
+unshipped work matching `portunus-session-vault`'s own already-documented Stories 03/05 (that
+epic's 2026-08-19 reconciliation note had already confirmed these two were genuinely unstarted).
+Filed as GitHub issue #136, then re-scoped against current code rather than resurrecting either
+branch as-is.
+
+**The gate reuses `roles.evaluate()` -- no second policy engine.** `Broker.check_session_access()`
+builds a synthetic, in-memory `Reference` (never written to the Registry) from a session's own
+optional `org`/`project`/`env`/`repo` scope metadata and hands it to the *exact* `roles.evaluate()`
+call `check_injectable()` already makes. This was a real, deliberate correction versus the old
+branches' own approach: `feat/PAN-7807`'s `check_session_access()` used a bespoke
+`owner_role`/`agent_role` scheme, predating `portunus-petitio-rbac`'s general policy engine.
+Confirmed via `roles.py`'s own `_scope_matches()` (`getattr(ref, policy.scope_type, "")`) that
+`roles.evaluate()` is fully duck-typed and needs no Reference subclass or Registry entry at all —
+the cheapest possible integration, not a new mechanism. Only `session load` (the one
+payload-exposure boundary) is gated, mirroring exactly which single call `check_injectable()`
+itself gates — `store`/`remove`/`inspect`/`list` stay ungated, the same way `drop`/`retag`/
+`reg show` are never policy-gated either.
+
+**The Playwright question, and a real correction caught by insisting on a live proof.** Verified
+directly against Playwright's own API that `browser.new_context(storage_state=...)` accepts
+either a dict or a file path — meaning `cmd_session_load`'s existing tempfile-path output looked,
+on paper, like a complete bridge already, no new "playwright.py" injection module needed. The
+first version of this epic's own docs said exactly that. **The live proof (installing `playwright`
+for real, launching a real Chromium context) caught that this claim was one step too strong**:
+`cmd_session_load` writes the *full* record (`schema`/`namespace`/`ttl`/`rotation`/`scope`/
+`session`), not the bare `session` payload Playwright's `storage_state` actually expects — the
+first real test run genuinely failed (`assert any(...)` came back empty, since Playwright silently
+treats an object with no top-level `cookies`/`origins` keys as an empty state rather than
+erroring). The fix wasn't a Portunus code change — `cmd_session_load`'s existing full-record
+output is itself intentional, established, tested behavior (a pre-existing test asserts exactly
+that shape) — the fix was correcting the *documentation*: bridging to Playwright needs one line
+(`json.load(open(path))["session"]`) before the payload is handed onward, not zero. Corrected in
+this epic's own `research-brief.md` before it shipped inaccurately, and in README.md's own
+example. The resulting test (`tests/test_session_playwright_integration.py`,
+`pytest.importorskip("playwright")`-guarded so the core suite never requires the package) proves
+the corrected chain against a real Chromium browser context — a real `cookies()` call on a real
+`BrowserContext`, not a synthetic JSON-shape assertion.
+
+**`portunus-session-vault`'s own epic.yaml is now fully reconciled** — all 5 stories complete
+(01/02/04 done-elsewhere per its 2026-08-19 note; 03/05 shipped here, re-scoped against current
+code rather than resurrecting the old branches' own now-superseded designs).
+
 ## See also
 
 - [README.md](../README.md) — component model table, install/usage, MCP tool reference

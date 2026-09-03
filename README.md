@@ -337,6 +337,34 @@ rm -f "$path"
 portunus session remove example.test dostal@example.test
 ```
 
+**Access control**: `--org`/`--project`/`--env`/`--repo` on `session store` are optional scope
+metadata that `session load` gates through the exact same `roles.evaluate()` policy engine every
+other reference already uses — a session is exactly as sensitive as a secret value. Unconfigured
+by default (no scope set, or no matching policy = always allowed, same permissive-if-unconfigured
+posture as everything else); only `session load` is gated, `store`/`remove`/`inspect`/`list`
+never are, matching `resolve`'s own gated-fetch-only precedent.
+
+**Bridging to a real Playwright browser context**: `session load`'s printed path holds the *full*
+record (namespace/TTL/rotation/scope alongside the payload), not the bare `storageState` shape —
+one line unwraps it:
+
+```python
+import json
+from playwright.sync_api import sync_playwright
+
+record = json.load(open(path))          # $path from `session load`, above
+storage_state = record["session"]        # the bare Playwright storageState dict
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    context = browser.new_context(storage_state=storage_state)   # or write it back out and pass a path
+```
+
+No separate injection module exists or is needed — `browser.new_context(storage_state=...)`
+already accepts a dict directly (or a path to one written to a file), so this one-line unwrap is
+the entire bridge. Live-verified against a real Chromium context, not a synthetic JSON-shape
+assertion — see `docs/architecture.md` §21.
+
 ### Find, inject, and ask — metadata-tag lookup and boundary injection
 
 References carry structured tags (`provider`/`project`/`env`, plus an open `tags{}` dict)

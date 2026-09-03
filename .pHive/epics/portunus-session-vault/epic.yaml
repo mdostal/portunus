@@ -4,7 +4,7 @@ description: Persist Playwright and login sessions durably as secrets using Arca
 target_codebase: /Users/dostal/.minerva/runs/be0f019c-2c37-495f-9e77-5b0388c13842/workspace
 methodology: tdd
 version_bump: minor
-status: mostly-shipped-elsewhere -- 2 stories genuinely open, need fresh scoping before resuming
+status: fully-shipped-elsewhere -- all 5 stories complete (01/02/04 done-elsewhere per the 2026-08-19 reconciliation; 03/05 shipped 2026-09-02 via .pHive/epics/portunus-session-access-gate/, re-scoped against current code -- see that epic's own docs for what changed from this epic's original (wrong-codebase) planning)
 
 reconciliation_2026_08_19:
   performed_by: backlog-audit during pre-release review pass

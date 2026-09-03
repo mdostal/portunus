@@ -4,6 +4,24 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-09-02
+
+### Added
+
+- **Session-access gate + a corrected Playwright bridge (portunus-session-access-gate).**
+  `Broker.check_session_access()` gates `session load` through the exact `roles.evaluate()` seam
+  `check_injectable()` already uses — a synthetic, in-memory `Reference` (never persisted),
+  confirmed the policy engine is fully duck-typed and needs no new gating mechanism. `session
+  store` gains optional `--org`/`--project`/`--env`/`--repo` scope metadata (additive, backward
+  compatible with existing sessions); only `session load` is gated, matching `check_injectable`'s
+  own fetch-only gating precedent. Re-scopes `portunus-session-vault`'s own Stories 03/05
+  (confirmed unstarted, surfaced by a branch-cleanup audit — GitHub issue #136) against current
+  code rather than resurrecting two years-stale branches as-is. Live-verified against a real
+  Chromium browser context (not a synthetic fixture) — the proof caught and corrected a real
+  documentation error along the way: `session load`'s tempfile holds the full record, not the
+  bare Playwright `storageState` payload; a one-line unwrap bridges it, no new production module
+  needed. See `docs/architecture.md` §21 for the full record, including the correction.
+
 ## [0.31.0] - 2026-09-02
 
 ### Added

@@ -1,7 +1,7 @@
 id: 05-playwright-integration-tests
 epic: portunus-session-vault
 title: Playwright Integration and End-to-End Tests
-status: needs-replanning  # see epic.yaml -> reconciliation: valid, unstarted capability, but this story's file paths target a different (wrong) codebase
+status: shipped-via-portunus-session-access-gate  # see .pHive/epics/portunus-session-access-gate/ Story 02 (2026-09-02) -- real Playwright browser-context proof against `portunus session load`'s existing tempfile output; no separate injection module needed (verified, with one real correction: the tempfile holds the full record, a one-line unwrap bridges it to Playwright's storage_state)
 complexity: high
 methodology: bdd
 depends_on:

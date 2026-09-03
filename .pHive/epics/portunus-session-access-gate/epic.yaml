@@ -20,9 +20,9 @@ stories:
     title: Broker.check_session_access() -- gate `session load` through roles.evaluate(), optional scope metadata on `session store`
     complexity: medium
     depends_on: []
-    status: pending
+    status: shipped
   - id: 02-playwright-proof-and-closeout
     title: real Playwright integration test (importorskip-guarded) + docs, version bump, closeout
     complexity: low
     depends_on: [01-session-access-gate]
-    status: pending
+    status: shipped
