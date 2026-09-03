@@ -671,6 +671,7 @@ def cmd_session_store(args) -> int:
             args.site, args.account, session_obj,
             ttl_seconds=args.ttl_seconds,
             rotation_interval_seconds=args.rotation_interval_seconds,
+            org=args.org, project=args.project, env=args.env, repo=args.repo,
         )
     except ValueError as exc:
         return _err(str(exc))
@@ -692,6 +693,19 @@ def cmd_session_load(args) -> int:
                      "(unset PORTUNUS_BACKEND or set it to unset/local)")
 
     key = backend.session_key(args.site, args.account)
+    try:
+        scope = backend.inspect_session(args.site, args.account).get("scope", {})
+    except BackendError as exc:
+        return _err(str(exc))
+    try:
+        broker.check_session_access(
+            args.site, args.account,
+            org=scope.get("org", ""), project=scope.get("project", ""),
+            env=scope.get("env", ""), repo=scope.get("repo", ""),
+            requester=Identity.from_env(),
+        )
+    except NotAuthorized as exc:
+        return _err(str(exc))
     try:
         record = backend.load_session(args.site, args.account, allow_expired=args.allow_expired)
     except SessionExpired as exc:
@@ -2256,6 +2270,12 @@ def build_parser() -> argparse.ArgumentParser:
     ses_store.add_argument("account")
     ses_store.add_argument("--ttl-seconds", type=int, required=True)
     ses_store.add_argument("--rotation-interval-seconds", type=int, default=None)
+    ses_store.add_argument(
+        "--org", default="", help="scope metadata for the session-access policy gate (optional)",
+    )
+    ses_store.add_argument("--project", default="")
+    ses_store.add_argument("--env", default="")
+    ses_store.add_argument("--repo", default="")
     ses_src = ses_store.add_mutually_exclusive_group(required=True)
     ses_src.add_argument("--stdin", action="store_true", help="read the session JSON from stdin")
     ses_src.add_argument("--value-file", help="read the session JSON from this local file")

@@ -162,12 +162,22 @@ class LocalEncryptedBackend:
         ttl_seconds: int,
         rotation_interval_seconds: Optional[int] = None,
         rotation_generation: int = 1,
+        org: str = "",
+        project: str = "",
+        env: str = "",
+        repo: str = "",
     ) -> Dict[str, Any]:
         """Encrypt and persist a browser/login session with TTL metadata.
 
         ``session`` may be a Playwright-style storageState dict or another
         JSON-serializable session object. The returned inspection view contains
         only namespace and lifecycle metadata, never cookies or token payloads.
+
+        ``org``/``project``/``env``/``repo`` (portunus-session-access-gate) are
+        optional scope metadata -- non-secret, matched against configured
+        policies by Broker.check_session_access() before `session load` may
+        proceed. Additive: an older record with no "scope" key is treated as
+        all-empty scope (never a crash, never a schema version bump).
         """
         ttl_seconds = _positive_int(ttl_seconds, "ttl_seconds")
         rotation_generation = _positive_int(rotation_generation, "rotation_generation")
@@ -195,6 +205,7 @@ class LocalEncryptedBackend:
                 "interval_seconds": rotation_interval_seconds,
                 "rotate_after": _format_time(rotate_after) if rotate_after else None,
             },
+            "scope": {"org": org, "project": project, "env": env, "repo": repo},
             "session": session,
         }
         try:
@@ -351,6 +362,7 @@ def _session_view(record: Dict[str, Any]) -> Dict[str, Any]:
         "namespace": dict(record["namespace"]),
         "ttl": dict(record["ttl"]),
         "rotation": dict(record["rotation"]),
+        "scope": dict(record.get("scope") or {"org": "", "project": "", "env": "", "repo": ""}),
         "expired": _is_expired(record),
     }
 
