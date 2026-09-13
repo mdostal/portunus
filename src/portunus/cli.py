@@ -1177,11 +1177,15 @@ def cmd_discover(args) -> int:
     the local cache for sync_mode=cached projects via _eager_sync_down()."""
     registry, _audit, _broker, resolver = _build()
     account = ""
+    impersonate_service_account = ""
     binding = load_vault_bindings().get(args.project)
     if binding:
         account = binding.account
+        impersonate_service_account = binding.impersonate_service_account
     try:
-        discovered = list_gcp_secrets(args.project, account=account)
+        discovered = list_gcp_secrets(
+            args.project, account=account, impersonate_service_account=impersonate_service_account
+        )
     except DiscoverError as exc:
         return _err(str(exc))
 

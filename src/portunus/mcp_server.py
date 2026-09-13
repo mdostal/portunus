@@ -175,8 +175,16 @@ def portunus_discover(project: str, register: bool = False) -> dict:
     project. Mirrors `portunus discover [--register] --json` exactly -- one
     safety-reviewed implementation, three entry points (CLI, UI, MCP)."""
     registry, _audit, _broker, resolver = _build()
+    account = ""
+    impersonate_service_account = ""
+    binding = load_vault_bindings().get(project)
+    if binding:
+        account = binding.account
+        impersonate_service_account = binding.impersonate_service_account
     try:
-        discovered = list_gcp_secrets(project)
+        discovered = list_gcp_secrets(
+            project, account=account, impersonate_service_account=impersonate_service_account
+        )
     except DiscoverError as exc:
         return {"error": str(exc)}
 

@@ -99,3 +99,20 @@ def test_cmd_discover_no_binding_means_no_account_flag(home, monkeypatch, capsys
     rc = main(["discover", "--provider", "gcp", "--project", "demo"])
     assert rc == 0
     assert not any(arg.startswith("--account=") for arg in seen_cmds[0])
+
+
+def test_cmd_discover_passes_binding_impersonation_to_list_gcp_secrets(home, monkeypatch, capsys):
+    from portunus.backend import VaultBinding, save_vault_bindings
+    save_vault_bindings({
+        "demo": VaultBinding(
+            "demo",
+            account="user@example.com",
+            impersonate_service_account="deployer@demo.iam.gserviceaccount.com",
+        ),
+    })
+    seen_cmds = []
+    _mock_gcloud_list(monkeypatch, [], seen_cmds=seen_cmds)
+    rc = main(["discover", "--provider", "gcp", "--project", "demo"])
+    assert rc == 0
+    assert "--account=user@example.com" in seen_cmds[0]
+    assert "--impersonate-service-account=deployer@demo.iam.gserviceaccount.com" in seen_cmds[0]
