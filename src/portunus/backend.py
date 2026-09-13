@@ -92,11 +92,23 @@ class VaultBinding:
     depending on gcloud's single mutable "active account" pointer. Empty
     means "use whatever gcloud considers active" (today's ambient behavior).
     GCP-specific; ignored by other backend types.
+
+    `impersonate_service_account` is a GCP service account email to pass as
+    `--impersonate-service-account=` alongside `--account=`. Lets a stable,
+    non-reauth-walled identity (e.g. a personal Google account with no org
+    reauth policy) mint short-lived tokens for a project-scoped service
+    account instead of depending on a human Workspace account's session,
+    which can expire and demand an interactive reauth Portunus cannot
+    perform itself. Requires the `account` identity to hold
+    `roles/iam.serviceAccountTokenCreator` on the target service account.
+    Mutually exclusive with a minted WIF token (same as `account`); empty
+    means "no impersonation." GCP-specific; ignored by other backend types.
     """
 
     project: str
     wif_audience: str = ""
     account: str = ""
+    impersonate_service_account: str = ""
     backend: str = "gcp"
     sync_mode: str = "direct"
 
@@ -133,6 +145,7 @@ def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
                 project=proj,
                 wif_audience=cfg.get("wif_audience", ""),
                 account=cfg.get("account", ""),
+                impersonate_service_account=cfg.get("impersonate_service_account", ""),
                 backend=cfg.get("backend", "gcp"),
                 sync_mode=cfg.get("sync_mode", "direct"),
             )
@@ -176,6 +189,7 @@ def save_vault_bindings(
     raw = {
         proj: {
             "wif_audience": b.wif_audience, "account": b.account,
+            "impersonate_service_account": b.impersonate_service_account,
             "backend": b.backend, "sync_mode": b.sync_mode,
         }
         for proj, b in bindings.items()
@@ -246,6 +260,13 @@ class GcloudBackend:
                 # already-locally-authenticated gcloud identity to use,
                 # independent of gcloud's single mutable "active account".
                 cmd.append(f"--account={binding.account}")
+                if binding.impersonate_service_account:
+                    # `account` presents its own credential to mint a
+                    # short-lived token FOR this service account (requires
+                    # roles/iam.serviceAccountTokenCreator on the target) --
+                    # lets a stable, non-reauth-walled identity stand in for
+                    # a human Workspace account whose session can expire.
+                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
             cmd.extend(["secrets", "versions", "access", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
@@ -276,6 +297,8 @@ class GcloudBackend:
                 cmd.append(f"--access-token-file={token_file}")
             elif binding and binding.account:
                 cmd.append(f"--account={binding.account}")
+                if binding.impersonate_service_account:
+                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
             cmd.extend(["secrets", "versions", "describe", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")

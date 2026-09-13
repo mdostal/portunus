@@ -238,6 +238,44 @@ def test_portunus_discover_register(home, monkeypatch):
     assert result["conflicts"] == []
 
 
+def test_portunus_discover_honors_project_binding_account_and_impersonation(home, monkeypatch):
+    """Regression: portunus_discover previously called list_gcp_secrets(project)
+    with NO account/impersonation lookup at all -- silently falling back to
+    gcloud's ambient active account even when the project has a configured
+    VaultBinding. Confirmed live 2026-09-13: a discover call against a
+    project bound to a non-ambient account failed with a permission error
+    naming the WRONG (ambient) identity. cmd_discover (the CLI path) already
+    did this lookup correctly -- this test locks the MCP path to the same
+    behavior."""
+    import json
+    from types import SimpleNamespace
+    from portunus import mcp_server
+    from portunus.backend import VaultBinding, save_vault_bindings
+
+    save_vault_bindings({
+        "demo": VaultBinding(
+            "demo",
+            account="user@example.com",
+            impersonate_service_account="deployer@demo.iam.gserviceaccount.com",
+        ),
+    })
+
+    observed = []
+
+    def fake_run(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout=json.dumps([]), stderr="")
+
+    monkeypatch.setattr("portunus.discover._default_runner", fake_run)
+    monkeypatch.setattr("portunus.discover.shutil.which", lambda name: "/bin/gcloud")
+
+    mcp_server.portunus_discover("demo")
+
+    assert observed, "list_gcp_secrets never actually invoked gcloud"
+    assert "--account=user@example.com" in observed[0]
+    assert "--impersonate-service-account=deployer@demo.iam.gserviceaccount.com" in observed[0]
+
+
 def test_portunus_discover_no_backend_access():
     from portunus import mcp_server
     code = _no_backend_access(mcp_server.portunus_discover)
