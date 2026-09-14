@@ -1299,7 +1299,12 @@ def cmd_rotation_bindings_show(args) -> int:
         print("(no rotation bindings configured)")
         return 0
     for provider, b in sorted(bindings.items()):
-        print(f"  {provider}  status={b.status}  account={b.account or '-'}")
+        status_str = (
+            f"{b.status} [no programmatic rotation -- human re-issue required]"
+            if b.status == "manual"
+            else b.status
+        )
+        print(f"  {provider}  status={status_str}  account={b.account or '-'}")
     return 0
 
 
@@ -2545,8 +2550,9 @@ def build_parser() -> argparse.ArgumentParser:
     rbnd_sub = rbnd.add_subparsers(dest="action", required=True)
     rbnd_set = rbnd_sub.add_parser("set", help="upsert a provider's rotation binding -- only passed fields change")
     rbnd_set.add_argument("provider", help="e.g. gcp, vercel, github, stripe")
-    rbnd_set.add_argument("--status", choices=("", "real", "stub"), default="",
-                           help="whether a real RotationAdapter exists for this provider (default: stub)")
+    rbnd_set.add_argument("--status", choices=("", "real", "stub", "manual"), default="",
+                           help="rotation capability: 'real'=auto adapter, 'stub'=not built yet, "
+                                "'manual'=no programmatic path exists (human re-issue required)")
     rbnd_set.add_argument("--account", default="",
                            help="free-text rotation context, e.g. a service account email or GitHub org")
     rbnd_set.set_defaults(func=cmd_rotation_bindings_set)

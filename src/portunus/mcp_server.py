@@ -33,7 +33,7 @@ from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, re
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
-from .rotation import load_rotation_bindings
+from .rotation import load_rotation_bindings, rotation_adapter_for
 
 mcp = FastMCP("portunus")
 
@@ -162,7 +162,12 @@ def portunus_rotation_status(provider: str = "") -> dict:
         if binding is None:
             return {}
         bindings = {provider: binding}
-    return {p: {"status": b.status, "account": b.account} for p, b in bindings.items()}
+    result = {}
+    for p, b in bindings.items():
+        adapter = rotation_adapter_for(p)
+        capability = adapter.capability() if adapter is not None else "unknown"
+        result[p] = {"status": b.status, "account": b.account, "capability": capability}
+    return result
 
 
 @mcp.tool()

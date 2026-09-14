@@ -68,10 +68,13 @@ class RotationResult:
 
     provider: str
     ref_name: str
+    # Identifier of the newly-created credential version -- never the value,
+    # only an ID the provider assigns (e.g. a GCP key ID, an API key ID).
+    key_id: str = ""
     # Phase reached: "refreshed" for OAuth (access token minted, any rotated
     # refresh token persisted back). Future adapters may use "created" /
     # "verified" / "retired".
-    phase: str
+    phase: str = ""
     retired_old: bool = False
     timestamp: int = field(default_factory=lambda: int(time.time()))
 
@@ -133,6 +136,9 @@ class OAuthRefreshRotationAdapter:
     persist. Any additional stored OAuth credential is served through the
     same adapter instance with no new per-provider job.
     """
+
+    def capability(self) -> str:
+        return "auto"
 
     def __init__(self, local_backend=None, audit=None, transport=None):
         self._local_backend = local_backend
@@ -425,7 +431,10 @@ class VercelRotationAdapter:
     normal boundary-only sinks.
     """
 
-    def rotate(self, ref, resolver=None) -> None:
+    def capability(self) -> str:
+        return "unknown"
+
+    def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
         raise RotationAdapterError(
             f"Vercel rotation is not yet implemented -- request it: {_ADAPTER_REQUEST_URL}"
         )
@@ -434,7 +443,10 @@ class VercelRotationAdapter:
 class GitHubRotationAdapter:
     """GitHub -- STUB. No real calls."""
 
-    def rotate(self, ref, resolver=None) -> None:
+    def capability(self) -> str:
+        return "unknown"
+
+    def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
         raise RotationAdapterError(
             f"GitHub rotation is not yet implemented -- request it: {_ADAPTER_REQUEST_URL}"
         )
@@ -443,7 +455,10 @@ class GitHubRotationAdapter:
 class StripeRotationAdapter:
     """Stripe -- STUB. No real calls."""
 
-    def rotate(self, ref, resolver=None) -> None:
+    def capability(self) -> str:
+        return "unknown"
+
+    def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
         raise RotationAdapterError(
             f"Stripe rotation is not yet implemented -- request it: {_ADAPTER_REQUEST_URL}"
         )
@@ -463,6 +478,18 @@ def rotation_adapter_for(provider: str):
     no adapter (real or stub) is registered for it yet."""
     adapter_cls = _ADAPTERS.get(provider)
     return adapter_cls() if adapter_cls else None
+
+
+def audit_rotate(audit, ref_name: str, result: str) -> dict:
+    """Append a 'rotate' audit entry.
+
+    result encodes the phase reached: ``ok:created`` / ``ok:verified`` /
+    ``ok:retired`` / ``warn:verify-failed`` / ``err:<reason>``. Always call
+    this even for failures -- a half-rotated credential is exactly the state
+    a human needs the trail for. ``AuditChain.verify()`` is unaffected: the
+    action field is free-form and the hash chain covers it byte-for-byte.
+    """
+    return audit.append("rotate", ref_name, result)
 
 
 def run_periodic_oauth_refresh(

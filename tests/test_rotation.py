@@ -6,6 +6,7 @@ matching every ARCA stub backend's own restraint (never a real API call)."""
 import dataclasses
 import pytest
 
+from portunus.audit import AuditChain
 from portunus.rotation import (
     OAuthRefreshRotationAdapter,
     RotationAdapterError,
@@ -14,6 +15,7 @@ from portunus.rotation import (
     VercelRotationAdapter,
     GitHubRotationAdapter,
     StripeRotationAdapter,
+    audit_rotate,
     load_rotation_bindings,
     rotation_adapter_for,
     run_periodic_oauth_refresh,
@@ -229,3 +231,72 @@ def test_periodic_refresh_drives_all_stored_credentials(home):
 def test_periodic_refresh_empty_vault_returns_empty_list(home):
     results = run_periodic_oauth_refresh()
     assert results == []
+
+
+# --- PANT-158: "manual" status, RotationAdapter protocol, audit_rotate -------
+
+
+def test_rotation_binding_manual_status_round_trips(home):
+    """'manual' survives save/load unchanged."""
+    save_rotation_bindings({
+        "linear": RotationBinding(provider="linear", status="manual", account=""),
+    })
+    reloaded = load_rotation_bindings()
+    assert reloaded["linear"].status == "manual"
+
+
+def test_rotation_result_field_set_includes_key_id():
+    """key_id is present -- an identifier, never credential material."""
+    field_names = {f.name for f in dataclasses.fields(RotationResult)}
+    assert "key_id" in field_names
+
+
+@pytest.mark.parametrize("adapter_cls", [
+    VercelRotationAdapter,
+    GitHubRotationAdapter,
+    StripeRotationAdapter,
+])
+def test_stub_adapters_capability_returns_unknown(adapter_cls):
+    assert adapter_cls().capability() == "unknown"
+
+
+def test_oauth_adapter_capability_returns_auto():
+    assert OAuthRefreshRotationAdapter().capability() == "auto"
+
+
+@pytest.mark.parametrize("adapter_cls", [
+    VercelRotationAdapter,
+    GitHubRotationAdapter,
+    StripeRotationAdapter,
+])
+def test_stub_adapters_rotate_accepts_retire_old_kwarg(adapter_cls):
+    """retire_old=False must be accepted without TypeError -- existing tests
+    still verify that rotate() raises RotationAdapterError."""
+    adapter = adapter_cls()
+    with pytest.raises(RotationAdapterError):
+        adapter.rotate(ref=None, retire_old=False)
+
+
+def test_audit_rotate_ok_appends_rotate_action(home):
+    audit = AuditChain()
+    audit_rotate(audit, "my-ref", "ok:created")
+    entries = audit.entries()
+    assert len(entries) == 1
+    assert entries[0]["action"] == "rotate"
+    assert entries[0]["secret"] == "my-ref"
+    assert entries[0]["result"] == "ok:created"
+
+
+def test_audit_rotate_error_appends_err_result(home):
+    audit = AuditChain()
+    audit_rotate(audit, "my-ref", "err:backend-timeout")
+    entries = audit.entries()
+    assert entries[0]["result"].startswith("err:")
+
+
+def test_audit_verify_intact_after_rotate_entries(home):
+    audit = AuditChain()
+    audit_rotate(audit, "ref-a", "ok:created")
+    audit_rotate(audit, "ref-a", "warn:verify-failed")
+    audit_rotate(audit, "ref-a", "ok:retired")
+    assert audit.verify() is True
