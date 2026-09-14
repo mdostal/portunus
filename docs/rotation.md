@@ -31,7 +31,7 @@ new one).
 | `github` | Personal access token / app token | stub | Not yet implemented. |
 | `stripe` | API key | stub | Not yet implemented. |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
-| `gcp` (service-account key) | Service account JSON key | **manual** | GCP SA keys support IAM-API rotation (`create → verify → disable → delete`), but Portunus does not yet have a `GCPServiceAccountKeyAdapter`. Human re-issue via `gcloud iam service-accounts keys create`. |
+| `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 
 > **Capability vocabulary:**
 > - `auto` — a programmatic rotation path exists and Portunus has a real adapter for this credential type.
@@ -76,16 +76,16 @@ programmatic rotation endpoint. If you store a Linear personal API key in Portun
 2. Re-store it: `portunus drop <name> <sm_name> --backend local` (or via the UI).
 3. Revoke the old key in Linear settings.
 
-### GCP service-account keys (static JSON)
+### GCP service-account keys -- now auto
 
-GCP service-account key files support IAM-API rotation (create new version → verify → disable old → delete old),
-but Portunus does not yet have a `GCPServiceAccountKeyAdapter`. If you must use a static SA key
-(prefer Workload Identity Federation where possible — WIF credentials require no rotation):
+GCP service-account key rotation is now handled by `GCPServiceAccountKeyRotationAdapter`
+via `portunus rotation run <ref-name> [--retire-old]`. The reference must have:
 
-1. `gcloud iam service-accounts keys create <new-key.json> --iam-account=<sa@project.iam.gserviceaccount.com>`
-2. Verify the new key works before revoking the old one.
-3. `gcloud iam service-accounts keys delete <old-key-id> --iam-account=<sa@project.iam.gserviceaccount.com>`
-4. Update the stored secret via `portunus drop`.
+- `provider=gcp` in its registry entry
+- `tags["iam_account"]` set to the full service account email
+  (e.g. `sa@project.iam.gserviceaccount.com`)
+
+Prefer Workload Identity Federation where possible -- WIF credentials require no rotation.
 
 ---
 

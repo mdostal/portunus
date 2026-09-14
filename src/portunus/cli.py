@@ -1303,6 +1303,62 @@ def cmd_rotation_bindings_show(args) -> int:
     return 0
 
 
+def cmd_rotation_run(args) -> int:
+    """Run a real rotation for a single reference.
+
+    Looks up the reference by name, resolves its provider's rotation adapter,
+    and drives it through the full create→verify→store cycle. With
+    ``--retire-old`` the superseded key is also DISABLED (never deleted --
+    deletion requires a separate grace-period sweep). Only the key
+    identifier is reported; no credential material ever reaches stdout.
+    """
+    from .rotation import rotation_adapter_for, RotationAdapterError
+
+    registry, audit, broker, resolver = _build()
+    ref = registry.get(args.ref_name)
+    if ref is None:
+        _err(f"no reference {args.ref_name!r} in registry")
+        return 1
+
+    provider = ref.provider or (ref.sm_name.split(":")[0] if ":" in ref.sm_name else "")
+    if not provider:
+        _err(
+            f"reference {args.ref_name!r} has no provider set -- "
+            "set it with `portunus reg add --provider gcp ...`"
+        )
+        return 1
+
+    adapter = rotation_adapter_for(provider)
+    if adapter is None:
+        _err(
+            f"no rotation adapter registered for provider {provider!r} -- "
+            "check `portunus rotation-bindings show`"
+        )
+        return 1
+
+    cap = getattr(adapter, "capability", lambda: "stub")()
+    if cap != "auto":
+        _err(
+            f"rotation adapter for {provider!r} is a stub (capability={cap!r}) -- "
+            "no real rotation is possible; see docs/rotation.md"
+        )
+        return 1
+
+    try:
+        result = adapter.rotate(ref, resolver=resolver, retire_old=args.retire_old)
+    except RotationAdapterError as exc:
+        _err(str(exc))
+        audit.append("rotate", ref.sm_name, "error")
+        return 1
+
+    print(
+        f"rotated {result.ref_name}  "
+        f"provider={result.provider}  phase={result.phase}  "
+        f"retired_old={result.retired_old}"
+    )
+    return 0
+
+
 def cmd_bindings_show(args) -> int:
     """Show one or all vault bindings -- real account/wif_audience values,
     not presence-only. A local CLI reading the operator's own 0600
@@ -2464,18 +2520,35 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_show.add_argument("--json", action="store_true")
     bnd_show.set_defaults(func=cmd_bindings_show)
 
+    rot_run = sub.add_parser(
+        "rotation",
+        help="run a real credential rotation for a registry reference",
+    )
+    rot_sub = rot_run.add_subparsers(dest="rotation_action", required=True)
+    rot_run_cmd = rot_sub.add_parser(
+        "run",
+        help="rotate a reference's credential (create→verify→store; disable old with --retire-old)",
+    )
+    rot_run_cmd.add_argument("ref_name", help="reference name in the registry (e.g. ffe-cicd-sa-key)")
+    rot_run_cmd.add_argument(
+        "--retire-old",
+        action="store_true",
+        default=False,
+        help="disable the superseded credential after storing the new one (never deletes in the same call)",
+    )
+    rot_run_cmd.set_defaults(func=cmd_rotation_run)
+
     rbnd = sub.add_parser(
         "rotation-bindings",
-        help="configure per-provider rotation provenance (status/account) -- "
-             "every provider is a stub today, this is config only, no real rotation ever fires",
+        help="configure per-provider rotation provenance (status/account)",
     )
     rbnd_sub = rbnd.add_subparsers(dest="action", required=True)
     rbnd_set = rbnd_sub.add_parser("set", help="upsert a provider's rotation binding -- only passed fields change")
-    rbnd_set.add_argument("provider", help="e.g. vercel, github, stripe")
+    rbnd_set.add_argument("provider", help="e.g. gcp, vercel, github, stripe")
     rbnd_set.add_argument("--status", choices=("", "real", "stub"), default="",
                            help="whether a real RotationAdapter exists for this provider (default: stub)")
     rbnd_set.add_argument("--account", default="",
-                           help="free-text rotation context, e.g. a Vercel team slug or GitHub org")
+                           help="free-text rotation context, e.g. a service account email or GitHub org")
     rbnd_set.set_defaults(func=cmd_rotation_bindings_set)
     rbnd_show = rbnd_sub.add_parser("show", help="show one or all rotation bindings")
     rbnd_show.add_argument("provider", nargs="?", default="")
