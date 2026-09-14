@@ -953,28 +953,28 @@ the audit chain.</p>
     accTitle: Portunus component diagram
     accDescr: Three OSTIARIUS entry points funnel into one Resolver/Broker implementation, which asks Petitio before ARCA ever returns a value, with the audit chain recording every decision.
 
-    CLI[&quot;portunus CLI&lt;br/&gt;(cli.py)&quot;]
-    UIRoutes[&quot;UI API routes&lt;br/&gt;(ui/app/api/*/route.ts)&quot;]
-    MCP[&quot;MCP server&lt;br/&gt;(mcp_server.py, portunus mcp)&quot;]
+    CLI["portunus CLI&lt;br/&gt;(cli.py)"]
+    UIRoutes["UI API routes&lt;br/&gt;(ui/app/api/*/route.ts)"]
+    MCP["MCP server&lt;br/&gt;(mcp_server.py, portunus mcp)"]
 
-    subgraph OSTIARIUS[&quot;OSTIARIUS — the gatekeeper API (one implementation, three entry points)&quot;]
-        Resolver[&quot;Resolver&lt;br/&gt;(resolver.py)&quot;]
+    subgraph OSTIARIUS["OSTIARIUS — the gatekeeper API (one implementation, three entry points)"]
+        Resolver["Resolver&lt;br/&gt;(resolver.py)"]
     end
 
-    subgraph Petitio[&quot;Petitio — the approval-gate wrapper&quot;]
-        Broker[&quot;Broker.check_injectable()&lt;br/&gt;(broker.py)&lt;br/&gt;lifecycle guard + approval gate&lt;br/&gt;+ Identity/requester policy check (opt-in enforcement, §3)&quot;]
+    subgraph Petitio["Petitio — the approval-gate wrapper"]
+        Broker["Broker.check_injectable()&lt;br/&gt;(broker.py)&lt;br/&gt;lifecycle guard + approval gate&lt;br/&gt;+ Identity/requester policy check (opt-in enforcement, §3)"]
     end
 
-    subgraph ARCA[&quot;ARCA — the vault store (per-reference/per-project router)&quot;]
-        Router[&quot;backend router&lt;br/&gt;(_make_backend_router)&quot;]
-        Real[&quot;Real backends&lt;br/&gt;Local · GCP (+ sync-down cache)&quot;]
-        Stub[&quot;Honest stubs&lt;br/&gt;AWS · Vault · Infisical · Doppler · 1Password · Azure&quot;]
+    subgraph ARCA["ARCA — the vault store (per-reference/per-project router)"]
+        Router["backend router&lt;br/&gt;(_make_backend_router)"]
+        Real["Real backends&lt;br/&gt;Local · GCP (+ sync-down cache)"]
+        Stub["Honest stubs&lt;br/&gt;AWS · Vault · Infisical · Doppler · 1Password · Azure"]
     end
 
-    Audit[(&quot;Audit chain&lt;br/&gt;(audit.py)&lt;br/&gt;tamper-evident hash chain&quot;)]
+    Audit[("Audit chain&lt;br/&gt;(audit.py)&lt;br/&gt;tamper-evident hash chain")]
 
     CLI --&gt; Resolver
-    UIRoutes --&gt;|&quot;shells out to the CLI&quot;| CLI
+    UIRoutes --&gt;|"shells out to the CLI"| CLI
     MCP --&gt; Resolver
 
     Resolver --&gt; Broker
@@ -990,17 +990,17 @@ the audit chain.</p>
 <code>PORTUNUS_BACKEND</code> choice for the whole process. Three levels, checked in order:</p>
 <div class="highlight"><pre><span></span><code>graph TD
     accTitle: ARCA backend-selection precedence
-    accDescr: A reference&#39;s backend is resolved by checking its own override first, then its project&#39;s VaultBinding, then falling back to the global PORTUNUS_BACKEND-selected backend.
+    accDescr: A reference's backend is resolved by checking its own override first, then its project's VaultBinding, then falling back to the global PORTUNUS_BACKEND-selected backend.
 
-    Start([&quot;Resolving a Reference&quot;]) --&gt; RefBackend{&quot;ref.backend set?&quot;}
-    RefBackend --&gt;|yes| UseRefBackend[&quot;Use that backend directly&lt;br/&gt;(local / gcp / aws / vault / infisical / doppler / onepassword / azure)&quot;]
-    RefBackend --&gt;|no, empty| ProjectBinding{&quot;VaultBinding for&lt;br/&gt;ref.project exists?&quot;}
-    ProjectBinding --&gt;|yes| CheckSyncMode{&quot;binding.backend == gcp&lt;br/&gt;AND sync_mode == cached?&quot;}
-    CheckSyncMode --&gt;|yes| SyncingBackend[&quot;SyncingBackend&lt;br/&gt;(GcloudBackend + LocalEncryptedBackend,&lt;br/&gt;offline-resilient)&quot;]
-    CheckSyncMode --&gt;|no| UseBindingBackend[&quot;Use binding.backend directly&quot;]
-    ProjectBinding --&gt;|no| GlobalFallback[&quot;Global fallback:&lt;br/&gt;today&#39;s PORTUNUS_BACKEND env var&lt;br/&gt;(local / gcloud / aws / mock)&quot;]
+    Start(["Resolving a Reference"]) --&gt; RefBackend{"ref.backend set?"}
+    RefBackend --&gt;|yes| UseRefBackend["Use that backend directly&lt;br/&gt;(local / gcp / aws / vault / infisical / doppler / onepassword / azure)"]
+    RefBackend --&gt;|no, empty| ProjectBinding{"VaultBinding for&lt;br/&gt;ref.project exists?"}
+    ProjectBinding --&gt;|yes| CheckSyncMode{"binding.backend == gcp&lt;br/&gt;AND sync_mode == cached?"}
+    CheckSyncMode --&gt;|yes| SyncingBackend["SyncingBackend&lt;br/&gt;(GcloudBackend + LocalEncryptedBackend,&lt;br/&gt;offline-resilient)"]
+    CheckSyncMode --&gt;|no| UseBindingBackend["Use binding.backend directly"]
+    ProjectBinding --&gt;|no| GlobalFallback["Global fallback:&lt;br/&gt;today's PORTUNUS_BACKEND env var&lt;br/&gt;(local / gcloud / aws / mock)"]
 
-    UseRefBackend --&gt; Resolve([&quot;backend.access(sm_name, project)&quot;])
+    UseRefBackend --&gt; Resolve(["backend.access(sm_name, project)"])
     UseBindingBackend --&gt; Resolve
     SyncingBackend --&gt; Resolve
     GlobalFallback --&gt; Resolve
@@ -1028,21 +1028,21 @@ explicitly run for that vault. Default: off. Even with enforcement globally on, 
 zero configured policies always stays fully open -- enforcement only ever narrows behavior for
 a scope that has at least one policy record, for a principal not named there.</p>
 <div class="highlight"><pre><span></span><code>graph TD
-    accTitle: Petitio&#39;s real access-control flow
+    accTitle: Petitio's real access-control flow
     accDescr: check_injectable checks lifecycle state and approval first, same as always, then evaluates a policy decision that is always audited but only enforced (raised) when the opt-in enforcement flag is on.
 
-    T1[&quot;check_injectable(name, requester)&quot;] --&gt; T2{&quot;lifecycle state&lt;br/&gt;enabled/locked?&quot;}
-    T2 --&gt;|no| T3[&quot;NotInjectable&lt;br/&gt;(fail closed)&quot;]
-    T2 --&gt;|yes| T4{&quot;approval gate&lt;br/&gt;required?&quot;}
-    T4 --&gt;|yes, no valid approval| T5[&quot;ApprovalRequired&quot;]
-    T4 --&gt;|no, or valid approval| T6{&quot;requester given?&quot;}
-    T6 --&gt;|no| T10[&quot;Allowed&lt;br/&gt;(nothing to evaluate)&quot;]
-    T6 --&gt;|yes| T7[&quot;roles.evaluate(policies, requester, ref)&lt;br/&gt;the ONE seam for all scope/precedence logic&quot;]
-    T7 --&gt; T8{&quot;decision.allow?&quot;}
-    T8 --&gt;|yes| T9A[&quot;Audit: would-allow:&amp;lt;reason&amp;gt;&lt;br/&gt;Allowed&quot;]
-    T8 --&gt;|no| T9B{&quot;roles.enforcement_is_on()?&quot;}
-    T9B --&gt;|off, the default| T9C[&quot;Audit: would-deny:&amp;lt;reason&amp;gt;&lt;br/&gt;Allowed anyway&quot;]
-    T9B --&gt;|on, opt-in| T9D[&quot;Audit: would-deny:&amp;lt;reason&amp;gt;&lt;br/&gt;NotAuthorized (fail closed)&quot;]
+    T1["check_injectable(name, requester)"] --&gt; T2{"lifecycle state&lt;br/&gt;enabled/locked?"}
+    T2 --&gt;|no| T3["NotInjectable&lt;br/&gt;(fail closed)"]
+    T2 --&gt;|yes| T4{"approval gate&lt;br/&gt;required?"}
+    T4 --&gt;|yes, no valid approval| T5["ApprovalRequired"]
+    T4 --&gt;|no, or valid approval| T6{"requester given?"}
+    T6 --&gt;|no| T10["Allowed&lt;br/&gt;(nothing to evaluate)"]
+    T6 --&gt;|yes| T7["roles.evaluate(policies, requester, ref)&lt;br/&gt;the ONE seam for all scope/precedence logic"]
+    T7 --&gt; T8{"decision.allow?"}
+    T8 --&gt;|yes| T9A["Audit: would-allow:&amp;lt;reason&amp;gt;&lt;br/&gt;Allowed"]
+    T8 --&gt;|no| T9B{"roles.enforcement_is_on()?"}
+    T9B --&gt;|off, the default| T9C["Audit: would-deny:&amp;lt;reason&amp;gt;&lt;br/&gt;Allowed anyway"]
+    T9B --&gt;|on, opt-in| T9D["Audit: would-deny:&amp;lt;reason&amp;gt;&lt;br/&gt;NotAuthorized (fail closed)"]
 </code></pre></div>
 <p><strong>Precedence today, a deliberate v1 choice:</strong> a flat OR across every matching <code>PolicyRecord</code> --
 any one matching, allowing policy is sufficient (no most-specific-wins narrowing yet). This is
@@ -1107,18 +1107,18 @@ every provider is <code>status="stub"</code>.</strong> This section documents th
 overstate what's built; treat every "would" below as aspirational, not shipped.</p>
 <div class="highlight"><pre><span></span><code>graph TD
     accTitle: Rotation provenance -- config today, real integration later
-    accDescr: RotationBinding records which provider and what account context; RotationAdapter is a stub registry today. A future real adapter fetches its own admin credential via Portunus&#39;s own resolver, never a special-cased credential path.
+    accDescr: RotationBinding records which provider and what account context; RotationAdapter is a stub registry today. A future real adapter fetches its own admin credential via Portunus's own resolver, never a special-cased credential path.
 
-    RB[&quot;RotationBinding&lt;br/&gt;(provider, status: real|stub, account)&lt;br/&gt;PORTUNUS_HOME/rotation-bindings.json&quot;]
-    Registry[&quot;RotationAdapter registry&lt;br/&gt;Vercel (priority target) · GitHub · Stripe&quot;]
-    Button[&quot;DetailDrawer &#39;Auto-rotate…&#39; button&lt;br/&gt;enabled only if status==real&quot;]
+    RB["RotationBinding&lt;br/&gt;(provider, status: real|stub, account)&lt;br/&gt;PORTUNUS_HOME/rotation-bindings.json"]
+    Registry["RotationAdapter registry&lt;br/&gt;Vercel (priority target) · GitHub · Stripe"]
+    Button["DetailDrawer 'Auto-rotate…' button&lt;br/&gt;enabled only if status==real"]
 
     RB --&gt;|drives| Button
-    Registry --&gt;|every adapter today| Stub[&quot;raises RotationAdapterError&lt;br/&gt;(no real API call, ever)&quot;]
+    Registry --&gt;|every adapter today| Stub["raises RotationAdapterError&lt;br/&gt;(no real API call, ever)"]
 
-    subgraph Future[&quot;Once a real adapter ships (none do yet)&quot;]
-        Real[&quot;VercelRotationAdapter.rotate(ref)&quot;] --&gt;|resolves its OWN admin token via| SelfResolve[&quot;resolver.resolve_call(&lt;br/&gt;&#39;{{secret:portunus-admin-vercel-token}}&#39;, boundary=...)&quot;]
-        SelfResolve --&gt;|same boundary-only sink&lt;br/&gt;every other value uses| ProviderAPI[&quot;Provider&#39;s rotate API&quot;]
+    subgraph Future["Once a real adapter ships (none do yet)"]
+        Real["VercelRotationAdapter.rotate(ref)"] --&gt;|resolves its OWN admin token via| SelfResolve["resolver.resolve_call(&lt;br/&gt;'{{secret:portunus-admin-vercel-token}}', boundary=...)"]
+        SelfResolve --&gt;|same boundary-only sink&lt;br/&gt;every other value uses| ProviderAPI["Provider's rotate API"]
     end
 
     Registry -.-&gt;|becomes, once real| Real
