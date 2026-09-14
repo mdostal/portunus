@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://mdostal.github.io/portunus/provider-rotation-matrix/">
+        <link rel="canonical" href="https://mdostal.github.io/portunus/docs/provider-rotation-matrix/">
       
       
         <link rel="prev" href="../architecture/">
@@ -1256,7 +1256,7 @@ gcloud<span class="w"> </span>iam<span class="w"> </span>service-accounts<span c
 <p><strong>Source</strong>: https://cloud.google.com/api-keys/docs/manage-api-keys</p>
 <p><strong>Concrete call sequence</strong>:</p>
 <div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a new API key (with the same API restrictions as the old one)</span>
-gcloud<span class="w"> </span>services<span class="w"> </span>api-keys<span class="w"> </span>create<span class="w"> </span>--display-name<span class="o">=</span><span class="s2">"replacement"</span><span class="w"> </span><span class="se">\</span>
+gcloud<span class="w"> </span>services<span class="w"> </span>api-keys<span class="w"> </span>create<span class="w"> </span>--display-name<span class="o">=</span><span class="s2">&quot;replacement&quot;</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--api-target<span class="o">=</span><span class="nv">service</span><span class="o">=</span>&lt;SERVICE&gt;.googleapis.com
 <span class="c1"># REST: POST https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys</span>
 
@@ -1279,7 +1279,7 @@ gcloud<span class="w"> </span>services<span class="w"> </span>api-keys<span clas
 <div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a new key</span>
 POST<span class="w"> </span>https://api.resend.com/api-keys
 Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing-admin-key&gt;
-Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement"</span>,<span class="w"> </span><span class="s2">"permission"</span>:<span class="w"> </span><span class="s2">"full_access"</span><span class="o">}</span>
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;replacement&quot;</span>,<span class="w"> </span><span class="s2">&quot;permission&quot;</span>:<span class="w"> </span><span class="s2">&quot;full_access&quot;</span><span class="o">}</span>
 <span class="c1"># returns new key value</span>
 
 <span class="c1"># 2. Store the new key in ARCA</span>
@@ -1299,7 +1299,7 @@ Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing
 <div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a replacement token</span>
 POST<span class="w"> </span>https://api.vercel.com/v3/user/tokens
 Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-token&gt;
-Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement-deploy-token"</span><span class="o">}</span>
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;replacement-deploy-token&quot;</span><span class="o">}</span>
 
 <span class="c1"># 2. Store new token in ARCA</span>
 
@@ -1336,7 +1336,7 @@ Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-to
 <div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a replacement token</span>
 POST<span class="w"> </span>&lt;hub-base-url&gt;/api/rest/users/me/tokens
 Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing-token&gt;
-Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement"</span>,<span class="w"> </span><span class="s2">"scope"</span>:<span class="w"> </span><span class="o">[</span>...<span class="o">]}</span>
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;replacement&quot;</span>,<span class="w"> </span><span class="s2">&quot;scope&quot;</span>:<span class="w"> </span><span class="o">[</span>...<span class="o">]}</span>
 
 <span class="c1"># 2. Store new token in ARCA</span>
 
@@ -1355,7 +1355,7 @@ Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing
 <div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a replacement token under the same access policy</span>
 POST<span class="w"> </span>https://grafana.com/api/v1/orgs/<span class="o">{</span>orgSlug<span class="o">}</span>/access-policies/<span class="o">{</span>policyId<span class="o">}</span>/tokens
 Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-token&gt;
-Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement"</span><span class="o">}</span>
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;replacement&quot;</span><span class="o">}</span>
 
 <span class="c1"># 2. Store new token in ARCA</span>
 

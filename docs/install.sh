@@ -3,9 +3,17 @@
 #
 #   curl -fsSL https://mdostal.github.io/portunus/install.sh | bash
 #
-# This is the CANONICAL copy -- it lives in the repo at scripts/install.sh and
-# gets published as-is to the gh-pages site root. If you're editing the
-# published copy directly, edit here instead and re-publish.
+# NOT the canonical copy -- that's scripts/install.sh. This is a duplicate,
+# kept here on purpose: mkdocs's own build copies every non-.md file under
+# docs_dir straight through to the deployed site root verbatim, so this file
+# survives every `mkdocs gh-deploy` (which otherwise force-replaces the whole
+# gh-pages branch -- see docs/index.md and GitHub issue #139 for why that
+# branch is mkdocs-managed now). A prior version of this file lived directly
+# on gh-pages, published by a one-off manual push; that copy was wiped by the
+# first mkdocs deploy since nothing there knew it needed to survive.
+#
+# Edit scripts/install.sh first, then copy the change here too -- these two
+# files must stay identical (enforced by tests/test_install_sh_in_sync.py).
 #
 # Installs the CLI + MCP server, then wires it into whatever AI coding agent
 # CLIs are already on this machine (Claude Code, Codex CLI today) --

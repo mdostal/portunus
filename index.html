@@ -1,579 +1,310 @@
-
 <!doctype html>
-<html lang="en" class="no-js">
-  <head>
-    
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width,initial-scale=1">
-      
-        <meta name="description" content="A standalone, boundary-only secret broker — reference a secret by name; the value is injected only at the execution boundary, never inside an LLM or agent context.">
-      
-      
-      
-        <link rel="canonical" href="https://mdostal.github.io/portunus/">
-      
-      
-      
-        <link rel="next" href="architecture/">
-      
-      
-        
-      
-      
-      <link rel="icon" href="assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
-    
-    
-      
-        <title>Portunus</title>
-      
-    
-    
-      <link rel="stylesheet" href="assets/stylesheets/main.ec1eaa64.min.css">
-      
-        
-        <link rel="stylesheet" href="assets/stylesheets/palette.ab4e12ef.min.css">
-      
-      
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portunus — a secret broker that never lets an LLM see the secret</title>
+<meta name="description" content="Portunus is a standalone, boundary-only secret broker. Reference a secret by name; the value is injected only at the execution boundary — never inside an LLM or agent context. Free and open source." />
+<link rel="icon" href="assets/favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="icon" href="assets/favicon-16.png" sizes="16x16" type="image/png" />
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+<meta property="og:title" content="Portunus" />
+<meta property="og:description" content="A secret broker that finds secrets by metadata and injects them — without them ever touching your LLM. Free & open source." />
+<meta property="og:image" content="assets/hero-key.png" />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #f4eee0;
+    --bg-raised: #ffffff;
+    --ink: #241f1a;
+    --ink-muted: #6b6156;
+    --border: #ddd2bd;
+    --accent: #9c7a2e;
+    --accent-strong: #7c5f22;
+    --accent-soft: #efe0bd;
+    --code-bg: #ece3cf;
+    --shadow: 0 1px 2px rgba(36,31,26,0.06), 0 8px 24px rgba(36,31,26,0.06);
+  }
 
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14120f;
+      --bg-raised: #1c1916;
+      --ink: #ede8e0;
+      --ink-muted: #9c9284;
+      --border: #2e2a24;
+      --accent: #cb9b4c;
+      --accent-strong: #e6bd6c;
+      --accent-soft: #2a2318;
+      --code-bg: #100e0c;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 12px 32px rgba(0,0,0,0.35);
+    }
+  }
 
-    
-    
-      
-    
-    
-      
-        
-        
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
-        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
-      
-    
-    
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
-    
-      
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
 
-    
-    
-  </head>
-  
-  
-    
-    
-      
-    
-    
-    
-    
-    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="orange">
-  
-    
-    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
-    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
-    <label class="md-overlay" for="__drawer"></label>
-    <div data-md-component="skip">
-      
-        
-        <a href="#portunus" class="md-skip">
-          Skip to content
-        </a>
-      
-    </div>
-    <div data-md-component="announce">
-      
-    </div>
-    
-    
-      
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+  }
 
-  
+  .display {
+    font-family: "Cinzel", "Cormorant Garamond", Georgia, serif;
+    letter-spacing: 0.02em;
+    text-wrap: balance;
+  }
 
-<header class="md-header md-header--shadow" data-md-component="header">
-  <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="Portunus" class="md-header__button md-logo" aria-label="Portunus" data-md-component="logo">
-      
-  
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+  a { color: var(--accent-strong); }
+  @media (prefers-color-scheme: dark) { a { color: var(--accent); } }
 
-    </a>
-    <label class="md-header__button md-icon" for="__drawer">
-      
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
-    </label>
-    <div class="md-header__title" data-md-component="header-title">
-      <div class="md-header__ellipsis">
-        <div class="md-header__topic">
-          <span class="md-ellipsis">
-            Portunus
-          </span>
-        </div>
-        <div class="md-header__topic" data-md-component="header-topic">
-          <span class="md-ellipsis">
-            
-              Portunus
-            
-          </span>
-        </div>
-      </div>
-    </div>
-    
-      
-        <form class="md-header__option" data-md-component="palette">
-  
-    
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
-    
-      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
-      </label>
-    
-  
-    
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
-    
-      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
-      </label>
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
-    
-    
-    
-      
-      
-        <label class="md-header__button md-icon" for="__search">
-          
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
-        </label>
-        <div class="md-search" data-md-component="search" role="dialog">
-  <label class="md-search__overlay" for="__search"></label>
-  <div class="md-search__inner" role="search">
-    <form class="md-search__form" name="search">
-      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
-      <label class="md-search__icon md-icon" for="__search">
-        
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
-        
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
-      </label>
-      <nav class="md-search__options" aria-label="Search">
-        
-        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
-          
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        </button>
-      </nav>
-      
-        <div class="md-search__suggest" data-md-component="search-suggest"></div>
-      
-    </form>
-    <div class="md-search__output">
-      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
-        <div class="md-search-result" data-md-component="search-result">
-          <div class="md-search-result__meta">
-            Initializing search
-          </div>
-          <ol class="md-search-result__list" role="presentation"></ol>
-        </div>
-      </div>
-    </div>
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  header.site {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 24px; max-width: 980px; margin: 0 auto;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+  .brand img { width: 26px; height: 26px; border-radius: 7px; }
+  nav.site a { color: var(--ink-muted); text-decoration: none; font-size: 14px; margin-left: 22px; }
+  nav.site a:hover { color: var(--ink); }
+
+  .hero {
+    display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 48px; align-items: center;
+    padding: 56px 0 72px;
+  }
+  @media (max-width: 760px) { .hero { grid-template-columns: 1fr; padding-top: 24px; } }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent-strong); font-weight: 600; margin-bottom: 18px;
+  }
+  @media (prefers-color-scheme: dark) { .eyebrow { color: var(--accent); } }
+
+  h1.display { font-size: clamp(34px, 5vw, 52px); line-height: 1.08; margin: 0 0 20px; }
+  .lede { font-size: 18px; color: var(--ink-muted); max-width: 46ch; margin: 0 0 28px; }
+
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 9px; font-size: 14px; font-weight: 600;
+    text-decoration: none; border: 1px solid transparent; transition: transform 0.1s ease;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn.solid { background: var(--accent-strong); color: #fff8ea; }
+  @media (prefers-color-scheme: dark) { .btn.solid { background: var(--accent); color: #1a1509; } }
+  .btn.quiet { border-color: var(--border); color: var(--ink); background: var(--bg-raised); }
+
+  .hero-art { display: flex; justify-content: center; }
+  .hero-art img {
+    width: min(320px, 80%); border-radius: 28px; box-shadow: var(--shadow);
+  }
+
+  .install-card {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px; margin: 22px 0; overflow-x: auto; white-space: pre;
+  }
+  .install-card .comment { color: var(--ink-muted); }
+
+  section { padding: 56px 0; border-top: 1px solid var(--border); }
+  section > h2.display { font-size: 28px; margin: 0 0 10px; }
+  section > .section-lede { color: var(--ink-muted); max-width: 60ch; margin: 0 0 36px; font-size: 15.5px; }
+
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 760px) { .grid3 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--bg-raised); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px; box-shadow: var(--shadow);
+  }
+  .card .kicker {
+    font-family: "Cinzel", serif; letter-spacing: 0.06em; font-size: 13px;
+    text-transform: uppercase; color: var(--accent-strong); margin-bottom: 8px; font-weight: 600;
+  }
+  @media (prefers-color-scheme: dark) { .card .kicker { color: var(--accent); } }
+  .card h3 { margin: 0 0 10px; font-size: 18px; }
+  .card p { margin: 0; color: var(--ink-muted); font-size: 14.5px; }
+
+  .flow {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px;
+  }
+  .flow .step {
+    padding: 8px 14px; border-radius: 8px; background: var(--bg-raised);
+    border: 1px solid var(--border);
+  }
+  .flow .sep { color: var(--ink-muted); }
+  .flow .step.blocked { border-color: #a1493f; color: #a1493f; }
+
+  .support-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  .support-list li { padding: 14px 16px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; font-size: 14.5px; }
+  .support-list strong { display: block; margin-bottom: 2px; }
+
+  footer.site {
+    padding: 40px 0 60px; color: var(--ink-muted); font-size: 13.5px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  footer.site a { color: var(--ink-muted); }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="brand">
+    <img src="assets/favicon-32.png" alt="" />
+    <span class="display" style="font-size:17px;">PORTUNUS</span>
   </div>
-</div>
-      
-    
-    
-      <div class="md-header__source">
-        <a href="https://github.com/mdostal/portunus" title="Go to repository" class="md-source" data-md-component="source">
-  <div class="md-source__icon md-icon">
-    
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
-  </div>
-  <div class="md-source__repository">
-    mdostal/portunus
-  </div>
-</a>
-      </div>
-    
+  <nav class="site">
+    <a href="#how-it-works">How it works</a>
+    <a href="#install">Install</a>
+    <a href="docs/">Docs</a>
+    <a href="https://github.com/mdostal/portunus">GitHub</a>
+    <a href="#support">Support</a>
   </nav>
-  
 </header>
-    
-    <div class="md-container" data-md-component="container">
-      
-      
-        
-          
-        
-      
-      <main class="md-main" data-md-component="main">
-        <div class="md-main__inner md-grid">
-          
-            
-              
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
-                <div class="md-sidebar__scrollwrap">
-                  <div class="md-sidebar__inner">
-                    
 
-
-
-<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
-  <label class="md-nav__title" for="__drawer">
-    <a href="." title="Portunus" class="md-nav__button md-logo" aria-label="Portunus" data-md-component="logo">
-      
-  
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
-
-    </a>
-    Portunus
-  </label>
-  
-    <div class="md-nav__source">
-      <a href="https://github.com/mdostal/portunus" title="Go to repository" class="md-source" data-md-component="source">
-  <div class="md-source__icon md-icon">
-    
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
-  </div>
-  <div class="md-source__repository">
-    mdostal/portunus
-  </div>
-</a>
+<div class="wrap">
+  <div class="hero">
+    <div>
+      <div class="eyebrow">A secret broker, not a secret leak</div>
+      <h1 class="display">Your agents ask for a secret by name.<br />They never see the value.</h1>
+      <p class="lede">
+        Portunus is a standalone, boundary-only secret broker. Reference
+        <code>{{secret:stripe-key}}</code> by metadata — Portunus resolves and injects the
+        real value only at the actual execution boundary. It is structurally incapable of
+        returning a value into an LLM or agent context.
+      </p>
+      <div class="cta-row">
+        <a class="btn solid" href="#install">Get started</a>
+        <a class="btn quiet" href="docs/">Read the docs</a>
+        <a class="btn quiet" href="https://github.com/mdostal/portunus">View on GitHub</a>
+        <a class="btn quiet" href="https://github.com/mdostal/portunus/releases">Desktop app (macOS)</a>
+      </div>
     </div>
-  
-  <ul class="md-nav__list" data-md-scrollfix>
-    
-      
-      
-  
-  
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Portunus
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Portunus
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#whats-here" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What's here
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#links" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Links
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="architecture/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Portunus Architecture
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="provider-rotation-matrix/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Provider Rotation Matrix
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="rotation/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Rotation Guide
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-  </ul>
-</nav>
-                  </div>
-                </div>
-              </div>
-            
-            
-              
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
-                <div class="md-sidebar__scrollwrap">
-                  <div class="md-sidebar__inner">
-                    
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#whats-here" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What's here
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#links" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Links
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-                  </div>
-                </div>
-              </div>
-            
-          
-          
-            <div class="md-content" data-md-component="content">
-              
-              <article class="md-content__inner md-typeset">
-                
-                  
-
-
-  
-  
-
-
-<h1 id="portunus">Portunus<a class="headerlink" href="#portunus" title="Permanent link">&para;</a></h1>
-<blockquote>
-<p>A standalone, boundary-only secret broker — reference a secret by name; the value is injected only at the execution boundary, never inside an LLM or agent context.</p>
-</blockquote>
-<p>Welcome to the <strong>Portunus</strong> documentation. Use the navigation to explore the design, architecture, and process docs for this project.</p>
-<h2 id="whats-here">What's here<a class="headerlink" href="#whats-here" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Architecture / design</strong> — how it's built and why.</li>
-<li><strong>Roadmap / process</strong> — where it's going and how work is planned.</li>
-</ul>
-<h2 id="links">Links<a class="headerlink" href="#links" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Source:</strong> <a href="https://github.com/mdostal/portunus">github.com/mdostal/portunus</a></li>
-</ul>
-<hr />
-<p><em>Docs baseline scaffolded with mkdocs-material. Branding + the published <code>.pHive</code> process/design sidecars are tracked in the repo's open "Docs + Process site" issue.</em></p>
-
-
-
-
-
-
-
-
-
-
-
-
-                
-              </article>
-            </div>
-          
-          
-<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
-        </div>
-        
-          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
-  
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
-  Back to top
-</button>
-        
-      </main>
-      
-        <footer class="md-footer">
-  
-  <div class="md-footer-meta md-typeset">
-    <div class="md-footer-meta__inner md-grid">
-      <div class="md-copyright">
-  
-  
-    Made with
-    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
-      Material for MkDocs
-    </a>
-  
+    <div class="hero-art">
+      <img src="assets/hero-key.png" alt="Portunus key mark" />
+    </div>
+  </div>
 </div>
-      
+
+<section id="how-it-works">
+  <div class="wrap">
+    <h2 class="display">Three names, one rule</h2>
+    <p class="section-lede">
+      Every component is named for what it actually does — Roman gatekeeping, not marketing.
+      The rule underneath all three: a plaintext value only ever exists at the one boundary
+      call that needs it, and is never returned, logged, or printed anywhere upstream of that.
+    </p>
+    <div class="grid3">
+      <div class="card">
+        <div class="kicker">Ostiarius</div>
+        <h3>The gatekeeper</h3>
+        <p>One implementation, three entry points — the CLI, the standalone UI's API routes,
+           and an MCP server so any agent/harness can query and inject without a second
+           privileged path to keep in sync.</p>
+      </div>
+      <div class="card">
+        <div class="kicker">Arca</div>
+        <h3>The vault</h3>
+        <p>Pluggable backends, chosen per reference or per project — local-encrypted and GCP
+           Secret Manager are real today; AWS, Vault, Infisical, Doppler, 1Password, and Azure
+           are honest stubs with a one-click request link, never a silent mis-route.</p>
+      </div>
+      <div class="card">
+        <div class="kicker">Petitio</div>
+        <h3>The gate check</h3>
+        <p>Every request passes an approval gate before Arca ever gives up a value — lifecycle
+           state, time-boxed approvals, and a tamper-evident audit chain recording every
+           decision, allowed or denied.</p>
+      </div>
+    </div>
+
+    <div style="margin-top:40px;">
+      <div class="flow">
+        <span class="step">agent asks for <code>{{secret:X}}</code></span>
+        <span class="sep">→</span>
+        <span class="step">Ostiarius</span>
+        <span class="sep">→</span>
+        <span class="step">Petitio checks</span>
+        <span class="sep">→</span>
+        <span class="step blocked">✗ denied, no value ever released</span>
+      </div>
+      <div class="flow" style="margin-top:10px;">
+        <span class="step">agent asks for <code>{{secret:X}}</code></span>
+        <span class="sep">→</span>
+        <span class="step">Ostiarius</span>
+        <span class="sep">→</span>
+        <span class="step">Petitio allows</span>
+        <span class="sep">→</span>
+        <span class="step">Arca fetches</span>
+        <span class="sep">→</span>
+        <span class="step">injected at the boundary — env var, file, or exec argv</span>
+        <span class="sep">→</span>
+        <span class="step">agent gets a success signal, never the value</span>
+      </div>
     </div>
   </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2 class="display">Install</h2>
+    <p class="section-lede">Run it as a CLI/MCP tool, a local web UI, or a native macOS menu-bar app.</p>
+
+    <div class="install-card"><span class="comment"># CLI + MCP server + agent skills, one shot</span>
+curl -fsSL https://mdostal.github.io/portunus/install.sh | bash
+portunus reg add my-secret sm-my-secret --project my-proj
+portunus resolve "Authorization: Bearer {{secret:my-secret}}"</div>
+
+    <div class="install-card"><span class="comment"># standalone Vault UI</span>
+git clone https://github.com/mdostal/portunus
+cd portunus/ui && npm install && npm run dev</div>
+
+    <div class="install-card"><span class="comment"># macOS desktop app — menu-bar, self-updating</span>
+cd ui && npm run build && cargo tauri build
+cp -r src-tauri/target/release/bundle/macos/Portunus.app /Applications/
+open /Applications/Portunus.app</div>
+
+    <p class="section-lede" style="margin-top:8px;">
+      Full docs, MCP tool reference, and architecture diagrams live in the
+      <a href="https://github.com/mdostal/portunus#readme">README</a> and
+      <a href="https://github.com/mdostal/portunus/blob/main/docs/architecture.md">docs/architecture.md</a>.
+    </p>
+  </div>
+</section>
+
+<section id="support">
+  <div class="wrap">
+    <h2 class="display">Support this project</h2>
+    <p class="section-lede">Free and open source, always. A few ways to help — or just say hi.</p>
+    <ul class="support-list">
+      <li><strong>Use it, star it, file an issue.</strong> Honestly the best support an open-source project can get. <a href="https://github.com/mdostal/portunus">github.com/mdostal/portunus</a></li>
+      <li><strong>Hire me.</strong> Fractional-CTO and consulting work — fixing and scaling tech stacks. <a href="https://mdostal.com/contact">mdostal.com/contact</a></li>
+      <li><strong>Buy me a coffee</strong> if it saved you time. <a href="https://www.buymeacoffee.com/mdostal">buymeacoffee.com/mdostal</a></li>
+      <li><strong>More tools like this</strong> → <a href="https://tools.mdostal.com">tools.mdostal.com</a></li>
+      <li><strong>Life outside the terminal</strong> → <a href="https://life.mdostal.com">life.mdostal.com</a></li>
+      <li><strong>What we're building at Firefly Events</strong> — event discovery, 8,000+ events/day from 7+ sources → <a href="https://ff.events">ff.events</a></li>
+    </ul>
+  </div>
+</section>
+
+<footer class="site wrap">
+  <span>MIT © 2026 Mathew Dostal</span>
+  <span>
+    <a href="https://github.com/mdostal/portunus">GitHub</a> ·
+    <a href="https://github.com/mdostal/portunus/releases">Releases</a> ·
+    <a href="https://mdostal.com">mdostal.com</a>
+  </span>
 </footer>
-      
-    </div>
-    <div class="md-dialog" data-md-component="dialog">
-      <div class="md-dialog__inner md-typeset"></div>
-    </div>
-    
-    
-    
-      
-      
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.top", "navigation.sections", "navigation.instant", "content.code.copy", "search.suggest", "toc.follow"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
-    
-    
-      <script src="assets/javascripts/bundle.d7400e89.min.js"></script>
-      
-    
-  </body>
+
+</body>
 </html>
