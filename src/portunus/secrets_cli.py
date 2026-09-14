@@ -270,13 +270,28 @@ def cmd_discover(args) -> int:
             continue
         if args.env and meta.get("environment") != args.env:
             continue
-        out.append({
+
+        # Build the result row before query filtering
+        row = {
             "name": ref.name, "sm_name": ref.sm_name, "scope": ref.scope,
             "kind": ref.kind, "state": ref.state,
             "description": meta.get("description", ""),
             "project": meta.get("project", ""),
             "environment": meta.get("environment", ""),
-        })
+        }
+
+        # Apply query filter (case-insensitive substring match across all searchable fields)
+        if args.query:
+            query_lower = args.query.lower()
+            searchable_fields = [
+                row["name"], row["sm_name"], row["scope"], row["kind"],
+                row["description"], row["project"], row["environment"]
+            ]
+            if not any(query_lower in str(field).lower() for field in searchable_fields):
+                continue
+
+        out.append(row)
+
     if args.output == "json":
         print(json.dumps(out, indent=2))
     elif not out:
@@ -453,7 +468,7 @@ def cmd_mount(args) -> int:
         "backend": "local-encrypted",
         "sources": {
             "references": {"argv": ["secrets", "discover", "--output", "json"],
-                           "returns": "registered secrets: names/scope/kind/state/metadata"},
+                           "returns": "registered secrets: names/scope/kind/state/metadata; supports --query for search"},
             "status": {"argv": ["secrets", "status", "<scope>", "<kind>"],
                        "returns": "lifecycle state, version count, env mapping"},
             "audit": {"argv": ["secrets", "audit", "--output", "json"],
@@ -516,6 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--kind", default="")
     sp.add_argument("--project", default="")
     sp.add_argument("--env", default="")
+    sp.add_argument("--query", default="", help="search across name/description/kind/etc")
     sp.add_argument("--output", choices=("text", "json"), default="text")
     sp.set_defaults(func=cmd_discover)
 

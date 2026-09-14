@@ -233,6 +233,80 @@ def test_discover_filters_and_is_value_free(cli_home, monkeypatch, capsys):
     assert SECRET not in out
 
 
+def test_search_matches_name(cli_home, monkeypatch, capsys):
+    run(monkeypatch, capsys, ["set", "shared", "linear", "--description", "Linear API"], stdin=SECRET + "\n")
+    run(monkeypatch, capsys, ["set", "shared", "github", "--description", "GitHub PAT"], stdin=SECRET + "\n")
+    code, out, _ = run(monkeypatch, capsys, ["discover", "--query", "linear", "--output", "json"])
+    assert code == 0
+    rows = json.loads(out)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "linear"
+    assert SECRET not in out
+
+
+def test_search_matches_description(cli_home, monkeypatch, capsys):
+    run(monkeypatch, capsys, ["set", "shared", "linear", "--description", "issue tracker API"], stdin=SECRET + "\n")
+    run(monkeypatch, capsys, ["set", "shared", "github", "--description", "GitHub PAT"], stdin=SECRET + "\n")
+    code, out, _ = run(monkeypatch, capsys, ["discover", "--query", "tracker", "--output", "json"])
+    assert code == 0
+    rows = json.loads(out)
+    assert len(rows) == 1
+    assert rows[0]["description"] == "issue tracker API"
+    assert SECRET not in out
+
+
+def test_search_matches_sm_name(cli_home, monkeypatch, capsys):
+    run(monkeypatch, capsys, ["set", "shared", "linear", "--description", "Linear API"], stdin=SECRET + "\n")
+    code, out, _ = run(monkeypatch, capsys, ["discover", "--query", "dostal-shared-linear", "--output", "json"])
+    assert code == 0
+    rows = json.loads(out)
+    assert len(rows) == 1
+    assert rows[0]["sm_name"] == "dostal-shared-linear"
+    assert SECRET not in out
+
+
+def test_search_case_insensitive(cli_home, monkeypatch, capsys):
+    run(monkeypatch, capsys, ["set", "shared", "linear", "--description", "Linear API"], stdin=SECRET + "\n")
+    code, out, _ = run(monkeypatch, capsys, ["discover", "--query", "LINEAR", "--output", "json"])
+    assert code == 0
+    rows = json.loads(out)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "linear"
+    assert SECRET not in out
+
+
+def test_search_with_filters(cli_home, monkeypatch, capsys):
+    run(monkeypatch, capsys, ["set", "shared", "linear", "--description", "Linear API", "--project", "pantheon"], stdin=SECRET + "\n")
+    run(monkeypatch, capsys, ["set", "shared", "github", "--description", "GitHub PAT", "--project", "pantheon"], stdin=SECRET + "\n")
+    run(monkeypatch, capsys, ["set", "att", "linear", "--description", "ATT Linear", "--project", "att"], stdin=SECRET + "\n")
+    code, out, _ = run(monkeypatch, capsys, ["discover", "--query", "linear", "--project", "pantheon", "--output", "json"])
+    assert code == 0
+    rows = json.loads(out)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "linear" and rows[0]["project"] == "pantheon"
+    assert SECRET not in out
+
+
+def test_search_no_match(cli_home, monkeypatch, capsys):
+    run(monkeypatch, capsys, ["set", "shared", "linear", "--description", "Linear API"], stdin=SECRET + "\n")
+    code, out, _ = run(monkeypatch, capsys, ["discover", "--query", "nosuchkey", "--output", "json"])
+    assert code == 0
+    rows = json.loads(out)
+    assert len(rows) == 0
+    assert SECRET not in out
+
+
+def test_search_output_json(cli_home, monkeypatch, capsys):
+    run(monkeypatch, capsys, ["set", "shared", "linear", "--description", "Linear API"], stdin=SECRET + "\n")
+    code, out, _ = run(monkeypatch, capsys, ["discover", "--query", "linear", "--output", "json"])
+    assert code == 0
+    data = json.loads(out)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert all(k in data[0] for k in ["name", "sm_name", "scope", "kind", "state", "description"])
+    assert SECRET not in out
+
+
 # --- audit: names only, chain intact ---------------------------------------------
 def test_audit_never_contains_value_and_chain_verifies(cli_home, monkeypatch, capsys, tmp_path):
     store(monkeypatch, capsys)

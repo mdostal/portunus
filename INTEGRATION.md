@@ -82,3 +82,35 @@ Not cut live: the gateway is a running service and restarting it risks a Slack
 outage, so this wrapper is documented for review rather than activated. When
 approved, swap it in and confirm the gateway reconnects
 (`tail ~/.hermes/logs/gateway-slack.log`, expect a fresh `auth.test` OK).
+
+## Discovering stored secrets
+
+As more services wire through Portunus, finding the right key becomes important.
+The `discover` command with `--query` searches across all metadata fields:
+
+```sh
+# Find all Linear-related secrets
+$ secrets discover --query linear --output json
+[
+  {
+    "name": "shared-linear",
+    "sm_name": "dostal-shared-linear",
+    "scope": "shared",
+    "kind": "linear",
+    "state": "enabled",
+    "description": "Linear issue tracker API",
+    "project": "pantheon",
+    "environment": "prod"
+  }
+]
+
+# Search by description text
+$ secrets discover --query "issue tracker"
+
+# Combine search with project filter
+$ secrets discover --query api --project pantheon
+```
+
+The query is case-insensitive and matches across: name, sm_name, scope, kind,
+description, project, and environment. This is particularly useful when you know
+what service you need credentials for but not the exact key name.

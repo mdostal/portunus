@@ -107,6 +107,30 @@ portunus audit 25     # last 25 access decisions (names + results, never values)
 portunus verify       # prove the hash chain is intact
 ```
 
+### Discovery and Search
+
+Query the registry to find stored secrets by metadata (never returns values):
+
+```bash
+# List all secrets with metadata
+secrets discover --output json
+
+# Search for a specific key or service
+secrets discover --query linear             # finds any secret with "linear" in name, description, etc.
+secrets discover --query "issue tracker"    # matches description text
+secrets discover --query LINEAR             # case-insensitive
+
+# Combine search with filters
+secrets discover --query linear --project pantheon      # search within a specific project
+secrets discover --query api --kind github --env prod   # filter by kind and environment
+
+# Browse by filters only
+secrets discover --project att --output json
+secrets discover --kind anthropic
+```
+
+The `--query` parameter searches across: name, sm_name, scope, kind, description, project, and environment.
+
 ## Local encrypted tier (v1 — no cloud required)
 
 For machines without WIF + a cloud Secret Manager, Portunus ships a local
