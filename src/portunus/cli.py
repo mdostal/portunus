@@ -437,6 +437,46 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_search(args) -> int:
+    """Free-text search across the registry -- metadata only, never a value."""
+    from .search import search_references
+    registry, *_ = _build()
+    results = search_references(
+        registry,
+        args.query,
+        project=args.project or None,
+        provider=args.provider or None,
+        env=args.env or None,
+        state=args.state or None,
+    )
+    if args.json:
+        print(json.dumps([r.to_dict() for r in results]))
+        return 0
+    if not results:
+        scope_parts = []
+        if args.project:
+            scope_parts.append(f"project={args.project}")
+        if args.provider:
+            scope_parts.append(f"provider={args.provider}")
+        if args.env:
+            scope_parts.append(f"env={args.env}")
+        if args.state:
+            scope_parts.append(f"state={args.state}")
+        scope_note = f" ({', '.join(scope_parts)})" if scope_parts else ""
+        print(f"no matches for {args.query!r}{scope_note}")
+        return 0
+    if args.project:
+        _print_reference_list(results)
+        return 0
+    by_project: dict = {}
+    for ref in results:
+        by_project.setdefault(ref.project or "(no project)", []).append(ref)
+    for proj in sorted(by_project):
+        print(f"{proj}:")
+        _print_reference_list(by_project[proj])
+    return 0
+
+
 def cmd_ask(args) -> int:
     """Semantic front door: natural-language request -> parse_intent -> a tag
     set -> resolve_by_tags -> the same boundary-injection dispatch as inject.
@@ -2261,6 +2301,19 @@ def build_parser() -> argparse.ArgumentParser:
     ls.add_argument("--env", default="")
     ls.add_argument("--json", action="store_true", help="machine-readable output")
     ls.set_defaults(func=cmd_list)
+
+    sc = sub.add_parser(
+        "search",
+        help="free-text search across all secrets by name, description, purpose, tags, group "
+             "(metadata only, never a value)",
+    )
+    sc.add_argument("query", help="text to search for (case-insensitive substring match)")
+    sc.add_argument("--project", default="", help="scope to one project")
+    sc.add_argument("--provider", default="", help="scope to one provider")
+    sc.add_argument("--env", default="", help="scope to one environment")
+    sc.add_argument("--state", default="", help="scope to one lifecycle state (e.g. enabled, requested)")
+    sc.add_argument("--json", action="store_true", help="machine-readable output")
+    sc.set_defaults(func=cmd_search)
 
     fd = sub.add_parser("find", help="find a reference by tags (metadata only, never a value)")
     fd.add_argument("--tags", required=True,

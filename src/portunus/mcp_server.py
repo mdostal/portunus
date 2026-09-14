@@ -30,6 +30,7 @@ from .leakscan import (
     summarize,
 )
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
+from .search import search_references
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
@@ -76,6 +77,44 @@ def portunus_list(project: str) -> list:
     portunus_resolve_to_tempfile or portunus_resolve_exec."""
     registry = Registry()
     return [ref.to_dict() for ref in registry.list_by_project(project)]
+
+
+@mcp.tool()
+def portunus_search(
+    query: str,
+    project: str = "",
+    provider: str = "",
+    env: str = "",
+    state: str = "",
+) -> list:
+    """Free-text search across all registered secrets -- metadata only,
+    never a value. Matches case-insensitively against each reference's name,
+    sm_name, description, purpose, tags (keys and values), and group path.
+    Returns zero to many results; an empty list means no matches.
+
+    All filter params are optional narrow-down scopes that combine with the
+    text query (AND semantics). Empty string means "no filter" -- the FastMCP
+    convention for optional parameters.
+
+    Results are sorted: enabled references first, then alphabetically by name.
+
+    Examples:
+        portunus_search("linear")          -- all references mentioning "linear"
+        portunus_search("token", project="ffe-cicd")  -- tokens in one project
+        portunus_search("stripe", env="prod")         -- prod Stripe credentials
+        portunus_search("discord", state="enabled")   -- live Discord tokens only
+        portunus_search("vercel", provider="vercel", env="prod")  -- combined
+    """
+    registry = Registry()
+    results = search_references(
+        registry,
+        query,
+        project=project or None,
+        provider=provider or None,
+        env=env or None,
+        state=state or None,
+    )
+    return [ref.to_dict() for ref in results]
 
 
 @mcp.tool()
