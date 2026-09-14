@@ -535,6 +535,24 @@ class OAuthBackend:
                 f"oauth backend: could not mint access token for {sm_name}: {exc}"
             ) from exc
 
+        # Some providers (confirmed live for Codex CLI's refresh grant, see
+        # OAuthAccessToken's own doc comment) rotate the refresh token on
+        # every use -- the one just spent stops working for a future
+        # refresh. Persist the new one immediately, or the very next
+        # access() call (once this process's in-memory cache expires) mints
+        # against an already-consumed token and fails. Best-effort: a
+        # failure to persist the rotation must not fail THIS mint, which
+        # already succeeded and has a perfectly good access token to
+        # return -- log to the audit chain instead of raising.
+        if minted.rotated_refresh_token:
+            try:
+                self.local_backend.store_oauth_credential(
+                    provider, account, {**credential, "refresh_token": minted.rotated_refresh_token},
+                )
+                self.audit.append("credential-mint", sm_name, "ok:refresh-token-rotated")
+            except Exception as exc:  # noqa: BLE001 - best-effort, see comment above
+                self.audit.append("credential-mint", sm_name, f"warn:rotation-persist-failed:{exc}")
+
         self._cache[sm_name] = minted
         return minted.access_token
 

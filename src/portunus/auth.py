@@ -276,6 +276,11 @@ class OAuthAccessToken:
     expires_at: int
     identity: str
     scope: str = ""
+    # Some providers (confirmed live for Codex CLI's own refresh grant against
+    # auth.openai.com/oauth/token, 2026-09-14) rotate the refresh token on
+    # every use -- the one just spent is no longer valid for a future refresh.
+    # None means "the response didn't include one, nothing rotated."
+    rotated_refresh_token: Optional[str] = field(default=None, repr=False)
 
 
 class OAuthRefreshTokenAuth:
@@ -352,11 +357,14 @@ class OAuthRefreshTokenAuth:
         expires_in = int(resp.get("expires_in", 0) or 0)
         expires_at = int(time.time()) + expires_in if expires_in else 0
         scope = str(resp.get("scope", ""))
+        rotated_refresh_token = resp.get("refresh_token")
+        rotated_refresh_token = str(rotated_refresh_token) if rotated_refresh_token else None
         self.audit.append("credential-mint", self.identity or "oauth", "ok:oauth-refresh")
         return OAuthAccessToken(
             access_token=access_token,
             expires_at=expires_at,
             identity=self.identity,
+            rotated_refresh_token=rotated_refresh_token,
             scope=scope,
         )
 
