@@ -1,0 +1,38 @@
+site_name: Portunus
+site_description: >-
+  A standalone, boundary-only secret broker — reference a secret by name; the value is injected only at the execution boundary, never inside an LLM or agent context.
+site_url: https://mdostal.github.io/portunus/
+repo_url: https://github.com/mdostal/portunus
+repo_name: mdostal/portunus
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep orange
+      accent: orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.top
+    - navigation.sections
+    - navigation.instant
+    - content.code.copy
+    - search.suggest
+    - toc.follow
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
+  - toc:
+      permalink: true
+plugins:
+  - search

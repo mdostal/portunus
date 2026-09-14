@@ -1,0 +1,110 @@
+id: 04-gcp-sa-key-adapter
+epic: portunus-real-rotation-adapters
+title: Real GCP service-account key adapter (create+verify; retire gated by --retire-old)
+status: planned
+complexity: high
+methodology: tdd
+depends_on: [02-rotation-capability-model]
+
+description: |
+  The first REAL rotation adapter in Portunus, and the highest-generality one: GCP
+  service-account keys, which apply to every GCP-backed project Portunus manages rather
+  than one provider. GcloudBackend (backend.py:205) already shells `gcloud` with per-binding
+  WIF audiences and impersonate-service-account support, so the adapter reuses an
+  established auth path rather than inventing a credential mechanism.
+
+  Phases, in order:
+    create  -- mint a new key for the service account
+    verify  -- prove the new key actually works before anything else happens
+    store   -- write the new material to the local backend (and nowhere else)
+    retire  -- OPT-IN ONLY: disable the superseded key, then delete it after a grace period
+
+  The default stops after store. Retirement requires `--retire-old`, and even then disable
+  and delete are separated by a grace period during which the old key sits disabled. The
+  reasoning is asymmetric reversibility: a disabled SA key can be re-enabled, a deleted one
+  cannot be restored by GCP at all -- and Portunus has no inventory of which other workloads
+  hold a given key, so it cannot know whether deleting one is safe. A default-destructive
+  rotation would trade a recoverable failure for an unrecoverable one. The cost -- keys
+  accumulating -- is paid to story 03's `rotation audit`, which reports every un-retired
+  superseded key.
+
+  Verify-before-store is equally non-negotiable in the other direction: storing an unverified
+  new key over a working credential is how a rotation breaks the thing it was protecting.
+  If verify fails, the adapter stores nothing, retires nothing, audits warn:verify-failed,
+  and raises -- leaving the pre-rotation state exactly intact.
+
+  This is also the first time the recursive design documented in rotation.py's module
+  docstring is actually exercised: the adapter authenticates with its own Portunus-managed
+  credential resolved through Resolver.resolve_call(), never a special-cased path.
+
+acceptance_criteria:
+  - "Given a rotation with retire_old defaulting to False, when it completes successfully, then the new key exists and is stored, the OLD key is neither disabled nor deleted, and the RotationResult reports the superseded key as un-retired"
+  - "Given the new key fails verification, when rotate() runs, then NOTHING is stored, NOTHING is disabled or deleted, an audit entry with result='warn:verify-failed' is appended, and RotationAdapterError is raised -- the pre-rotation state is exactly intact"
+  - "Given retire_old=True, when rotation succeeds, then the superseded key is DISABLED first and only deleted after the configured grace period elapses -- a disable and a delete never happen in the same call"
+  - "Given a successful rotation, when every output surface is inspected (RotationResult, CLI stdout, MCP response, audit entries), then none contains key material -- only the key identifier"
+  - "Given the adapter needs GCP credentials, when it authenticates, then it resolves its own credential via Resolver.resolve_call() through the normal boundary-only path -- no hardcoded credential, no special-cased credential path, no value handled outside the existing sinks"
+  - "Given the adapter's capability() is queried, when called, then it returns 'auto' -- distinguishing it from every stub, and lighting up the UI Auto-rotate button that portunus-metadata-and-rotation-provenance wired to derived state"
+  - "Given every test in this story, when run, then no real GCP API is contacted -- the gcloud runner is injected and faked, mirroring GcloudBackend's existing `runner` seam"
+
+steps:
+  - id: test-spec
+    description: Failing tests via an injected fake gcloud runner for each phase -- non-destructive default, verify-failure leaving state intact, disable-then-delete separation under --retire-old, boundary assertions on every output surface, capability()='auto'. No real GCP calls.
+    agent: tester
+  - id: implement
+    description: Implement GCPServiceAccountKeyRotationAdapter in rotation.py, reusing GcloudBackend's runner/impersonation seam and Resolver.resolve_call for its own credential. Register in _ADAPTERS. Wire `portunus rotation run <ref> [--retire-old]`.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Adversarially confirm the destructive path cannot be reached without explicit opt-in, that verify-failure is genuinely inert, and that no output surface can carry key material.
+    agent: reviewer
+    depends_on: [implement]
+  - id: live-proof
+    description: Real rotation against ONE low-stakes service account in a non-production project, run WITHOUT --retire-old. Capture the audit trail and the rotation audit line showing the un-retired superseded key. Do not run --retire-old against any live key in this story.
+    agent: developer
+    depends_on: [review]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [live-proof]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: "GcloudBackend at :205 -- the injected `runner` seam, per-binding WIF audiences and impersonate-service-account support this adapter reuses"
+    - path: src/portunus/rotation.py
+      purpose: The adapter registry this becomes the first real member of
+    - path: src/portunus/resolver.py
+      purpose: resolve_call -- how the adapter gets its own admin credential, per the recursive design in rotation.py's module docstring
+    - path: docs/provider-rotation-matrix.md
+      purpose: Story 01's verified GCP call sequence
+
+files_to_modify:
+  - file: src/portunus/rotation.py
+    change: Add GCPServiceAccountKeyRotationAdapter; register in _ADAPTERS
+  - file: src/portunus/cli.py
+    change: Add `rotation run <ref> [--retire-old]`
+  - file: tests/test_rotation.py
+    change: Adapter tests with an injected fake gcloud runner
+
+design_decisions:
+  - decision: Non-destructive by default; --retire-old opts in; disable precedes delete with a grace period
+    rationale: "GCP cannot restore a deleted SA key and Portunus has no inventory of which workloads hold one, so the blast radius of a delete is unknowable from inside Portunus. Disable is reversible; delete is not. The default keeps every failure recoverable."
+  - decision: Verify strictly before store, and store nothing on verify failure
+    rationale: "Overwriting a working credential with an unverified new one is the exact failure mode rotation exists to prevent"
+  - decision: Reuse GcloudBackend's runner seam rather than adding a GCP SDK dependency
+    rationale: "Keeps the existing injected-runner test posture -- every test in this story runs without touching a real GCP API -- and matches how every other GCP path in this codebase already authenticates"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "This adapter legitimately HOLDS newly-created key material -- the first such place in the codebase. The material goes to the local backend's store and nowhere else: acceptance criterion 4 asserts its absence from RotationResult, CLI stdout, the MCP response and every audit entry, which carry the key identifier only."
+  - concern: audit-chain-integrity
+    action: "Each phase appends action='rotate': ok:created, ok:verified, ok:retired, warn:verify-failed, err:<reason>. The failure path is explicitly audited -- a half-rotated credential is the state most in need of a trail."
+
+risks:
+  - severity: high
+    description: --retire-old deletes a key some unmonitored workload still holds, breaking it with no undo
+    mitigation: Opt-in only; disable-then-grace-then-delete so the failure is recoverable during the window; live-proof step forbids running --retire-old against a live key in this story
+  - severity: medium
+    description: A test accidentally contacts real GCP and rotates a real key
+    mitigation: Acceptance criterion 7 -- the gcloud runner is injected and faked in every test; live proof is a separate, explicitly-scoped step against one low-stakes non-production account

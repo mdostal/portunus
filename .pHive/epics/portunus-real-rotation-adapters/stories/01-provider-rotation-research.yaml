@@ -1,0 +1,76 @@
+id: 01-provider-rotation-research
+epic: portunus-real-rotation-adapters
+title: Verify each represented provider's real rotation story (research only, no code)
+status: planned
+complexity: medium
+methodology: research
+depends_on: []
+
+description: |
+  Research-only story -- no source changes, no tests, one document. Produces
+  docs/provider-rotation-matrix.md: for every provider actually represented in the vault,
+  what that provider's REAL rotation story is, sourced from the provider's own API docs.
+
+  The brief is explicit that this must be verified rather than assumed, and the failure
+  mode it names is specific: concluding a provider is rotatable from a docs page that
+  describes a DIFFERENT credential type than the one actually stored (e.g. reading Linear's
+  OAuth application docs and generalizing to the personal API keys in ffe-cicd). So every
+  row records the credential type the finding applies to, alongside a source URL.
+
+  Three inputs are enumerable locally and should be gathered first, before any provider
+  docs are read, so the research is scoped to providers that actually matter:
+    - `LocalEncryptedBackend.list_oauth_credentials()` (localvault.py:326) -- every stored
+      OAuth-refresh-shaped credential. Metadata views only; corrupt entries are skipped.
+    - `load_vault_bindings()` / `load_rotation_bindings()` -- configured projects/providers.
+    - The discovered-secret inventory across ffe-cicd, personalsites-487021 and
+      mercatus-liber-commerce (~343+ references).
+
+  Capability vocabulary, which story 02 then encodes:
+    auto    -- a documented programmatic rotation path exists for THIS credential type
+    manual  -- no programmatic path exists; human re-issue required (a permanent answer)
+    unknown -- not yet established (the honest default; not a synonym for manual)
+
+  Expected outcome is a small number of `auto` rows (GCP SA keys, the OAuth-shaped
+  credentials), at least one confirmed `manual` row, and a long tail of `unknown`. A long
+  tail is a correct result, not a failure -- story 03 makes it countable.
+
+acceptance_criteria:
+  - "Given docs/provider-rotation-matrix.md, when read, then every row carries provider, credential type, capability (auto|manual|unknown) and a source URL -- and no row is marked auto or manual without a source"
+  - "Given GCP service-account keys, when researched, then the matrix records the concrete create/verify/disable/delete call sequence an adapter would use, not just 'rotation is supported'"
+  - "Given Linear, when researched, then the matrix states which Linear credential TYPE each finding applies to, and does not assign a capability to the stored personal API keys based on a source describing OAuth application credentials"
+  - "Given a provider whose rotation story could not be established from its own docs, when recorded, then it is marked unknown rather than manual -- manual is reserved for a positively-confirmed absence of any programmatic path"
+  - "Given this story, when complete, then git diff shows changes only under .pHive/ and docs/ -- no src/, no tests/, no ui/"
+
+steps:
+  - id: enumerate
+    description: Gather the local inventory (list_oauth_credentials, vault/rotation bindings, discovered references) and group by provider. Establishes which providers the research needs to cover at all.
+    agent: researcher
+  - id: research
+    description: For each provider, establish the real rotation story for the specific stored credential type from that provider's own API docs. Record source URLs. Mark anything unestablished as unknown.
+    agent: researcher
+    depends_on: [enumerate]
+  - id: write
+    description: Write docs/provider-rotation-matrix.md.
+    agent: researcher
+    depends_on: [research]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/localvault.py
+      purpose: "list_oauth_credentials() at :326 -- enumerates every stored OAuth credential's metadata view, never a credential field"
+    - path: src/portunus/rotation.py
+      purpose: The provider vocabulary the matrix must key against
+
+files_to_modify:
+  - file: docs/provider-rotation-matrix.md
+    change: New file -- the sourced provider capability matrix
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Research only. list_oauth_credentials returns metadata views by construction; no step in this story reads a credential value, and the matrix records provider/type/capability/source only."
+
+risks:
+  - severity: medium
+    description: Research concludes auto based on a docs page for a different credential type than the one stored
+    mitigation: Credential type and source URL are required per-row acceptance criteria; the Linear case is called out explicitly
