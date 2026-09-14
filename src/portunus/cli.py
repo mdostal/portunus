@@ -35,7 +35,10 @@ from .backend import (
 )
 from .backup import ExportError, export_archive, import_archive
 from .paths import home
-from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
+from .rotation import (
+    RotationBinding, capability_for_status, load_rotation_bindings,
+    rotation_audit_data, save_rotation_bindings,
+)
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .roles import (
     PolicyError,
@@ -1299,6 +1302,73 @@ def cmd_rotation_bindings_show(args) -> int:
     return 0
 
 
+def cmd_rotation_audit(args) -> int:
+    """Walk everything Portunus knows about -- registry references, vault
+    bindings, and list_oauth_credentials() -- group by provider, join to
+    rotation capability, and report counts per capability with the reference
+    names behind each. Never prints a credential value."""
+    registry = Registry()
+    rotation_bindings = load_rotation_bindings()
+
+    # Best-effort: list OAuth credentials from the local vault. If the vault
+    # is unavailable or the backend isn't local-encrypted, skip gracefully.
+    local_backend = None
+    try:
+        local_backend = LocalEncryptedBackend()
+    except Exception:
+        pass
+
+    report = rotation_audit_data(registry, rotation_bindings, local_backend)
+
+    if args.json:
+        print(json.dumps(report))
+        return 0
+
+    providers = report["providers"]
+    totals = report["totals"]
+    unreadable = report["unreadable_oauth_count"]
+
+    if not providers:
+        print("(no references or bindings found -- vault is empty)")
+        return 0
+
+    total_refs = sum(totals.values())
+    print(f"  -- rotation audit -- {len(providers)} providers  {total_refs} refs")
+    print()
+
+    for capability in ("auto", "manual", "unknown"):
+        group = {p: e for p, e in providers.items() if e["capability"] == capability}
+        if not group:
+            continue
+        cap_total = totals[capability]
+        if capability == "auto":
+            label = f"AUTO ({cap_total} refs -- programmatic rotation available)"
+        elif capability == "manual":
+            label = f"MANUAL ({cap_total} refs -- human re-issue required)"
+        else:
+            label = f"UNKNOWN ({cap_total} refs -- rotation story not established)"
+        print(f"  {label}")
+        for prov, entry in sorted(group.items()):
+            prov_label = prov or "(no provider)"
+            ref_names = entry["refs"]
+            oauth_accts = entry["oauth_accounts"]
+            superseded = entry["superseded_key_ids"]
+            parts = []
+            if ref_names:
+                parts.append(f"refs: {', '.join(ref_names)}")
+            if oauth_accts:
+                parts.append(f"oauth: {', '.join(oauth_accts)}")
+            if superseded:
+                parts.append(f"superseded: {', '.join(superseded)}")
+            detail = "  |  ".join(parts) if parts else "(no refs)"
+            print(f"    {prov_label}  {detail}")
+        print()
+
+    if unreadable:
+        print(f"  note: {unreadable} OAuth credential(s) were unreadable and skipped")
+    return 0
+
+
 def cmd_bindings_show(args) -> int:
     """Show one or all vault bindings -- real account/wif_audience values,
     not presence-only. A local CLI reading the operator's own 0600
@@ -2468,8 +2538,8 @@ def build_parser() -> argparse.ArgumentParser:
     rbnd_sub = rbnd.add_subparsers(dest="action", required=True)
     rbnd_set = rbnd_sub.add_parser("set", help="upsert a provider's rotation binding -- only passed fields change")
     rbnd_set.add_argument("provider", help="e.g. vercel, github, stripe")
-    rbnd_set.add_argument("--status", choices=("", "real", "stub"), default="",
-                           help="whether a real RotationAdapter exists for this provider (default: stub)")
+    rbnd_set.add_argument("--status", choices=("", "real", "stub", "manual"), default="",
+                           help="real=adapter exists; stub=not yet; manual=no programmatic path (permanent) (default: stub)")
     rbnd_set.add_argument("--account", default="",
                            help="free-text rotation context, e.g. a Vercel team slug or GitHub org")
     rbnd_set.set_defaults(func=cmd_rotation_bindings_set)
@@ -2477,6 +2547,18 @@ def build_parser() -> argparse.ArgumentParser:
     rbnd_show.add_argument("provider", nargs="?", default="")
     rbnd_show.add_argument("--json", action="store_true")
     rbnd_show.set_defaults(func=cmd_rotation_bindings_show)
+
+    rot = sub.add_parser(
+        "rotation",
+        help="rotation audit and live inventory -- what is stored vs. what can be rotated",
+    )
+    rot_sub = rot.add_subparsers(dest="rotation_action", required=True)
+    rot_audit = rot_sub.add_parser(
+        "audit",
+        help="group registry refs by provider, join to rotation capability, report superseded keys",
+    )
+    rot_audit.add_argument("--json", action="store_true")
+    rot_audit.set_defaults(func=cmd_rotation_audit)
 
     sy = sub.add_parser(
         "sync", help="force a recency check (and re-fetch if stale) for every cached-mode reference in a project",

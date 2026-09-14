@@ -33,7 +33,7 @@ from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, re
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
-from .rotation import load_rotation_bindings
+from .rotation import load_rotation_bindings, rotation_audit_data
 
 mcp = FastMCP("portunus")
 
@@ -162,6 +162,31 @@ def portunus_rotation_status(provider: str = "") -> dict:
             return {}
         bindings = {provider: binding}
     return {p: {"status": b.status, "account": b.account} for p, b in bindings.items()}
+
+
+@mcp.tool()
+def portunus_rotation_audit() -> dict:
+    """Inventory what is stored vs. what can actually be rotated: group all
+    registry references and OAuth credentials by provider, join each to its
+    rotation capability (auto/manual/unknown), and report counts per
+    capability with the specific reference names and any un-retired
+    superseded key IDs. Metadata only -- never a credential value.
+
+    Returns:
+      providers: {provider: {capability, refs, oauth_accounts,
+                              superseded_key_ids}}
+      totals:    {auto, manual, unknown}
+      unreadable_oauth_count: int
+    """
+    registry = Registry()
+    rotation_bindings = load_rotation_bindings()
+    local_backend = None
+    try:
+        from .localvault import LocalEncryptedBackend
+        local_backend = LocalEncryptedBackend()
+    except Exception:
+        pass
+    return rotation_audit_data(registry, rotation_bindings, local_backend)
 
 
 @mcp.tool()
