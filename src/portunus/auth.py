@@ -119,7 +119,19 @@ def _audit_identity(oidc: OIDCToken, fallback: str = "unknown") -> str:
 def _default_gcp_transport(
     url: str, data: Mapping[str, str], headers: Mapping[str, str], timeout: float
 ) -> Mapping[str, object]:
-    body = urllib.parse.urlencode(data).encode()
+    # Some OAuth token endpoints (e.g. auth.openai.com's Codex refresh grant)
+    # require a JSON body, not the traditional RFC 6749 form-urlencoded one --
+    # honor whatever Content-Type the caller actually asked for instead of
+    # always form-encoding regardless of it.
+    content_type = ""
+    for key, value in headers.items():
+        if key.lower() == "content-type":
+            content_type = value
+            break
+    if "application/json" in content_type:
+        body = json.dumps(dict(data)).encode()
+    else:
+        body = urllib.parse.urlencode(data).encode()
     req = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -280,18 +292,32 @@ class OAuthRefreshTokenAuth:
     `gcloud auth application-default login --scopes=...`) and stored via
     `portunus oauth store`. This class only ever mints -- it never touches
     the consent/redirect flow.
+
+    `client_secret` is optional: a genuinely public/PKCE-style OAuth client
+    (confirmed live for Codex CLI's refresh grant against
+    auth.openai.com/oauth/token -- codex-rs/login/src/auth/manager.rs's
+    `RefreshRequest` has no client_secret field at all) has none to supply,
+    and the request must omit the field entirely rather than send an empty
+    string -- some token endpoints reject an explicit empty client_secret
+    on a client that isn't registered as confidential.
+
+    `request_format` picks the wire format for the refresh POST body:
+    `"form"` (default, RFC 6749's own encoding, what every other caller of
+    this class already sends) or `"json"` (Codex's endpoint requires a JSON
+    body specifically, per the same Rust source above).
     """
 
     def __init__(
         self,
         token_endpoint: str,
         client_id: str,
-        client_secret: str,
+        client_secret: Optional[str],
         refresh_token: str,
         identity: str = "",
         audit: Optional[AuditChain] = None,
         transport: Optional[GCPTransport] = None,
         timeout: float = 30.0,
+        request_format: str = "form",
     ):
         self.token_endpoint = token_endpoint
         self.client_id = client_id
@@ -301,18 +327,23 @@ class OAuthRefreshTokenAuth:
         self.audit = audit or AuditChain()
         self.transport = transport or _default_gcp_transport
         self.timeout = timeout
+        self.request_format = request_format
 
     def mint(self) -> OAuthAccessToken:
         data = {
             "grant_type": "refresh_token",
             "refresh_token": self.refresh_token,
             "client_id": self.client_id,
-            "client_secret": self.client_secret,
         }
+        if self.client_secret is not None:
+            data["client_secret"] = self.client_secret
+        content_type = (
+            "application/json" if self.request_format == "json" else "application/x-www-form-urlencoded"
+        )
         resp = self.transport(
             self.token_endpoint,
             data,
-            {"Content-Type": "application/x-www-form-urlencoded"},
+            {"Content-Type": content_type},
             self.timeout,
         )
         access_token = str(resp.get("access_token", ""))

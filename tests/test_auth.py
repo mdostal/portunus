@@ -176,6 +176,91 @@ def test_oauth_refresh_no_expires_in_means_unknown_expiry_not_a_crash():
     assert minted.expires_at == 0
 
 
+def test_oauth_refresh_omits_client_secret_entirely_for_a_public_client():
+    # Confirmed live 2026-09-14 against codex-rs's own source: Codex CLI's
+    # refresh grant (auth.openai.com/oauth/token) sends no client_secret
+    # field at all -- it's a public/PKCE client, not a confidential one.
+    # None here must mean "omit the key", not "send an empty string" --
+    # some token endpoints reject the latter on a client that was never
+    # registered as confidential.
+    seen = {}
+
+    def transport(url, data, headers, timeout):
+        seen["data"] = dict(data)
+        seen["headers"] = dict(headers)
+        return {"access_token": "X", "expires_in": 60}
+
+    auth = _oauth_auth(transport, client_secret=None)
+    auth.mint()
+    assert "client_secret" not in seen["data"]
+    assert seen["data"] == {
+        "grant_type": "refresh_token",
+        "refresh_token": "REFRESH-TOKEN-do-not-leak",
+        "client_id": "client-123",
+    }
+
+
+def test_oauth_refresh_request_format_json_sets_json_content_type():
+    seen = {}
+
+    def transport(url, data, headers, timeout):
+        seen["headers"] = dict(headers)
+        return {"access_token": "X", "expires_in": 60}
+
+    auth = _oauth_auth(transport, request_format="json")
+    auth.mint()
+    assert seen["headers"]["Content-Type"] == "application/json"
+
+
+def test_oauth_refresh_request_format_defaults_to_form_encoded():
+    seen = {}
+
+    def transport(url, data, headers, timeout):
+        seen["headers"] = dict(headers)
+        return {"access_token": "X", "expires_in": 60}
+
+    auth = _oauth_auth(transport)
+    auth.mint()
+    assert seen["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+
+
+def test_default_gcp_transport_sends_a_real_json_body_when_asked():
+    # _default_gcp_transport is the shared wire-serialization point for
+    # every Auth class in this module -- confirm it actually respects the
+    # Content-Type it's given instead of always form-encoding regardless
+    # of it (the bug this fixes: the header said JSON but the body was
+    # form-urlencoded either way).
+    import json as _json
+    from unittest.mock import patch, MagicMock
+
+    from portunus.auth import _default_gcp_transport
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"access_token": "X"}'
+
+    def fake_urlopen(req, timeout):
+        captured["body"] = req.data
+        return FakeResponse()
+
+    with patch("portunus.auth.urllib.request.urlopen", side_effect=fake_urlopen):
+        _default_gcp_transport(
+            "https://example.com/token",
+            {"client_id": "abc", "grant_type": "refresh_token"},
+            {"Content-Type": "application/json"},
+            30.0,
+        )
+    assert _json.loads(captured["body"]) == {"client_id": "abc", "grant_type": "refresh_token"}
+
+
 def test_long_lived_cloud_key_conformance_rejects_static_inputs(tmp_path):
     with pytest.raises(AuthError):
         assert_no_long_lived_cloud_keys(env={"AWS_ACCESS_KEY_ID": "AKIA..."})

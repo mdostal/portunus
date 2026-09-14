@@ -517,11 +517,17 @@ class OAuthBackend:
             auth = OAuthRefreshTokenAuth(
                 token_endpoint=credential["token_endpoint"],
                 client_id=credential["client_id"],
-                client_secret=credential["client_secret"],
+                # Optional: a genuinely public/PKCE OAuth client (e.g. Codex
+                # CLI's refresh grant) has no client_secret to supply -- see
+                # OAuthRefreshTokenAuth's own doc comment. .get() rather than
+                # [...] so a bundle that legitimately omits this key doesn't
+                # KeyError before ever reaching the client.
+                client_secret=credential.get("client_secret"),
                 refresh_token=credential["refresh_token"],
                 identity=sm_name,
                 audit=self.audit,
                 transport=self.transport,
+                request_format=credential.get("request_format", "form"),
             )
             minted = auth.mint()
         except (AuthError, KeyError) as exc:
