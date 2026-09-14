@@ -153,8 +153,9 @@ def portunus_rotation_status(provider: str = "") -> dict:
     one provider or all. Metadata only, never a credential -- rotation
     adapters resolve their own admin token via the normal boundary-only
     resolver, never a value this tool could see. Same values as
-    `portunus rotation-bindings show --json`. Every provider is a stub
-    today (status="stub") -- no real rotation has ever fired."""
+    `portunus rotation-bindings show --json`. Real adapters: `oauth`
+    (wraps OAuthBackend -- drives every stored OAuth refresh credential
+    through a single job). Stub adapters: vercel, github, stripe."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
@@ -175,8 +176,16 @@ def portunus_discover(project: str, register: bool = False) -> dict:
     project. Mirrors `portunus discover [--register] --json` exactly -- one
     safety-reviewed implementation, three entry points (CLI, UI, MCP)."""
     registry, _audit, _broker, resolver = _build()
+    account = ""
+    impersonate_service_account = ""
+    binding = load_vault_bindings().get(project)
+    if binding:
+        account = binding.account
+        impersonate_service_account = binding.impersonate_service_account
     try:
-        discovered = list_gcp_secrets(project)
+        discovered = list_gcp_secrets(
+            project, account=account, impersonate_service_account=impersonate_service_account
+        )
     except DiscoverError as exc:
         return {"error": str(exc)}
 
