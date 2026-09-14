@@ -1,0 +1,112 @@
+id: 05-oauth-refresh-adapter-and-closeout
+epic: portunus-real-rotation-adapters
+title: OAuth refresh adapter over existing OAuthBackend + docs matrix + version bump
+status: planned
+complexity: medium
+methodology: tdd
+depends_on: [03-rotation-audit-inventory, 04-gcp-sa-key-adapter]
+
+description: |
+  Two slices plus closeout.
+
+  (A) OAuthRefreshRotationAdapter. The smallest real adapter in the epic, because the work
+  is already done and proven: OAuthBackend.access() (backend.py:453) mints via
+  OAuthRefreshTokenAuth, detects a provider-rotated refresh_token, and persists it back
+  through store_oauth_credential with audit logging -- confirmed live against
+  auth.openai.com/oauth/token for Codex CLI's subscription login (commits 25a3fa6, caeab2f).
+  This adapter WRAPS that; it does not reimplement it. A second implementation would be a
+  second home for the subtle spent-refresh-token bug the inline comment at backend.py:540
+  documents.
+
+  The value added is uniformity: once refresh-token credentials are addressable through
+  rotation_adapter_for(), ONE periodic job can drive every one of them, instead of a bespoke
+  launchd job per provider (as PANT-146/147/149 built for Codex alone, mirroring PANT-47).
+  Story 03's audit already enumerates them via list_oauth_credentials().
+
+  Note the semantic difference from story 04, which the docs must be explicit about: an
+  OAuth refresh "rotation" replaces a short-lived token the provider itself rotates, and has
+  no destructive phase at all -- there is no old key to retire, so --retire-old is
+  meaningless here and must be rejected rather than silently ignored.
+
+  (B) Docs + closeout. docs/rotation.md becomes the single human-facing answer to "what
+  rotates, what doesn't, and what do I have to do by hand" -- the provider matrix, the
+  non-destructive default and its rationale, and an explicit section for `manual` providers
+  stating that no auto-rotation is possible and human re-issue is required. The brief is
+  specific that such providers be documented rather than silently skipped. Version bump,
+  CHANGELOG, and the stale claims in portunus_rotation_status's docstring and rotation.py's
+  module docstring ("No real provider API is ever called from this module", "Every provider
+  is a stub today") corrected -- both are false once story 04 lands.
+
+acceptance_criteria:
+  - "Given OAuthRefreshRotationAdapter.rotate(), when it runs, then it delegates to the existing OAuthBackend/OAuthRefreshTokenAuth path rather than issuing its own refresh_token grant -- no second implementation of the refresh flow exists in the codebase"
+  - "Given a provider that returns a rotated refresh_token, when rotation runs, then the new refresh token is persisted exactly once via store_oauth_credential and the RotationResult reports success without containing the token"
+  - "Given --retire-old passed to an OAuth refresh rotation, when invoked, then it is rejected with a clear error explaining there is no superseded credential to retire -- not silently accepted and ignored"
+  - "Given every stored OAuth credential, when the periodic refresh job runs, then it drives them through the single adapter interface -- adding a new refresh-token credential requires no new per-provider job"
+  - "Given docs/rotation.md, when read, then it states the non-destructive default and its rationale, and lists every 'manual' provider with an explicit statement that no auto-rotation is possible and human re-issue is required"
+  - "Given rotation.py's module docstring and portunus_rotation_status's docstring, when read after this epic, then neither still claims that no real provider API is ever called or that every provider is a stub -- both are false once story 04 lands"
+  - "Given the full test suite, when run, then it passes with no network access -- OAuth transports are injected and faked, as tests/test_backend_oauth.py already does"
+
+steps:
+  - id: test-spec
+    description: Failing tests for delegation (not reimplementation), single-persist of a rotated refresh token, --retire-old rejection, and the periodic job driving every stored credential through one interface. Injected fake transports throughout.
+    agent: tester
+  - id: implement
+    description: Implement OAuthRefreshRotationAdapter wrapping OAuthBackend; register in _ADAPTERS; generalize the periodic refresh job to iterate list_oauth_credentials().
+    agent: developer
+    depends_on: [test-spec]
+  - id: docs
+    description: Write docs/rotation.md (matrix, non-destructive default + rationale, explicit manual-provider section); correct the now-false docstrings in rotation.py and mcp_server.py; CHANGELOG; version bump.
+    agent: developer
+    depends_on: [implement]
+  - id: review
+    description: Confirm no second refresh implementation exists, that manual providers are documented as permanently human-action rather than as pending work, and that no docstring still claims stub-only posture.
+    agent: reviewer
+    depends_on: [docs]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: "OAuthBackend at :453 -- the proven mint + rotated-refresh-token write-back this adapter wraps; the comment at :540 explains why the write-back is not optional"
+    - path: src/portunus/auth.py
+      purpose: "OAuthRefreshTokenAuth at :286 and OAuthAccessToken.rotated_refresh_token at :283"
+    - path: tests/test_backend_oauth.py
+      purpose: The existing injected-transport test posture this story follows -- no network in tests
+
+files_to_modify:
+  - file: src/portunus/rotation.py
+    change: Add OAuthRefreshRotationAdapter; register in _ADAPTERS; correct the module docstring
+  - file: src/portunus/mcp_server.py
+    change: Correct portunus_rotation_status's stub-only docstring claim
+  - file: docs/rotation.md
+    change: New file -- the human-facing rotation guide
+  - file: CHANGELOG.md
+    change: Entry for the epic
+  - file: pyproject.toml
+    change: Minor version bump from 0.32.0
+  - file: tests/test_rotation.py
+    change: OAuth adapter tests
+
+design_decisions:
+  - decision: Wrap OAuthBackend rather than reimplement the refresh grant
+    rationale: "The existing path is proven live and the spent-refresh-token failure mode is subtle; a parallel implementation would be a second place for it to regress"
+  - decision: --retire-old is an error for OAuth rotations, not a no-op
+    rationale: "Silently accepting a destructive-sounding flag that does nothing teaches a human the flag is harmless, which is exactly the wrong lesson before they use it on GCP SA keys"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "The rotated refresh token stays inside the existing store_oauth_credential path; the adapter returns a RotationResult that structurally cannot carry it (story 02 asserts the field set)."
+  - concern: audit-chain-integrity
+    action: "OAuthBackend already logs credential-mint / ok:refresh-token-rotated. The adapter adds action='rotate' entries at the rotation layer so a rotation driven through the adapter interface is traceable as a rotation, not only as a mint."
+
+risks:
+  - severity: medium
+    description: Generalizing the periodic job regresses the working Codex refresh
+    mitigation: The Codex credential is covered by the same tests; delegation (not reimplementation) means the mint path itself is unchanged
+  - severity: low
+    description: docs/rotation.md drifts from the real adapter registry
+    mitigation: The manual-provider section is generated from the same bindings data `rotation audit` reads, not maintained by hand

@@ -1,0 +1,98 @@
+id: 02-rotation-capability-model
+epic: portunus-real-rotation-adapters
+title: RotationResult + adapter protocol + "manual" capability + rotate audit action
+status: planned
+complexity: medium
+methodology: tdd
+depends_on: [01-provider-rotation-research]
+
+description: |
+  Extends rotation.py from a stub registry into a model real adapters can implement, without
+  changing any existing behavior. Four additive pieces:
+
+  (1) RotationBinding.status gains a third value "manual" -- no programmatic rotation path
+  exists for this provider's stored credential type, human re-issue required. Today status
+  is "real"|"stub", which conflates "not built yet" with "cannot be built": a Linear
+  personal API key left as "stub" reads as a backlog item when it is actually a permanent
+  human-action requirement. Default stays "stub"; the existing three adapters are untouched.
+
+  (2) RotationResult -- a frozen dataclass returned by a successful .rotate(): provider,
+  reference name, new key IDENTIFIER (never material), phase reached, whether the old
+  credential was retired, timestamps. Structurally incapable of carrying a credential: no
+  field holds one, and a test asserts the dataclass's field set exactly.
+
+  (3) RotationAdapter protocol formalized: .capability() -> "auto"|"manual"|"unknown" and
+  .rotate(ref, resolver=None, retire_old=False) -> RotationResult. The three existing stubs
+  gain .capability() returning "unknown" and keep raising from .rotate() unchanged -- their
+  current tests must still pass verbatim.
+
+  (4) The audit action deferred by portunus-metadata-and-rotation-provenance
+  (design-discussion.md SS3.3). action="rotate", result encoding the phase reached:
+  ok:created / ok:verified / ok:retired / warn:verify-failed / err:<reason>. AuditChain.append
+  takes a free-form action string (audit.py:99) so there is no schema change and verify()
+  is unaffected. A FAILED rotation must audit too -- a half-rotated credential is exactly
+  the state a human needs the trail for.
+
+  No real adapter ships in this story. It is the shared vocabulary stories 03/04/05 need.
+
+acceptance_criteria:
+  - "Given RotationBinding constructed with no explicit status, when inspected, then status is still 'stub' -- the existing default is unchanged by this story"
+  - "Given a RotationBinding with status='manual', when round-tripped through save_rotation_bindings/load_rotation_bindings, then 'manual' survives, and `rotation-bindings show` renders it distinctly from 'stub' so a permanent human-action requirement does not read as a backlog item"
+  - "Given RotationResult, when its dataclass fields are enumerated, then the set contains no field capable of holding credential material -- key identifiers, phase, booleans and timestamps only"
+  - "Given VercelRotationAdapter/GitHubRotationAdapter/StripeRotationAdapter, when .rotate() is called, then each still raises RotationAdapterError with its existing message, and .capability() returns 'unknown' -- tests/test_rotation.py's existing assertions pass verbatim"
+  - "Given a rotation that fails at the verify phase, when audited, then an entry with action='rotate' and result='warn:verify-failed' is appended -- a failed rotation is never silently unaudited"
+  - "Given AuditChain.verify() after rotate entries are appended, when run, then the chain still verifies -- the new action string requires no schema change"
+
+steps:
+  - id: test-spec
+    description: Failing tests for the manual status round-trip, RotationResult's field set, .capability() on each existing stub, the rotate audit action including the failure path, and chain verification afterwards. Assert the existing stub .rotate() tests still pass unchanged.
+    agent: tester
+  - id: implement
+    description: Add the manual status, RotationResult, the capability protocol and the rotate audit action to rotation.py; render manual distinctly in `rotation-bindings show` and portunus_rotation_status.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm this story is behavior-preserving for every existing surface -- no adapter became real, no default changed, portunus_rotation_status's shape is additive only.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/rotation.py
+      purpose: RotationBinding + the 3 stub adapters + rotation_adapter_for -- the module this story extends
+    - path: src/portunus/audit.py
+      purpose: "append() at :99 takes a free-form action string; verify() recomputes the body byte-for-byte, so the new action must not perturb key order"
+    - path: src/portunus/mcp_server.py
+      purpose: "portunus_rotation_status at :151 -- its docstring's 'every provider is a stub today' claim needs updating as adapters become real"
+
+files_to_modify:
+  - file: src/portunus/rotation.py
+    change: Add "manual" status, RotationResult, .capability() protocol, rotate audit helper
+  - file: src/portunus/cli.py
+    change: rotation-bindings set --status accepts manual; show renders it distinctly
+  - file: src/portunus/mcp_server.py
+    change: portunus_rotation_status reports capability; docstring no longer claims every provider is a stub
+  - file: tests/test_rotation.py
+    change: Extend -- existing assertions must remain untouched and passing
+
+design_decisions:
+  - decision: A 'manual' capability is a binding status rather than a separate file or tag
+    rationale: "It is exactly the same kind of fact as real/stub -- a per-provider statement about rotation capability -- and RotationBinding is already provider-keyed and persisted"
+  - decision: RotationResult carries a key identifier but never key material
+    rationale: "A human auditing a rotation needs to know WHICH key was created; they never need the material, and a field that could hold it is a field that eventually does"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "RotationResult's field set is asserted directly by test, so a later story cannot quietly add a field that carries material. No adapter becomes real here, so nothing in this story can touch a credential."
+  - concern: audit-chain-integrity
+    action: "Resolves design-discussion SS3.3. action='rotate' with phase-encoded results; append's fixed key order is untouched so verify() recomputes byte-for-byte as before."
+
+risks:
+  - severity: low
+    description: Adding a third status value breaks a consumer that switches exhaustively on real|stub
+    mitigation: Acceptance criterion 1 pins the existing default; review step confirms every existing surface is behavior-preserving

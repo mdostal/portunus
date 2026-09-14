@@ -1,0 +1,84 @@
+id: 03-rotation-audit-inventory
+epic: portunus-real-rotation-adapters
+title: "`portunus rotation audit` -- what is stored vs. what can actually be rotated"
+status: planned
+complexity: medium
+methodology: tdd
+depends_on: [02-rotation-capability-model]
+
+description: |
+  Turns story 01's static matrix into a live inventory. `portunus rotation audit [--json]`
+  walks everything Portunus knows about -- registry references, vault bindings, and
+  LocalEncryptedBackend.list_oauth_credentials() -- groups by provider, and joins each
+  group to its rotation capability, reporting counts per capability plus the specific
+  references behind each.
+
+  This is the brief's "audit what's actually stored" scope item, and it is what makes the
+  ~343-secret long tail tractable: instead of a vague sense that most things never rotate,
+  a number, per provider, with names attached.
+
+  It also carries the cost of story 04's safe default. Because the GCP adapter does not
+  retire superseded keys unless asked, old keys accumulate. `rotation audit` reports
+  un-retired superseded keys per provider so that accumulation is visible and countable
+  rather than silently growing -- without that, the non-destructive default trades a loud
+  risk for a quiet one.
+
+  A provider with capability "manual" must render as a distinct, non-alarming category with
+  its reason and source from the matrix: it is a permanent human-action requirement, not a
+  gap Portunus intends to close. Rendering it in the same bucket as "unknown" would push a
+  human to keep re-checking a question that already has a final answer.
+
+  Metadata only, as every existing inventory surface in this codebase is: names, providers,
+  capabilities, counts, timestamps. Never a value.
+
+acceptance_criteria:
+  - "Given a vault with references across several providers, when `portunus rotation audit` runs, then output groups by provider and reports counts per capability (auto/manual/unknown) with the reference names behind each -- and never prints a secret value"
+  - "Given a provider whose binding status is 'manual', when rendered, then it appears as a distinct category carrying its reason, visually separate from 'unknown' -- a settled answer is not presented as an open question"
+  - "Given a rotated credential whose superseded key was not retired (story 04's default), when the audit runs, then that un-retired key is reported per provider so the accumulation the safe default causes stays visible"
+  - "Given `--json`, when run, then the same data is emitted as machine-readable JSON with the same fields as the human rendering -- no extra fields, and in particular no credential material"
+  - "Given a corrupt or undecryptable stored credential, when encountered during the walk, then it is counted as unreadable and skipped rather than crashing the audit -- mirroring list_oauth_credentials' existing graceful-degradation posture"
+  - "Given a vault with no rotation bindings configured at all, when the audit runs, then it reports every provider as unknown and exits zero -- an unconfigured vault is a valid state, not an error"
+
+steps:
+  - id: test-spec
+    description: Failing tests for grouping/counting, the manual-vs-unknown distinction, un-retired key reporting, --json shape equivalence, the corrupt-entry skip path, and the empty-bindings case.
+    agent: tester
+  - id: implement
+    description: Implement cmd_rotation_audit in cli.py over registry + bindings + list_oauth_credentials; add the matching MCP tool.
+    agent: developer
+    depends_on: [test-spec]
+  - id: review
+    description: Confirm no output path can emit a credential value, and that the manual category reads as settled rather than pending.
+    agent: reviewer
+    depends_on: [implement]
+  - id: integrate
+    description: Commit and push to feature branch.
+    agent: developer
+    depends_on: [review]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/localvault.py
+      purpose: "list_oauth_credentials() at :326 -- metadata views only, already skips undecryptable entries; the precedent this story's graceful degradation mirrors"
+    - path: src/portunus/cli.py
+      purpose: "cmd_rotation_bindings_show at :1278 -- the existing metadata-only rendering idiom to follow"
+    - path: docs/provider-rotation-matrix.md
+      purpose: Story 01's sourced capability data, joined against live inventory here
+
+files_to_modify:
+  - file: src/portunus/cli.py
+    change: Add `rotation audit` subcommand (human + --json)
+  - file: src/portunus/mcp_server.py
+    change: Add portunus_rotation_audit tool
+  - file: tests/test_rotation.py
+    change: Extend with inventory tests
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "Pure inventory. Sources are metadata views (list_oauth_credentials) and binding/registry metadata; no path in this story calls access() or resolves a value. Asserted by acceptance criteria 1 and 4."
+
+risks:
+  - severity: medium
+    description: The audit becomes a wall of unknowns nobody reads
+    mitigation: Counts-first rendering with names available on demand; manual separated out so the unknown bucket shrinks to genuinely open questions

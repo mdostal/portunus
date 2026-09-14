@@ -1,0 +1,136 @@
+name: portunus-real-rotation-adapters
+title: Real key rotation -- capability model, inventory audit, GCP SA keys, OAuth refresh
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+
+description: |
+  portunus-metadata-and-rotation-provenance shipped the SHAPE of rotation (RotationBinding,
+  a provider-keyed adapter registry, `rotation-bindings set/show`, portunus_rotation_status,
+  a UI button wired to derived real/stub state) with every adapter deliberately a stub whose
+  .rotate() unconditionally raises. Separately, portunus-oauth-token-broker + commits
+  25a3fa6/caeab2f shipped a genuinely WORKING rotation loop that was never registered as a
+  RotationAdapter: OAuthBackend.access() mints from a stored refresh token and, when the
+  provider returns a rotated refresh_token, persists it back to the local vault immediately
+  (confirmed live against auth.openai.com/oauth/token for Codex CLI's subscription login).
+
+  This epic closes that gap and generalizes it. Three things, in dependency order:
+
+  (A) VERIFY BEFORE BUILDING. Portunus has discovered ~343+ secrets across ffe-cicd,
+  personalsites-487021 and mercatus-liber-commerce, almost all static with zero rotation.
+  Story 01 is research-only: for each provider actually represented in the vault, establish
+  from that provider's real API docs -- not assumption -- whether programmatic rotation
+  exists. Linear in particular is suspected to have NO rotation path for personal API keys;
+  that answer must be sourced, not guessed, and if confirmed it gets recorded as a first-
+  class "manual" capability rather than silently left as a stub.
+
+  (B) A CAPABILITY MODEL THAT CAN SAY "NO". RotationBinding.status today is "real"|"stub",
+  which conflates "we haven't built it" with "it cannot be built." Story 02 adds a third
+  value, "manual" -- no programmatic rotation path exists, human re-issue required -- and a
+  RotationResult/RotationAdapter protocol real adapters can implement, plus the audit action
+  that portunus-metadata-and-rotation-provenance explicitly deferred (design-discussion.md
+  SS3.3: "a future real-adapter epic will need to decide whether a rotation event gets its
+  own audit action"). Story 03 turns that model into an inventory: `portunus rotation audit`
+  joins what is actually stored to what can actually be rotated.
+
+  (C) TWO REAL ADAPTERS, HIGHEST-GENERALITY FIRST. GCP service-account keys (story 04) are
+  the biggest win -- documented IAM rotation, and every GCP-backed project Portunus manages
+  benefits, not one provider. OAuth refresh (story 05) is the smallest win per line of code,
+  because the machinery already exists and works; it only needs to become addressable
+  through the adapter interface so one periodic job can drive every refresh-token credential
+  uniformly instead of one bespoke launchd job per provider.
+
+  DEFAULT CHOSEN FOR THE DESTRUCTIVE HALF (see design_decisions): the GCP adapter's default
+  is create-new-key-then-verify and STOP. Disabling and deleting the superseded key are
+  gated behind an explicit `--retire-old`, because GCP cannot restore a deleted SA key and
+  Portunus has no inventory of which other workloads hold a given key. Old keys accumulate
+  until a human opts in; `rotation audit` surfaces that accumulation so it can't be
+  forgotten.
+
+stories:
+  - id: 01-provider-rotation-research
+    title: Verify each represented provider's real rotation story (research only, no code)
+    complexity: medium
+    depends_on: []
+  - id: 02-rotation-capability-model
+    title: RotationResult + adapter protocol + "manual" capability + rotate audit action
+    complexity: medium
+    depends_on: [01-provider-rotation-research]
+  - id: 03-rotation-audit-inventory
+    title: "`portunus rotation audit` -- what is stored vs. what can actually be rotated"
+    complexity: medium
+    depends_on: [02-rotation-capability-model]
+  - id: 04-gcp-sa-key-adapter
+    title: Real GCP service-account key adapter (create+verify; retire gated by --retire-old)
+    complexity: high
+    depends_on: [02-rotation-capability-model]
+  - id: 05-oauth-refresh-adapter-and-closeout
+    title: OAuth refresh adapter over existing OAuthBackend + docs matrix + version bump
+    complexity: medium
+    depends_on: [03-rotation-audit-inventory, 04-gcp-sa-key-adapter]
+
+design_decisions:
+  - decision: The GCP SA-key adapter does NOT disable or delete the old key by default
+    rationale: |
+      Deleting an SA key is irreversible in GCP and Portunus has no inventory of which
+      workloads hold a given key, so a default-destructive rotation can silently break
+      production with no undo. Default is create -> verify -> report; `--retire-old` opts
+      into disable, and delete only after a grace period during which the key sits disabled
+      (a disabled key is reversible, a deleted one is not). Chosen as the conventional-safe
+      default in the absence of an explicit instruction to run the full loop live.
+  - decision: RotationBinding.status gains a third value "manual", rather than leaving
+      un-rotatable providers as "stub"
+    rationale: |
+      "stub" means "Portunus hasn't built this yet" and implies a future adapter. A Linear
+      personal API key has no programmatic rotation path to build. Collapsing the two hides
+      a permanent human-action requirement behind what reads as a backlog item. Explicit in
+      the brief: such providers must be documented as "no auto-rotation possible, human
+      re-issue required" rather than silently skipped.
+  - decision: The OAuth adapter wraps OAuthBackend rather than reimplementing the refresh flow
+    rationale: |
+      backend.py:453 already mints, detects a rotated refresh_token, and persists it
+      best-effort with audit-chain logging -- proven live. A second implementation would be
+      a second place for the already-subtle "spent refresh token" bug to regress.
+  - decision: Real adapters authenticate with their own Portunus-managed credential via
+      Resolver.resolve_call(), never a special-cased credential path
+    rationale: |
+      Carried forward unchanged from rotation.py's existing module docstring and
+      docs/architecture.md -- Portunus rotating secrets using a Portunus-managed secret.
+      This epic is the first time that recursive design is actually exercised rather than
+      only documented.
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: |
+      A rotation adapter necessarily handles a freshly-minted credential -- the first place
+      in this codebase where that is true. The new material must go local_backend.store /
+      store_oauth_credential and nowhere else: never returned from .rotate(), never in a
+      RotationResult field, never printed by the CLI, never in an MCP tool response, never
+      in an audit entry. RotationResult carries identifiers and outcomes only (key id,
+      created/verified/retired booleans, timestamps). Acceptance criteria in stories 04/05
+      assert this directly.
+  - concern: audit-chain-integrity
+    action: |
+      Resolves the deferral in portunus-metadata-and-rotation-provenance design-discussion
+      SS3.3. Every real rotation appends action="rotate" with a result string encoding the
+      phase reached (ok:created, ok:verified, ok:retired, warn:verify-failed,
+      err:<reason>). AuditChain.append takes a free-form action string (audit.py:99), so
+      no schema change. A failed verify must still be audited -- a half-rotated credential
+      is precisely the state a human needs the trail for.
+
+risks:
+  - severity: high
+    description: A new SA key verifies fine but some unmonitored workload still holds the old
+      key, and --retire-old is later run, breaking it with no undo
+    mitigation: Default is non-destructive; --retire-old disables before deleting with a
+      grace period in between; `rotation audit` reports every un-retired superseded key so
+      the accumulation is visible rather than silent
+  - severity: medium
+    description: Research (story 01) concludes a provider is rotatable based on a docs page
+      that describes OAuth app tokens, not the personal API key actually in the vault
+    mitigation: Story 01 requires recording the exact credential TYPE each finding applies
+      to, plus a source URL, and marks anything unconfirmed "unknown" rather than "auto"
+  - severity: medium
+    description: Scope creep into rotating all ~343 discovered secrets in one pass
+    mitigation: Explicitly two adapters this epic; story 03's inventory is the backlog
+      artifact for everything else
