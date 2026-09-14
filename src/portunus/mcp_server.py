@@ -153,8 +153,9 @@ def portunus_rotation_status(provider: str = "") -> dict:
     one provider or all. Metadata only, never a credential -- rotation
     adapters resolve their own admin token via the normal boundary-only
     resolver, never a value this tool could see. Same values as
-    `portunus rotation-bindings show --json`. Every provider is a stub
-    today (status="stub") -- no real rotation has ever fired."""
+    `portunus rotation-bindings show --json`. Real adapters: `oauth`
+    (wraps OAuthBackend -- drives every stored OAuth refresh credential
+    through a single job). Stub adapters: vercel, github, stripe."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
