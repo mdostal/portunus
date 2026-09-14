@@ -15,4 +15,31 @@ jobs:
         with:
           python-version: '3.x'
       - run: pip install mkdocs-material
-      - run: mkdocs gh-deploy --force
+      - run: mkdocs build --site-dir /tmp/mkdocs-site
+      # NEVER `mkdocs gh-deploy` here -- gh-deploy force-pushes a single new
+      # commit that replaces the ENTIRE gh-pages branch, discarding whatever
+      # else lives there. gh-pages root is a hand-built landing page
+      # (index.html, install.sh, assets/) that this workflow must never
+      # touch -- confirmed live 2026-09-14: exactly this force-push
+      # destroyed that landing page once already (recovered from GitHub's
+      # not-yet-garbage-collected commit objects, but that is luck, not a
+      # safety net). This step only ever writes into gh-pages's docs/
+      # subdirectory, as real incremental commits, and never runs `git push
+      # --force`.
+      - name: Publish docs/ subpath only, non-destructively
+        run: |
+          set -euo pipefail
+          git fetch origin gh-pages
+          git worktree add /tmp/gh-pages-worktree origin/gh-pages
+          cd /tmp/gh-pages-worktree
+          git rm -rq --ignore-unmatch -- docs
+          mkdir -p docs
+          cp -r /tmp/mkdocs-site/. docs/
+          git add docs
+          if git diff --cached --quiet; then
+            echo "No docs changes to publish."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "docs: publish mkdocs build to docs/ (${GITHUB_SHA::7})"
+          git push origin HEAD:gh-pages
