@@ -9,10 +9,17 @@ of `VaultBinding` -- keyed by provider (not per-reference, same per-project
 reasoning), persisted as PORTUNUS_HOME/rotation-bindings.json, 0600,
 atomic-replace.
 
-Real adapters: `OAuthRefreshRotationAdapter` delegates to the existing
-`OAuthBackend`/`OAuthRefreshTokenAuth` path -- a single interface drives
-every stored OAuth refresh credential without a per-provider job. Stub
-adapters (`VercelRotationAdapter`, `GitHubRotationAdapter`,
+Real adapters:
+- `OAuthRefreshRotationAdapter` delegates to the existing
+  `OAuthBackend`/`OAuthRefreshTokenAuth` path -- a single interface drives
+  every stored OAuth refresh credential without a per-provider job.
+- `GCPServiceAccountKeyRotationAdapter` mints a new GCP SA key, verifies it,
+  stores it to the local backend, and (with --retire-old) disables the
+  superseded key. All gcloud calls go through the injected `runner` seam.
+  Deletion of the old key is never performed in the same call as disable --
+  that is left to a future grace-period sweep.
+
+Stub adapters (`VercelRotationAdapter`, `GitHubRotationAdapter`,
 `StripeRotationAdapter`) still raise unconditionally. A future real adapter
 (Vercel is the confirmed priority target) would authenticate using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
@@ -25,6 +32,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -186,6 +195,225 @@ class OAuthRefreshRotationAdapter:
         )
 
 
+class GCPServiceAccountKeyRotationAdapter:
+    """Real GCP service-account key rotation.
+
+    Phases (in order):
+    1. create  -- mint a new key via ``gcloud iam service-accounts keys create``
+    2. verify  -- confirm the new key works before touching stored state
+    3. store   -- write the new key material to the local backend
+    4. retire  -- OPT-IN ONLY via ``retire_old=True``: DISABLE the superseded
+                  key. Deletion is NEVER performed in the same call -- a
+                  disabled key can be re-enabled, a deleted one cannot be
+                  recovered. Deletion is deferred to a future grace-period sweep.
+
+    Verify-before-store is non-negotiable: if verify fails, nothing is stored
+    and nothing is retired; the audit log records ``warn:verify-failed`` and
+    ``RotationAdapterError`` is raised, leaving the pre-rotation state intact.
+
+    All gcloud calls go through the injected ``runner`` seam (same pattern as
+    ``GcloudBackend``), so tests never contact a real GCP API.
+
+    The ref must expose:
+    - ``sm_name`` -- the secret name in the local backend
+    - ``tags["iam_account"]`` -- the service account email
+      (e.g. ``sa@project.iam.gserviceaccount.com``)
+    - ``project`` -- the GCP project (optional; passed to gcloud if set)
+
+    If a resolver is supplied, the adapter resolves its own admin credential
+    via ``Resolver.resolve_call()`` through the normal boundary-only path
+    before each gcloud invocation. Without a resolver the runner is called
+    directly (tests supply a fake runner that needs no real credential).
+    """
+
+    def __init__(self, runner=None, local_backend=None, audit=None, admin_credential_ref=None):
+        self._runner = runner or subprocess.run
+        self._local_backend = local_backend
+        self._audit = audit
+        # When set, the adapter resolves its own admin GCP credential via
+        # Resolver.resolve_call() before each gcloud invocation, passing the
+        # minted token as --access-token-file. Leave None in tests (the fake
+        # runner needs no real credential); set to a "{{secret:...}}" placeholder
+        # in production so the normal boundary-only path applies.
+        self._admin_credential_ref = admin_credential_ref
+
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(
+        self,
+        ref,
+        resolver=None,
+        retire_old: bool = False,
+    ) -> RotationResult:
+        # --- unpack ref -------------------------------------------------------
+        if hasattr(ref, "sm_name"):
+            sm_name = ref.sm_name
+            ref_name = getattr(ref, "name", sm_name)
+            iam_account = (getattr(ref, "tags", None) or {}).get("iam_account", "")
+            project = getattr(ref, "project", "") or ""
+        else:
+            sm_name = str(ref)
+            ref_name = sm_name
+            iam_account = ""
+            project = ""
+
+        if not iam_account:
+            raise RotationAdapterError(
+                f"GCPServiceAccountKeyRotationAdapter: ref {ref_name!r} has no "
+                "iam_account -- set tags['iam_account'] to the service account email"
+            )
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        # --- capture old key id before anything changes -----------------------
+        old_key_id: Optional[str] = None
+        if retire_old:
+            old_key_id = self._current_key_id(local_backend, sm_name, project)
+
+        # --- 1. CREATE --------------------------------------------------------
+        fd, key_path = tempfile.mkstemp(prefix="portunus-sa-key-", suffix=".json")
+        os.fchmod(fd, 0o600)
+        os.close(fd)
+        new_key_id: Optional[str] = None
+        new_key_content: Optional[str] = None
+        try:
+            self._gcloud_create_key(iam_account, project, key_path, resolver)
+            raw = Path(key_path).read_text()
+            try:
+                new_key_id = json.loads(raw).get("private_key_id", "")
+            except (json.JSONDecodeError, AttributeError):
+                new_key_id = ""
+            new_key_content = raw
+
+            # --- 2. VERIFY ----------------------------------------------------
+            verify_ok = self._gcloud_verify_key(key_path, project, resolver)
+            if not verify_ok:
+                if self._audit:
+                    self._audit.append("rotate:gcp-sa-key", sm_name, "warn:verify-failed")
+                raise RotationAdapterError(
+                    f"GCP SA key verification failed for {ref_name!r} -- "
+                    "rotation aborted; old credential left intact"
+                )
+
+            # --- 3. STORE -----------------------------------------------------
+            local_backend.store(sm_name, new_key_content)
+
+        finally:
+            # Key material must not linger on disk longer than necessary.
+            try:
+                os.unlink(key_path)
+            except OSError:
+                pass
+
+        # --- 4. RETIRE (opt-in): DISABLE only, never delete -------------------
+        if retire_old and old_key_id:
+            self._gcloud_disable_key(iam_account, project, old_key_id, resolver)
+
+        if self._audit:
+            result_tag = f"ok:new={new_key_id}" if new_key_id else "ok"
+            self._audit.append("rotate:gcp-sa-key", sm_name, result_tag)
+
+        return RotationResult(
+            provider="gcp",
+            ref_name=ref_name,
+            phase="stored",
+            retired_old=bool(retire_old and old_key_id),
+        )
+
+    # --- gcloud helpers (all calls go through self._runner) ------------------
+
+    def _gcloud_create_key(self, iam_account: str, project: str, output_path: str, resolver) -> None:
+        cmd = [
+            "gcloud", "iam", "service-accounts", "keys", "create",
+            output_path,
+            f"--iam-account={iam_account}",
+            "--format=json",
+        ]
+        if project:
+            cmd.append(f"--project={project}")
+        self._run(cmd, resolver, context=f"create key for {iam_account}")
+
+    def _gcloud_verify_key(self, key_path: str, project: str, resolver) -> bool:
+        activate_cmd = [
+            "gcloud", "auth", "activate-service-account",
+            f"--key-file={key_path}",
+        ]
+        try:
+            self._run(activate_cmd, resolver, context="activate new key")
+        except RotationAdapterError:
+            return False
+
+        token_cmd = ["gcloud", "auth", "print-access-token"]
+        if project:
+            token_cmd.append(f"--project={project}")
+        try:
+            self._run(token_cmd, resolver, context="print-access-token")
+        except RotationAdapterError:
+            return False
+        return True
+
+    def _gcloud_disable_key(self, iam_account: str, project: str, key_id: str, resolver) -> None:
+        cmd = [
+            "gcloud", "iam", "service-accounts", "keys", "disable",
+            key_id,
+            f"--iam-account={iam_account}",
+        ]
+        if project:
+            cmd.append(f"--project={project}")
+        self._run(cmd, resolver, context=f"disable key {key_id}")
+
+    def _run(self, cmd: list, resolver, context: str) -> None:
+        """Execute a gcloud command through the injected runner.
+
+        When an admin_credential_ref was configured AND a resolver is available,
+        resolves the adapter's own GCP admin credential and passes it via
+        --access-token-file (same boundary-only pattern as GcloudBackend).
+        Otherwise the command runs as-is -- tests inject a fake runner that
+        needs no real credential and set admin_credential_ref=None.
+        """
+        if self._admin_credential_ref and resolver is not None:
+            import os as _os
+            import tempfile as _tmp
+
+            def _run_with_token(token: str) -> None:
+                fd, tf = _tmp.mkstemp(prefix="portunus-rotation-token-")
+                _os.fchmod(fd, 0o600)
+                try:
+                    with _os.fdopen(fd, "w") as fh:
+                        fh.write(token)
+                    augmented = [cmd[0], f"--access-token-file={tf}"] + cmd[1:]
+                    proc = self._runner(augmented, capture_output=True, text=True, timeout=60)
+                    if proc.returncode != 0:
+                        raise RotationAdapterError(
+                            f"gcloud {context} failed: {proc.stderr.strip()[:200]}"
+                        )
+                finally:
+                    try:
+                        _os.unlink(tf)
+                    except OSError:
+                        pass
+
+            resolver.resolve_call(self._admin_credential_ref, _run_with_token)
+        else:
+            proc = self._runner(cmd, capture_output=True, text=True, timeout=60)
+            if proc.returncode != 0:
+                raise RotationAdapterError(
+                    f"gcloud {context} failed: {proc.stderr.strip()[:200]}"
+                )
+
+    def _current_key_id(self, local_backend, sm_name: str, project: str) -> Optional[str]:
+        """Read the currently stored SA key JSON and extract private_key_id."""
+        try:
+            current = local_backend.access(sm_name, project=project)
+            return json.loads(current).get("private_key_id") or None
+        except Exception:
+            return None
+
+
 class VercelRotationAdapter:
     """Vercel -- STUB. No real calls.
 
@@ -223,6 +451,7 @@ class StripeRotationAdapter:
 
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
+    "gcp": GCPServiceAccountKeyRotationAdapter,
     "vercel": VercelRotationAdapter,
     "github": GitHubRotationAdapter,
     "stripe": StripeRotationAdapter,
