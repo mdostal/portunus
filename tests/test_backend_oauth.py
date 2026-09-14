@@ -93,6 +93,33 @@ def test_oauth_backend_malformed_sm_name_raises_backend_error(home):
         backend.access("no-colon-here")
 
 
+def test_oauth_backend_mints_for_a_public_client_credential_with_no_secret(home):
+    # A genuinely secret-less public OAuth client -- e.g. Codex CLI's real
+    # refresh grant against auth.openai.com/oauth/token, confirmed live
+    # 2026-09-14 against codex-rs's own source (codex-rs/login/src/auth/
+    # manager.rs: CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann", no
+    # client_secret field in the request at all). A stored bundle that
+    # simply never had a client_secret key must still mint cleanly instead
+    # of KeyError-ing before ever reaching the token endpoint.
+    local = LocalEncryptedBackend()
+    local.store_oauth_credential(
+        "codex",
+        "dostal",
+        {
+            "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+            "refresh_token": "REFRESH-TOKEN-do-not-leak",
+            "token_endpoint": "https://auth.openai.com/oauth/token",
+            "request_format": "json",
+        },
+    )
+    transport, calls = _counting_transport()
+    backend = OAuthBackend(audit=AuditChain(), transport=transport)
+    token = backend.access("codex:dostal")
+    assert token == "ACCESS.TOKEN"
+    assert "client_secret" not in calls[0]
+    assert calls[0]["client_id"] == "app_EMoamEEZ73f0CkXaXp7hrann"
+
+
 def test_oauth_backend_flows_through_the_real_resolve_boundary(home):
     """Zero Resolver-side changes needed -- proving this by actually
     resolving a reference through the normal Registry/Broker/Resolver
