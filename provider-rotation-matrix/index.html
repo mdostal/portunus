@@ -1,0 +1,1711 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A standalone, boundary-only secret broker — reference a secret by name; the value is injected only at the execution boundary, never inside an LLM or agent context.">
+      
+      
+      
+        <link rel="canonical" href="https://mdostal.github.io/portunus/provider-rotation-matrix/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../rotation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Provider Rotation Matrix - Portunus</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#provider-rotation-matrix" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Portunus" class="md-header__button md-logo" aria-label="Portunus" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Portunus
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Provider Rotation Matrix
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mdostal/portunus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdostal/portunus
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Portunus" class="md-nav__button md-logo" aria-label="Portunus" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Portunus
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mdostal/portunus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdostal/portunus
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portunus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portunus Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Rotation Matrix
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Rotation Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#inventory-enumerated-before-any-provider-research" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory (enumerated before any provider research)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inventory (enumerated before any provider research)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#local-encrypted-vault-pantheon-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local-encrypted vault (Pantheon container)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gcp-ffe-cicd-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GCP ffe-cicd project
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auto-documented-programmatic-rotation-path-exists-for-this-credential-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        auto — documented programmatic rotation path exists for this credential type
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="auto — documented programmatic rotation path exists for this credential type">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gcp-service-account-key-json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GCP service account key (JSON)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#google-cloud-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Google Cloud API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resend-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resend API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vercel-personal-team-access-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vercel personal / team access token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sentry-user-auth-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sentry user auth token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#youtrack-personal-permanent-token-jetbrains-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        YouTrack personal permanent token (JetBrains Hub)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grafana-cloud-organization-api-key-access-policy-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grafana Cloud organization API key / access policy token
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#manual-positively-confirmed-absence-of-any-programmatic-rotation-path-for-this-credential-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        manual — positively confirmed absence of any programmatic rotation path for this credential type
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="manual — positively confirmed absence of any programmatic rotation path for this credential type">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#linear-personal-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linear personal API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-llm-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anthropic LLM API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-claude-code-oauth-setup-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anthropic Claude Code OAuth setup-token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-personal-access-token-gh-cli-oauth-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub personal access token / gh CLI OAuth token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stripe-standard-api-key-secret-and-publishable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stripe standard API key (secret and publishable)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slack-incoming-webhook-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack incoming webhook URL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#meetup-api-key-and-oauth-app-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Meetup API key and OAuth app credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eventbrite-personal-token-and-oauth-app-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Eventbrite personal token and OAuth app credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-push-notification-service-apns-auth-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple Push Notification Service (APNS) auth key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-app-store-connect-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple App Store Connect API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-code-signing-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple code-signing certificate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#android-signing-keystore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Android signing keystore
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grafana-self-hosted-admin-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grafana self-hosted admin password
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#n8n-encryption-key-and-basic-auth-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n8n encryption key and basic-auth password
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jwt-secret-symmetric-signing-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JWT secret / symmetric signing key
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unknown-rotation-story-not-yet-established-from-providers-own-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unknown — rotation story not yet established from provider's own docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credential-types-that-are-not-rotateable-config-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credential types that are not rotateable (config / IDs)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-in-this-vault-notable-omissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not in this vault (notable omissions)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rotation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rotation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#inventory-enumerated-before-any-provider-research" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory (enumerated before any provider research)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inventory (enumerated before any provider research)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#local-encrypted-vault-pantheon-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local-encrypted vault (Pantheon container)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gcp-ffe-cicd-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GCP ffe-cicd project
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#auto-documented-programmatic-rotation-path-exists-for-this-credential-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        auto — documented programmatic rotation path exists for this credential type
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="auto — documented programmatic rotation path exists for this credential type">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gcp-service-account-key-json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GCP service account key (JSON)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#google-cloud-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Google Cloud API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resend-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resend API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vercel-personal-team-access-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vercel personal / team access token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sentry-user-auth-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sentry user auth token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#youtrack-personal-permanent-token-jetbrains-hub" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        YouTrack personal permanent token (JetBrains Hub)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grafana-cloud-organization-api-key-access-policy-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grafana Cloud organization API key / access policy token
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#manual-positively-confirmed-absence-of-any-programmatic-rotation-path-for-this-credential-type" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        manual — positively confirmed absence of any programmatic rotation path for this credential type
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="manual — positively confirmed absence of any programmatic rotation path for this credential type">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#linear-personal-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Linear personal API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-llm-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anthropic LLM API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-claude-code-oauth-setup-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anthropic Claude Code OAuth setup-token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#github-personal-access-token-gh-cli-oauth-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GitHub personal access token / gh CLI OAuth token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stripe-standard-api-key-secret-and-publishable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stripe standard API key (secret and publishable)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slack-incoming-webhook-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack incoming webhook URL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#meetup-api-key-and-oauth-app-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Meetup API key and OAuth app credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eventbrite-personal-token-and-oauth-app-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Eventbrite personal token and OAuth app credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-push-notification-service-apns-auth-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple Push Notification Service (APNS) auth key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-app-store-connect-api-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple App Store Connect API key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apple-code-signing-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apple code-signing certificate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#android-signing-keystore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Android signing keystore
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grafana-self-hosted-admin-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grafana self-hosted admin password
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#n8n-encryption-key-and-basic-auth-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n8n encryption key and basic-auth password
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#jwt-secret-symmetric-signing-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JWT secret / symmetric signing key
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unknown-rotation-story-not-yet-established-from-providers-own-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unknown — rotation story not yet established from provider's own docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credential-types-that-are-not-rotateable-config-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credential types that are not rotateable (config / IDs)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-in-this-vault-notable-omissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not in this vault (notable omissions)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="provider-rotation-matrix">Provider Rotation Matrix<a class="headerlink" href="#provider-rotation-matrix" title="Permanent link">&para;</a></h1>
+<p><strong>Researched</strong>: 2026-09-14<br />
+<strong>Scope</strong>: Every provider represented in the Portunus vault as of this date — local-encrypted vault (Pantheon container) + <code>ffe-cicd</code> GCP project (343 secrets). Establishes the real rotation capability for each <em>stored credential type</em>, sourced from the provider's own API documentation.</p>
+<hr />
+<h2 id="inventory-enumerated-before-any-provider-research">Inventory (enumerated before any provider research)<a class="headerlink" href="#inventory-enumerated-before-any-provider-research" title="Permanent link">&para;</a></h2>
+<h3 id="local-encrypted-vault-pantheon-container">Local-encrypted vault (Pantheon container)<a class="headerlink" href="#local-encrypted-vault-pantheon-container" title="Permanent link">&para;</a></h3>
+<p><code>LocalEncryptedBackend.list_oauth_credentials()</code> — <strong>0 OAuth credentials stored</strong> (no <code>oauth:*</code> entries).</p>
+<p><code>reg json</code> — 4 references:</p>
+<table>
+<thead>
+<tr>
+<th>local name</th>
+<th>provider</th>
+<th>credential type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>claude-code-oauth</code></td>
+<td>anthropic</td>
+<td>Claude Code OAuth setup-token (~1yr lifetime) stored in GCP SM <code>pantheon</code> project</td>
+</tr>
+<tr>
+<td><code>claude-code-oauth-ffevents-hive</code></td>
+<td>anthropic</td>
+<td>Claude Code OAuth setup-token (long-lived), local backend</td>
+</tr>
+<tr>
+<td><code>github-pat-dostal</code></td>
+<td>github</td>
+<td>GitHub PAT (<code>gho_...</code> OAuth token via <code>gh auth login</code>, repo scope)</td>
+</tr>
+<tr>
+<td><code>dostal-tech-multica-pat-token</code></td>
+<td>multica</td>
+<td>Multica workspace personal access token</td>
+</tr>
+</tbody>
+</table>
+<p><code>load_vault_bindings()</code> — <strong>no bindings configured</strong> in this container.</p>
+<p><code>load_rotation_bindings()</code> — <strong>no rotation bindings configured</strong>.</p>
+<h3 id="gcp-ffe-cicd-project">GCP <code>ffe-cicd</code> project<a class="headerlink" href="#gcp-ffe-cicd-project" title="Permanent link">&para;</a></h3>
+<p><code>gcloud secrets list --project=ffe-cicd</code> — <strong>343 secrets</strong>. Providers inferred from naming conventions (<code>event-api-prod-stripe-secret-key</code> → Stripe, <code>orchestration-dev-linear-api-key</code> → Linear, etc.).</p>
+<p><code>personalsites-487021</code> and <code>mercatus-liber-commerce</code> — both returned <strong>0 secrets</strong> (access denied or empty). Not researched further.</p>
+<hr />
+<h2 id="matrix">Matrix<a class="headerlink" href="#matrix" title="Permanent link">&para;</a></h2>
+<p>Each row covers a <em>provider + credential type</em> pair. Multiple secrets sharing the same pair are listed as examples. The source URL points to the provider's own documentation for this specific credential type.</p>
+<hr />
+<h2 id="auto-documented-programmatic-rotation-path-exists-for-this-credential-type"><code>auto</code> — documented programmatic rotation path exists for this credential type<a class="headerlink" href="#auto-documented-programmatic-rotation-path-exists-for-this-credential-type" title="Permanent link">&para;</a></h2>
+<hr />
+<h3 id="gcp-service-account-key-json">GCP service account key (JSON)<a class="headerlink" href="#gcp-service-account-key-json" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>event-api-dev-firebase-service-account-base64</code>, <code>event-api-prod-google-service-account-key</code>, <code>social-engine-dev-google-service-account-json</code>, <code>social-engine-prod-google-service-account-json</code>, <code>orchestration-prod-play-store-sa-key</code>, <code>shindig-play-store-service-account-json</code>, <code>event-api-dev-firebase-private-key</code> + <code>event-api-dev-firebase-client-email</code> (a split SA key)</p>
+<p><strong>Credential type</strong>: GCP IAM service account key — a JSON file containing <code>private_key_id</code>, <code>private_key</code>, <code>client_email</code>, and related fields; sometimes base64-encoded for transport. Distinct from a Google Cloud API key (a short opaque string — see next row). Firebase SA keys, Google Play SA keys, and any other SA keys authenticating Google services are all this type.</p>
+<p><strong>Source</strong>: https://cloud.google.com/iam/docs/creating-managing-service-account-keys</p>
+<p><strong>Concrete call sequence an adapter would use</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a new key for the service account</span>
+gcloud<span class="w"> </span>iam<span class="w"> </span>service-accounts<span class="w"> </span>keys<span class="w"> </span>create<span class="w"> </span>new-key.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--iam-account<span class="o">=</span>&lt;SA_EMAIL&gt;
+<span class="c1"># REST: POST https://iam.googleapis.com/v1/projects/{project}/serviceAccounts/{account}/keys</span>
+
+<span class="c1"># 2. Store the new key JSON in ARCA (replaces the old value in Secret Manager or local vault)</span>
+
+<span class="c1"># 3. Verify: make a scoped API call using the new key and confirm success</span>
+
+<span class="c1"># 4. Disable the old key (grace period before permanent deletion)</span>
+gcloud<span class="w"> </span>iam<span class="w"> </span>service-accounts<span class="w"> </span>keys<span class="w"> </span>disable<span class="w"> </span>&lt;OLD_KEY_ID&gt;<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--iam-account<span class="o">=</span>&lt;SA_EMAIL&gt;
+<span class="c1"># REST: POST https://iam.googleapis.com/v1/projects/{project}/serviceAccounts/{account}/keys/{keyId}:disable</span>
+
+<span class="c1"># 5. Delete the old key after the verification window</span>
+gcloud<span class="w"> </span>iam<span class="w"> </span>service-accounts<span class="w"> </span>keys<span class="w"> </span>delete<span class="w"> </span>&lt;OLD_KEY_ID&gt;<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--iam-account<span class="o">=</span>&lt;SA_EMAIL&gt;
+<span class="c1"># REST: DELETE https://iam.googleapis.com/v1/projects/{project}/serviceAccounts/{account}/keys/{keyId}</span>
+</code></pre></div>
+<p>The admin credential that calls the IAM API is itself a Portunus-managed Reference, resolved via <code>Resolver.resolve_call()</code> — not a special-cased path.</p>
+<hr />
+<h3 id="google-cloud-api-key">Google Cloud API key<a class="headerlink" href="#google-cloud-api-key" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>*-google-api-key</code>, <code>*-google-maps-api-key</code>, <code>*-gemini-api-key</code>, <code>*-google-generative-ai-key</code>, <code>flayr-vertex-ai-dev-key</code>, <code>flayr-vertex-ai-prod-key</code></p>
+<p><strong>Credential type</strong>: Google Cloud API key — a short opaque string (<code>AIza...</code>) managed by the Cloud API Keys service (<code>apikeys.googleapis.com</code>). <strong>Distinct from a service account key</strong> — an API key has no private key component and is not tied to a service account identity; it authenticates the application but does not impersonate a service account.</p>
+<p><strong>Source</strong>: https://cloud.google.com/api-keys/docs/manage-api-keys</p>
+<p><strong>Concrete call sequence</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a new API key (with the same API restrictions as the old one)</span>
+gcloud<span class="w"> </span>services<span class="w"> </span>api-keys<span class="w"> </span>create<span class="w"> </span>--display-name<span class="o">=</span><span class="s2">"replacement"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--api-target<span class="o">=</span><span class="nv">service</span><span class="o">=</span>&lt;SERVICE&gt;.googleapis.com
+<span class="c1"># REST: POST https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys</span>
+
+<span class="c1"># 2. Store the new key string in ARCA</span>
+
+<span class="c1"># 3. Verify</span>
+
+<span class="c1"># 4. Delete the old key</span>
+gcloud<span class="w"> </span>services<span class="w"> </span>api-keys<span class="w"> </span>delete<span class="w"> </span>&lt;OLD_KEY_UID&gt;
+<span class="c1"># REST: DELETE https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys/{keyId}</span>
+</code></pre></div>
+<p>Note: requires <code>apikeys.googleapis.com</code> enabled on the project and an identity with <code>apikeys.keys.create</code> + <code>apikeys.keys.delete</code> permissions.</p>
+<p>Note on Vertex AI keys (<code>flayr-vertex-ai-*-key</code>): if these are Cloud API keys (<code>AIza...</code>), this <code>auto</code> finding applies. If they are service account keys JSON, the SA key row above applies instead. The naming convention does not confirm which; a one-time inspection of the key format will resolve this.</p>
+<hr />
+<h3 id="resend-api-key">Resend API key<a class="headerlink" href="#resend-api-key" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>event-api-prod-resend-api-key</code>, <code>orchestration-dev-resend-api-key</code>, <code>social-engine-prod-resend-api-key</code>, <code>venues-dev-resend-api-key</code>, <code>venues-prod-resend-api-key</code></p>
+<p><strong>Credential type</strong>: Resend personal API key (<code>re_...</code>), used for transactional email sending.</p>
+<p><strong>Source</strong>: https://resend.com/docs/api-reference/api-keys/create-api-key</p>
+<p><strong>Concrete call sequence</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a new key</span>
+POST<span class="w"> </span>https://api.resend.com/api-keys
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing-admin-key&gt;
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement"</span>,<span class="w"> </span><span class="s2">"permission"</span>:<span class="w"> </span><span class="s2">"full_access"</span><span class="o">}</span>
+<span class="c1"># returns new key value</span>
+
+<span class="c1"># 2. Store the new key in ARCA</span>
+
+<span class="c1"># 3. Verify (send a test email)</span>
+
+<span class="c1"># 4. Delete the old key</span>
+DELETE<span class="w"> </span>https://api.resend.com/api-keys/<span class="o">{</span>old_api_key_id<span class="o">}</span>
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing-admin-key&gt;
+</code></pre></div>
+<hr />
+<h3 id="vercel-personal-team-access-token">Vercel personal / team access token<a class="headerlink" href="#vercel-personal-team-access-token" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>vercel-deploy-token</code></p>
+<p><strong>Credential type</strong>: Vercel personal or team access token used for CI/CD deployment. <strong>Not</strong> the same as a Vercel AI API key (see <code>unknown</code> section).</p>
+<p><strong>Source</strong>: https://vercel.com/docs/rest-api/endpoints/tokens</p>
+<p><strong>Concrete call sequence</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a replacement token</span>
+POST<span class="w"> </span>https://api.vercel.com/v3/user/tokens
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-token&gt;
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement-deploy-token"</span><span class="o">}</span>
+
+<span class="c1"># 2. Store new token in ARCA</span>
+
+<span class="c1"># 3. Verify</span>
+
+<span class="c1"># 4. Delete old token</span>
+DELETE<span class="w"> </span>https://api.vercel.com/v3/user/tokens/<span class="o">{</span>tokenId<span class="o">}</span>
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-token&gt;
+</code></pre></div>
+<hr />
+<h3 id="sentry-user-auth-token">Sentry user auth token<a class="headerlink" href="#sentry-user-auth-token" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>orchestration-dev-sentry-auth-token</code>, <code>monitoring-dev-sentry-org-token</code>, <code>shindig-prod-sentry-auth-token</code></p>
+<p><strong>Credential type</strong>: Sentry user auth token, generated at https://sentry.io/settings/account/api/auth-tokens/ — distinct from Sentry internal integration tokens.</p>
+<p><strong>Source</strong>: https://docs.sentry.io/api/auth/</p>
+<p><strong>Concrete call sequence</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a replacement token (requires an existing token with `org:admin` scope)</span>
+POST<span class="w"> </span>https://sentry.io/api/0/api-tokens/
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-token&gt;
+
+<span class="c1"># 2. Store new token in ARCA</span>
+
+<span class="c1"># 3. Verify</span>
+
+<span class="c1"># 4. Delete old token</span>
+DELETE<span class="w"> </span>https://sentry.io/api/0/api-tokens/<span class="o">{</span>tokenId<span class="o">}</span>/
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-token&gt;
+</code></pre></div>
+<hr />
+<h3 id="youtrack-personal-permanent-token-jetbrains-hub">YouTrack personal permanent token (JetBrains Hub)<a class="headerlink" href="#youtrack-personal-permanent-token-jetbrains-hub" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>ffe-orchestration-dev-youtrack-api-key</code></p>
+<p><strong>Credential type</strong>: JetBrains Hub permanent personal token (<code>perm:...</code>), used to authenticate the YouTrack REST API.</p>
+<p><strong>Source</strong>: https://www.jetbrains.com/help/hub/rest-api-reference.html#operation/HubRestApi_getTokens</p>
+<p><strong>Concrete call sequence</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a replacement token</span>
+POST<span class="w"> </span>&lt;hub-base-url&gt;/api/rest/users/me/tokens
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing-token&gt;
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement"</span>,<span class="w"> </span><span class="s2">"scope"</span>:<span class="w"> </span><span class="o">[</span>...<span class="o">]}</span>
+
+<span class="c1"># 2. Store new token in ARCA</span>
+
+<span class="c1"># 3. Verify</span>
+
+<span class="c1"># 4. Delete old token</span>
+DELETE<span class="w"> </span>&lt;hub-base-url&gt;/api/rest/users/me/tokens/<span class="o">{</span>tokenId<span class="o">}</span>
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;existing-token&gt;
+</code></pre></div>
+<hr />
+<h3 id="grafana-cloud-organization-api-key-access-policy-token">Grafana Cloud organization API key / access policy token<a class="headerlink" href="#grafana-cloud-organization-api-key-access-policy-token" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>monitoring-dev-grafana-cloud-api-token</code></p>
+<p><strong>Credential type</strong>: Grafana Cloud organization-level API key or access policy token, used to manage the Grafana Cloud org (create stacks, manage members, etc.). <strong>Not</strong> the same as a Grafana instance admin password or a stack-scoped data-source token (see <code>unknown</code> section).</p>
+<p><strong>Source</strong>: https://grafana.com/docs/grafana-cloud/account-management/authentication-and-permissions/grafana-cloud-access-policies/</p>
+<p><strong>Concrete call sequence</strong> (using Access Policies API, preferred over legacy API keys):</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># 1. Create a replacement token under the same access policy</span>
+POST<span class="w"> </span>https://grafana.com/api/v1/orgs/<span class="o">{</span>orgSlug<span class="o">}</span>/access-policies/<span class="o">{</span>policyId<span class="o">}</span>/tokens
+Authorization:<span class="w"> </span>Bearer<span class="w"> </span>&lt;admin-token&gt;
+Body:<span class="w"> </span><span class="o">{</span><span class="s2">"name"</span>:<span class="w"> </span><span class="s2">"replacement"</span><span class="o">}</span>
+
+<span class="c1"># 2. Store new token in ARCA</span>
+
+<span class="c1"># 3. Verify</span>
+
+<span class="c1"># 4. Delete old token</span>
+DELETE<span class="w"> </span>https://grafana.com/api/v1/orgs/<span class="o">{</span>orgSlug<span class="o">}</span>/access-policies/<span class="o">{</span>policyId<span class="o">}</span>/tokens/<span class="o">{</span>tokenId<span class="o">}</span>
+</code></pre></div>
+<hr />
+<h2 id="manual-positively-confirmed-absence-of-any-programmatic-rotation-path-for-this-credential-type"><code>manual</code> — positively confirmed absence of any programmatic rotation path for this credential type<a class="headerlink" href="#manual-positively-confirmed-absence-of-any-programmatic-rotation-path-for-this-credential-type" title="Permanent link">&para;</a></h2>
+<hr />
+<h3 id="linear-personal-api-key">Linear personal API key<a class="headerlink" href="#linear-personal-api-key" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>event-api-dev-linear-api-key</code>, <code>event-api-prod-linear-api-key</code>, <code>orchestration-dev-linear-api-key</code></p>
+<p><strong>Credential type</strong>: <strong>Linear personal API key</strong> — a plain string token (<code>lin_api_...</code>) generated at https://linear.app/settings/api. <strong>This finding applies specifically to personal API keys. It does not apply to Linear OAuth application tokens, which are a different credential type with a different rotation story.</strong></p>
+<p><strong>Source</strong>: https://developers.linear.app/docs/graphql/working-with-the-graphql-api#personal-api-keys</p>
+<p>Linear personal API keys are created and managed exclusively through the account settings UI. Linear's GraphQL API and OAuth 2.0 endpoint coverage is limited to <strong>OAuth application tokens</strong> (used when a third-party integration authenticates on behalf of a user). No Linear API endpoint exists for issuing or revoking personal API keys.</p>
+<p><strong>Why the distinction matters</strong>: Linear does document OAuth token management (access tokens, refresh tokens) for registered OAuth applications. Reading that documentation and applying its capabilities to personal API keys would be incorrect. The secrets in <code>ffe-cicd</code> (<code>*-linear-api-key</code>) are personal API keys, not OAuth app tokens.</p>
+<hr />
+<h3 id="anthropic-llm-api-key">Anthropic LLM API key<a class="headerlink" href="#anthropic-llm-api-key" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>orchestration-dev-anthropic-api-key</code>, <code>social-engine-dev-anthropic-api-key</code>, <code>social-engine-prod-anthropic-api-key</code>, <code>game-library-dev-anthropic-api-key</code></p>
+<p><strong>Credential type</strong>: Anthropic API key (<code>sk-ant-...</code>) for calling the Claude LLM API — distinct from a Claude Code OAuth setup-token (see next row).</p>
+<p><strong>Source</strong>: https://docs.anthropic.com/en/docs/getting-started/installation</p>
+<p>No Anthropic REST API or SDK endpoint exists for creating, listing, or deleting API keys programmatically. Keys are managed exclusively through the Anthropic Console at https://console.anthropic.com/settings/keys.</p>
+<hr />
+<h3 id="anthropic-claude-code-oauth-setup-token">Anthropic Claude Code OAuth setup-token<a class="headerlink" href="#anthropic-claude-code-oauth-setup-token" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>claude-code-oauth</code>, <code>claude-code-oauth-ffevents-hive</code> (Pantheon local vault)</p>
+<p><strong>Credential type</strong>: Long-lived Claude Code application OAuth setup-token (~1yr); distinct from a standard Anthropic LLM API key. Used for Claude Code CLI authentication, not for direct LLM API calls.</p>
+<p><strong>Source</strong>: https://docs.anthropic.com/en/docs/claude-code/setup</p>
+<p>This token is obtained by running the <code>claude</code> CLI's own OAuth device-code flow. It is not a standard OAuth refresh token bundle (which the <code>OAuthBackend</code> can auto-refresh); it is the OAuth setup-token itself. Re-issue requires re-running the <code>claude</code> CLI authentication flow. No documented API endpoint for silent renewal outside that flow.</p>
+<hr />
+<h3 id="github-personal-access-token-gh-cli-oauth-token">GitHub personal access token / gh CLI OAuth token<a class="headerlink" href="#github-personal-access-token-gh-cli-oauth-token" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>github-pat-dostal</code> (Pantheon vault), <code>orchestration-dev-gh-token</code> (ffe-cicd)</p>
+<p><strong>Credential type</strong>: GitHub classic PAT (<code>ghp_...</code>) or gh CLI OAuth token (<code>gho_...</code>) obtained via <code>gh auth login</code> device-code flow.</p>
+<p><strong>Source</strong>: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens</p>
+<p>Classic GitHub PATs cannot be created via the REST API — creation requires browser-based authentication through GitHub's UI. Fine-grained PATs can be revoked via API but not created via API. The <code>gho_...</code> OAuth token produced by <code>gh auth login</code> requires re-running the device-code consent flow to replace. No silent, programmatic re-issue path exists for either type.</p>
+<p>Note: GitHub App installation tokens rotate automatically (1-hour TTL) and are not in scope here — none of the stored names indicate an installation token.</p>
+<hr />
+<h3 id="stripe-standard-api-key-secret-and-publishable">Stripe standard API key (secret and publishable)<a class="headerlink" href="#stripe-standard-api-key-secret-and-publishable" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>stripe-dev-secret-key</code>, <code>stripe-prod-secret-key</code>, <code>stripe-dev-publishable-key</code>, <code>stripe-prod-publishable-key</code>, <code>game-library-dev-stripe-secret-key</code>, <code>venues-dev-secret-stripe-api-key</code>, <code>venues-dev-next-public-stripe-api-key</code>, <code>game-library-dev-react-app-stripe-publishable-key</code></p>
+<p><strong>Credential type</strong>: Stripe standard secret API key (<code>sk_live_...</code> / <code>sk_test_...</code>) and publishable key (<code>pk_live_...</code>). Based on naming convention; stored as standard keys.</p>
+<p><strong>Source</strong>: https://stripe.com/docs/keys#rolling-keys</p>
+<p>Stripe's Dashboard provides a "Roll API key" action for standard keys. No Stripe REST API endpoint exists for creating new standard API keys or rolling existing ones programmatically.</p>
+<p><strong>Stripe restricted keys</strong> (<code>rk_...</code>) are a different credential type with a documented API for creation and deletion (<code>POST /v1/restricted_keys</code>, <code>DELETE /v1/restricted_keys/{id}</code>). None of the stored keys appear to be restricted keys based on naming convention. If any are confirmed to be restricted keys, the finding for that credential changes to <code>auto</code>.</p>
+<hr />
+<h3 id="slack-incoming-webhook-url">Slack incoming webhook URL<a class="headerlink" href="#slack-incoming-webhook-url" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>event-api-dev-slack-webhook-url</code>, <code>event-api-prod-slack-webhook-url</code>, <code>orchestration-dev-slack-app-token</code>, <code>monitoring-dev-slack-webhook-url</code></p>
+<p><strong>Credential type</strong>: Slack incoming webhook URL (a static <code>hooks.slack.com</code> URL tied to a specific channel) and Slack app-level token (<code>xapp-...</code>).</p>
+<p><strong>Source</strong>: https://api.slack.com/messaging/webhooks</p>
+<p>Incoming webhook URLs are generated when an app configures a webhook for a workspace channel. Creating a replacement webhook requires adding a new incoming webhook via the Slack App configuration UI — not a REST API call. <code>xapp-...</code> Socket Mode app tokens are similarly managed through the Slack app settings UI.</p>
+<hr />
+<h3 id="meetup-api-key-and-oauth-app-credentials">Meetup API key and OAuth app credentials<a class="headerlink" href="#meetup-api-key-and-oauth-app-credentials" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>event-api-dev-meetup-key</code>, <code>event-api-prod-meetup-key</code>, <code>event-api-dev-meetup-client-id</code>, <code>event-api-dev-meetup-client-secret</code>, <code>event-api-prod-meetup-client-id</code>, <code>event-api-prod-meetup-client-secret</code></p>
+<p><strong>Credential type</strong>: Meetup personal API key (legacy) and OAuth 2.0 application client credentials (client_id + client_secret). Both types stored.</p>
+<p><strong>Source</strong>: https://www.meetup.com/api/</p>
+<p>Personal API keys are managed in Meetup account settings. OAuth application client credentials are issued and managed through the Meetup developer settings UI. No Meetup API endpoint for programmatic management of OAuth app registrations (client_id/secret) or personal API keys.</p>
+<hr />
+<h3 id="eventbrite-personal-token-and-oauth-app-credentials">Eventbrite personal token and OAuth app credentials<a class="headerlink" href="#eventbrite-personal-token-and-oauth-app-credentials" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>event-api-dev-eventbrite-api-key</code>, <code>event-api-prod-eventbrite-api-key</code>, <code>event-api-dev-eventbrite-private-token</code>, <code>event-api-prod-eventbrite-private-token</code>, <code>event-api-*-eventbrite-oauth-client-id</code>, <code>event-api-*-eventbrite-oauth-client-secret</code></p>
+<p><strong>Credential type</strong>: Eventbrite personal OAuth token (<code>private_token</code>) / API key AND OAuth application client credentials (client_id + client_secret). Multiple credential types stored under this provider.</p>
+<p><strong>Source</strong>: https://www.eventbrite.com/platform/docs/authentication</p>
+<p>Eventbrite's personal API tokens (including <code>private_token</code>) and OAuth app credentials are managed exclusively through the Eventbrite developer portal. No Eventbrite API endpoint for programmatic issuance or rotation of personal tokens or OAuth app client credentials.</p>
+<hr />
+<h3 id="apple-push-notification-service-apns-auth-key">Apple Push Notification Service (APNS) auth key<a class="headerlink" href="#apple-push-notification-service-apns-auth-key" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>apns-authkey-B9FVCQ4GB4</code>, <code>apns-authkey-U22RLFH997</code>, <code>apns-authkey-unknown-jan9</code>, <code>shindig-apns-authkey-p8</code></p>
+<p><strong>Credential type</strong>: APNS token-based auth key (<code>.p8</code> file, 10-character key ID), issued through Apple Developer Portal.</p>
+<p><strong>Source</strong>: https://developer.apple.com/documentation/usernotifications/setting_up_a_remote_notification_server/establishing_a_token-based_connection_to_apns</p>
+<p>Apple provides no public API for programmatic issuance or revocation of APNS auth keys. All management is through the Apple Developer Portal (Certificates, Identifiers &amp; Profiles).</p>
+<hr />
+<h3 id="apple-app-store-connect-api-key">Apple App Store Connect API key<a class="headerlink" href="#apple-app-store-connect-api-key" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>orchestration-prod-apple-asc-api-key-p8</code>, <code>shindig-prod-asc-key-base64</code>, <code>shindig-prod-asc-key-id</code>, <code>shindig-prod-asc-issuer-id</code></p>
+<p><strong>Credential type</strong>: App Store Connect API key (private key in <code>.p8</code> format, with associated key ID and issuer ID), issued through App Store Connect.</p>
+<p><strong>Source</strong>: https://developer.apple.com/documentation/appstoreconnectapi/creating_api_keys_for_app_store_connect_api</p>
+<p>App Store Connect API keys are issued through the App Store Connect web UI. The App Store Connect API authenticates using these keys but provides no endpoint for issuing or revoking them.</p>
+<hr />
+<h3 id="apple-code-signing-certificate">Apple code-signing certificate<a class="headerlink" href="#apple-code-signing-certificate" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>apple-developer-cert-cer</code>, <code>shindig-ios-cert-43F7V53843-cer</code>, <code>shindig-ios-cert-43F7V53843-p12</code>, <code>shindig-ios-cert-9JYA8DSMY6-cer</code>, <code>shindig-ios-cert-9JYA8DSMY6-p12</code>, <code>shindig-distribution-cert</code>, <code>shindig-appstore-profile</code></p>
+<p><strong>Credential type</strong>: Apple developer and distribution code-signing certificate (X.509, <code>.cer</code> / <code>.p12</code>).</p>
+<p><strong>Source</strong>: https://developer.apple.com/support/certificates/</p>
+<p>Code-signing certificates are issued by Apple's Certificate Authority through the Developer Portal or Xcode. No public API for programmatic issuance or revocation.</p>
+<hr />
+<h3 id="android-signing-keystore">Android signing keystore<a class="headerlink" href="#android-signing-keystore" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>shindig-android-keystore-base64</code>, <code>shindig-android-keystore-password</code>, <code>shindig-dev-keystore-base64</code>, <code>shindig-dev-keystore-password</code></p>
+<p><strong>Credential type</strong>: Android Java Keystore file (<code>.jks</code> / <code>.keystore</code>) containing the signing private key, plus associated passwords.</p>
+<p><strong>Source</strong>: https://developer.android.com/studio/publish/app-signing</p>
+<p>Android app signing keystores are locally generated artifacts, not issued by a third-party service. Rotation requires generating a new keystore and updating the Google Play Developer account's upload-key registration — a process that requires explicit Google Play support action once an app is live. No programmatic rotation path.</p>
+<hr />
+<h3 id="grafana-self-hosted-admin-password">Grafana self-hosted admin password<a class="headerlink" href="#grafana-self-hosted-admin-password" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>monitoring-dev-grafana-admin-password</code>, <code>monitoring-dev-grafana-root-url</code></p>
+<p><strong>Credential type</strong>: Grafana instance admin password (a configuration value set in <code>grafana.ini</code>, not a cloud-managed token).</p>
+<p><strong>Source</strong>: https://grafana.com/docs/grafana/latest/administration/user-management/server-user-management/</p>
+<p>Changing the admin password requires authenticating with the current password to call <code>PUT /api/admin/users/{id}/password</code> — the API call itself requires the existing credential, making this an interactive/manual operation. Not autonomously rotatable.</p>
+<hr />
+<h3 id="n8n-encryption-key-and-basic-auth-password">n8n encryption key and basic-auth password<a class="headerlink" href="#n8n-encryption-key-and-basic-auth-password" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>social-engine-dev-n8n-encryption-key</code>, <code>social-engine-dev-n8n-basic-auth-password</code>, <code>social-engine-dev-n8n-basic-auth-user</code></p>
+<p><strong>Credential type</strong>: Self-hosted n8n instance configuration values — an AES encryption key protecting stored workflow credentials, and HTTP basic-auth credentials for accessing the n8n UI.</p>
+<p><strong>Source</strong>: https://docs.n8n.io/hosting/configuration/environment-variables/security/</p>
+<p>These are startup configuration values, not provider-issued tokens. Rotating the encryption key requires decrypting all stored n8n credentials with the old key and re-encrypting with the new one before restart. No automated rotation path.</p>
+<hr />
+<h3 id="jwt-secret-symmetric-signing-key">JWT secret / symmetric signing key<a class="headerlink" href="#jwt-secret-symmetric-signing-key" title="Permanent link">&para;</a></h3>
+<p><strong>Vault examples</strong>: <code>event-api-dev-jwt-secret</code>, <code>event-api-prod-jwt-secret</code>, <code>social-engine-dev-cron-secret</code>, <code>social-engine-dev-oauth-token-encryption-key</code>, <code>social-engine-prod-oauth-token-encryption-key</code>, <code>social-engine-dev-byok-master-key</code></p>
+<p><strong>Credential type</strong>: Application-managed symmetric secret key for JWT signing or symmetric encryption (not issued by a third-party provider).</p>
+<p>These are application-level secrets with no provider API. Rotation requires updating the value in all consumers simultaneously (coordinated deployment). No external API governs them.</p>
+<hr />
+<h2 id="unknown-rotation-story-not-yet-established-from-providers-own-docs"><code>unknown</code> — rotation story not yet established from provider's own docs<a class="headerlink" href="#unknown-rotation-story-not-yet-established-from-providers-own-docs" title="Permanent link">&para;</a></h2>
+<p><code>unknown</code> is the honest default; it does not mean <code>manual</code>. Each row below lists what would be needed to resolve the finding.</p>
+<table>
+<thead>
+<tr>
+<th>provider</th>
+<th>credential_type</th>
+<th>vault_examples</th>
+<th>what to verify</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Autumn</td>
+<td>App secret key / webhook secret</td>
+<td><code>autumn-sandbox-flayr-secret-key</code>, <code>*-autumn-secret-key</code>, <code>*-autumn-webhook-secret</code></td>
+<td>Autumn (useautumn.com) subscription billing; no rotation API found in public docs at research time</td>
+</tr>
+<tr>
+<td>Browserbase</td>
+<td>API key</td>
+<td><code>browserbase-api-key</code>, <code>browserbase-project-id</code></td>
+<td>Browser automation SaaS; <code>browserbase-project-id</code> is a config value, not a credential; key rotation API not found</td>
+</tr>
+<tr>
+<td>Clerk</td>
+<td>Backend secret key / webhook secret</td>
+<td><code>*-clerk-secret-key</code>, <code>*-clerk-webhook-secret</code>, <code>*-clerk-publishable-key</code></td>
+<td>Clerk Dashboard has a "Rotate API key" UI; whether there is a REST API path for rotation was not confirmed from docs</td>
+</tr>
+<tr>
+<td>Convex</td>
+<td>Deploy key / internal secret</td>
+<td><code>*-convex-deploy-key</code>, <code>*-convex-internal-secret</code>, <code>*-convex-deployment</code></td>
+<td>Convex management API exists; key rotation endpoints for deploy keys not confirmed; <code>*-convex-deployment</code> is a URL (config, not credential)</td>
+</tr>
+<tr>
+<td>Firecrawl</td>
+<td>API key</td>
+<td><code>flayr-firecrawl-api-key</code>, <code>*-firecrawl-api-key</code></td>
+<td>Web-crawling SaaS; key rotation API not found in public docs</td>
+</tr>
+<tr>
+<td>Fly.io</td>
+<td>API token</td>
+<td><code>monitoring-dev-fly-api-token</code>, <code>orchestration-dev-fly-api-token</code></td>
+<td>Fly.io has <code>flyctl tokens create</code> CLI; REST API rotation path not confirmed in official docs at research time</td>
+</tr>
+<tr>
+<td>Google / Firebase non-SA, non-API-key</td>
+<td><code>firebase-storage-base</code>, <code>firebase-project-id</code>, <code>google-cloud-project</code></td>
+<td>Various</td>
+<td>These are configuration values (URLs, project IDs), not credentials. Not rotateable.</td>
+</tr>
+<tr>
+<td>Grafana Cloud (stack-scoped data source credentials)</td>
+<td>Prometheus remote write token, Loki URL + credentials</td>
+<td><code>monitoring-dev-grafana-cloud-prom-token</code>, <code>monitoring-dev-grafana-cloud-prom-username</code>, <code>monitoring-dev-grafana-cloud-loki-url</code></td>
+<td>Different from org-level Grafana Cloud API key (see <code>auto</code>). These are stack-instance credentials for data source push endpoints. Rotation via Grafana Cloud stack management API not confirmed.</td>
+</tr>
+<tr>
+<td>Healthchecks.io</td>
+<td>API key / ping key</td>
+<td><code>*-healthchecks-api-key</code>, <code>*-healthchecks-ping-key</code>, <code>*-healthchecks-ping-url</code></td>
+<td>Healthchecks.io REST API (https://healthchecks.io/docs/api/) covers check management; API key rotation specifics not confirmed</td>
+</tr>
+<tr>
+<td>MongoDB Atlas</td>
+<td>Connection URI (contains DB user credentials)</td>
+<td><code>*-mongo-uri</code>, <code>*-mongo-db-name</code></td>
+<td>MongoDB Atlas Admin API supports programmatic DB user creation/password change (<code>POST /api/atlas/v2/groups/{groupId}/databaseUsers</code>), which would allow updating the credentials in the URI. End-to-end rotation confirmed possible in principle; Atlas API management credential setup not verified against this specific vault. <code>*-mongo-db-name</code> is a config value, not a credential.</td>
+</tr>
+<tr>
+<td>Multica</td>
+<td>Workspace personal access token</td>
+<td><code>dostal-tech-multica-pat-token</code></td>
+<td>No public Multica API documentation for programmatic PAT management confirmed at research time</td>
+</tr>
+<tr>
+<td>Pexels</td>
+<td>API key</td>
+<td><code>social-engine-dev-pexels-api-key</code>, <code>social-engine-prod-pexels-api-key</code></td>
+<td>Stock image API; key management via developer portal; rotation API not confirmed</td>
+</tr>
+<tr>
+<td>Pixabay</td>
+<td>API key</td>
+<td><code>social-engine-dev-pixabay-api-key</code>, <code>social-engine-prod-pixabay-api-key</code></td>
+<td>Stock image API; key management via developer portal; rotation API not confirmed</td>
+</tr>
+<tr>
+<td>PostHog</td>
+<td>Project API key / server API key</td>
+<td><code>*-posthog-api-key</code>, <code>*-posthog-server-key</code>, <code>*-posthog-key</code>, <code>*-posthog-host</code>, <code>*-posthog-tracking</code></td>
+<td>PostHog personal API keys (for personal developer access) ARE manageable via API (<code>/api/users/@me/personal_api_keys/</code>). The keys stored here appear to be project API keys (used by applications), which have a different management path. <code>*-posthog-tracking</code> and <code>*-posthog-host</code> are config values, not credentials. Project API key rotation not confirmed via API.</td>
+</tr>
+<tr>
+<td>Qdrant Cloud</td>
+<td>Cloud API key</td>
+<td><code>qdrant-cloud-api-key</code>, <code>qdrant-cloud-url</code></td>
+<td>Qdrant Cloud management API exists; API key rotation specifics not confirmed; <code>qdrant-cloud-url</code> is a config value.</td>
+</tr>
+<tr>
+<td>SeatGeek</td>
+<td>OAuth app client credentials</td>
+<td><code>*-seatgeek-client-id</code>, <code>*-seatgeek-client-secret</code></td>
+<td>Ticketing API; OAuth app credential management path not confirmed</td>
+</tr>
+<tr>
+<td>SerpAPI</td>
+<td>API key</td>
+<td><code>*-serpapi-key</code></td>
+<td>Search API; key management via dashboard; rotation API not confirmed</td>
+</tr>
+<tr>
+<td>Shippo</td>
+<td>API key / webhook secret</td>
+<td><code>game-library-dev-shippo-api-key</code>, <code>game-library-dev-shippo-webhook-secret</code></td>
+<td>Shipping API; key management endpoints not confirmed</td>
+</tr>
+<tr>
+<td>Slack OAuth app credentials</td>
+<td>Client ID / client secret / signing secret</td>
+<td><code>monitoring-dev-slack-client-id</code>, <code>monitoring-dev-slack-client-secret</code>, <code>monitoring-dev-slack-signing-secret</code>, <code>monitoring-dev-slack-verification-token</code>, <code>monitoring-dev-slack-app-id</code></td>
+<td>Slack app-level credentials issued per app registration; rotation requires Slack app reconfiguration; programmatic path not confirmed. <code>monitoring-dev-slack-app-id</code> is a config value, not a credential.</td>
+</tr>
+<tr>
+<td>Ticketmaster</td>
+<td>Consumer key / consumer secret</td>
+<td><code>*-ticketmaster-consumer-key</code>, <code>*-ticketmaster-consumer-secret</code>, <code>*-ticketmaster-callback-url</code></td>
+<td>Ticketmaster API developer credentials; rotation path not confirmed; <code>*-callback-url</code> is a config value.</td>
+</tr>
+<tr>
+<td>Tremendous</td>
+<td>API key / webhook secret</td>
+<td><code>flayr-tremendous-api-key</code>, <code>social-engine-prod-tremendous-webhook-secret</code></td>
+<td>Rewards platform; key management via dashboard; rotation API not confirmed</td>
+</tr>
+<tr>
+<td>Upstash</td>
+<td>Redis REST token / API key</td>
+<td><code>*-upstash-redis-rest-token</code>, <code>*-upstash-redis-rest-url</code>, <code>*-upstash-api-key</code>, <code>orchestration-dev-upstash-email</code></td>
+<td>Upstash management API (<code>/v2/redis</code>) exists with a <code>reset-password</code> endpoint; whether that covers the REST access token specifically is not confirmed. <code>*-upstash-redis-rest-url</code> is a config value. <code>orchestration-dev-upstash-email</code> is an account identifier, not a credential.</td>
+</tr>
+<tr>
+<td>Vercel AI</td>
+<td>API key</td>
+<td><code>game-library-dev-vercel-ai-api-key</code></td>
+<td>Vercel AI is a distinct product from Vercel CI/CD (see <code>vercel-deploy-token</code> in <code>auto</code>); Vercel AI API key rotation endpoints not confirmed separately</td>
+</tr>
+<tr>
+<td>Zernio</td>
+<td>API key / webhook secret</td>
+<td><code>social-engine-*-zernio-api-key</code>, <code>social-engine-*-zernio-webhook-secret</code></td>
+<td>Communications API; no rotation API found in public docs</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="credential-types-that-are-not-rotateable-config-ids">Credential types that are not rotateable (config / IDs)<a class="headerlink" href="#credential-types-that-are-not-rotateable-config-ids" title="Permanent link">&para;</a></h2>
+<p>The following secret names in <code>ffe-cicd</code> store configuration values (URLs, IDs, boolean flags, project names) rather than credentials. Rotation is not applicable.</p>
+<ul>
+<li><code>*-node-env</code>, <code>*-app-url</code>, <code>*-port</code>, <code>*-log-level</code> — runtime configuration</li>
+<li><code>*-firebase-project-id</code>, <code>*-firebase-storage-base</code>, <code>*-google-cloud-project</code> — GCP project identifiers</li>
+<li><code>*-mongo-db-name</code> — database name</li>
+<li><code>*-convex-deployment</code>, <code>*-convex-url</code> — Convex deployment URL</li>
+<li><code>*-posthog-host</code>, <code>*-posthog-tracking</code>, <code>*-posthog-host</code> — PostHog host configuration</li>
+<li><code>*-grafana-cloud-org-id</code>, <code>*-grafana-cloud-stack-id</code>, <code>*-grafana-cloud-stack-url</code>, <code>*-grafana-cloud-loki-url</code>, <code>*-grafana-cloud-prom-url</code>, <code>*-grafana-cloud-prom-username</code>, <code>*-grafana-cloud-tempo-url</code> — Grafana stack identifiers and URLs</li>
+<li><code>*-upstash-redis-rest-url</code>, <code>*-upstash-email</code> — connection URL and account identifier</li>
+<li><code>*-qdrant-cloud-url</code> — Qdrant cluster URL</li>
+<li><code>monitoring-dev-otel-*</code> — OpenTelemetry export configuration</li>
+<li><code>*-slack-app-id</code>, <code>*-discord-*</code> — app identifiers</li>
+<li><code>ffe-orchestration-dev-youtrack-base-url</code> — YouTrack instance URL</li>
+<li><code>*-google-play-package-name</code>, <code>*-android-sha256-fingerprint</code> — app identifiers</li>
+<li><code>game-library-dev-tabletop-bot-email</code>, <code>game-library-dev-tabletop-support-email</code> — email addresses</li>
+<li><code>shindig-mts-test-email</code> — test user identifier</li>
+<li><code>opus-clip-affiliate</code> — affiliate code</li>
+<li><code>*-enable-*</code>, <code>*-ai-gen-*</code> — feature flags</li>
+</ul>
+<hr />
+<h2 id="not-in-this-vault-notable-omissions">Not in this vault (notable omissions)<a class="headerlink" href="#not-in-this-vault-notable-omissions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>AWS credentials</strong>: No AWS access keys, secret keys, or session tokens. <code>AWSSecretsManagerBackend</code> is a stub (backend.py); no AWS-backed references exist.</li>
+<li><strong>HashiCorp Vault / Infisical / Doppler / 1Password / Azure Key Vault tokens</strong>: All stub backends (backend.py); no references backed by these providers.</li>
+<li><strong>Stripe restricted API keys</strong> (<code>rk_...</code>): Not observed; if present, rotation capability would be <code>auto</code>.</li>
+<li><strong>OAuth refresh token bundles</strong> (<code>oauth:*</code> namespace): Not stored via <code>portunus oauth store</code>; the <code>OAuthBackend</code> machinery exists (auth.py, backend.py) but is unused in this vault.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.top", "navigation.sections", "navigation.instant", "content.code.copy", "search.suggest", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

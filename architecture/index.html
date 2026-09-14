@@ -1,0 +1,1868 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A standalone, boundary-only secret broker — reference a secret by name; the value is injected only at the execution boundary, never inside an LLM or agent context.">
+      
+      
+      
+        <link rel="canonical" href="https://mdostal.github.io/portunus/architecture/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../provider-rotation-matrix/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Portunus Architecture - Portunus</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#portunus-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Portunus" class="md-header__button md-logo" aria-label="Portunus" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Portunus
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Portunus Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-orange" data-md-color-accent="orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-orange" data-md-color-accent="orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/mdostal/portunus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdostal/portunus
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Portunus" class="md-nav__button md-logo" aria-label="Portunus" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Portunus
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mdostal/portunus" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdostal/portunus
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portunus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portunus Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portunus Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-component-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Component diagram
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-arca-backend-selection-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. ARCA backend-selection precedence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-petitio-real-opt-in-per-agent-access-control-portunus-petitio-rbac" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Petitio: real, opt-in per-agent access control (portunus-petitio-rbac)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-requestresolve-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Request/resolve sequence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-rotation-provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Rotation provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-the-desktop-app-is-packaging-not-a-new-component" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. The desktop app is packaging, not a new component
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-provenance-metadata-reposource_files-are-ostiarius-layer-not-a-new-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Provenance metadata: repo/source_files are OSTIARIUS-layer, not a new store
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-eager-sync-down-vault-exportimport-portunus-vault-backup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Eager sync-down + vault export/import (portunus-vault-backup)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-org-hierarchy-sub-vault-navigation-and-custom-views-portunus-vault-trust-and-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. org hierarchy, sub-vault navigation, and custom views (portunus-vault-trust-and-access)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-metadata-crawl-deploy-docs-report-portunus-metadata-crawl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Metadata crawl + deploy-docs report (portunus-metadata-crawl)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-leak-detection-across-logsclaudelocal-files-portunus-leak-scan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Leak detection across logs/.claude/local files (portunus-leak-scan)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-container-deployment-cli-mcp-server-same-podsame-host-reachability-portunus-container-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Container deployment: CLI + MCP server, same-pod/same-host reachability (portunus-container-image)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-leak-visibility-across-the-ui-and-an-in-app-report-view-portunus-leak-visibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Leak visibility across the UI, and an in-app report view (portunus-leak-visibility)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-git-repository-history-as-a-scan-target-and-source-classification-portunus-leak-scan-git-awareness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Git-repository history as a scan target, and source classification (portunus-leak-scan-git-awareness)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-one-command-agent-onboarding-portunus-agent-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. One-command agent onboarding (portunus agent init)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-cli-self-update-portunus-update-and-the-security-posture-behind-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. CLI self-update (portunus update), and the security posture behind it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-portunus-petitio-rbac-closeout-new-vault-default-live-proof-deferred-follow-ups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. portunus-petitio-rbac closeout: new-vault default, live proof, deferred follow-ups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#18-vault-access-transfer-scoped-metadata-sharing-between-instances-portunus-vault-transfer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        18. Vault access transfer: scoped metadata sharing between instances (portunus-vault-transfer)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#19-masked-trimmed-agent-openable-secret-entry-portunus-secure-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        19. Masked, trimmed, agent-openable secret entry (portunus-secure-entry)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#20-generic-oauth-20-token-broker-portunus-oauth-token-broker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        20. Generic OAuth 2.0 token broker (portunus-oauth-token-broker)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#21-session-access-gate-a-corrected-playwright-bridge-portunus-session-access-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21. Session-access gate + a corrected Playwright bridge (portunus-session-access-gate)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../provider-rotation-matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Provider Rotation Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rotation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rotation Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-component-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Component diagram
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-arca-backend-selection-precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. ARCA backend-selection precedence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-petitio-real-opt-in-per-agent-access-control-portunus-petitio-rbac" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Petitio: real, opt-in per-agent access control (portunus-petitio-rbac)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-requestresolve-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Request/resolve sequence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-rotation-provenance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Rotation provenance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-the-desktop-app-is-packaging-not-a-new-component" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. The desktop app is packaging, not a new component
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-provenance-metadata-reposource_files-are-ostiarius-layer-not-a-new-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Provenance metadata: repo/source_files are OSTIARIUS-layer, not a new store
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-eager-sync-down-vault-exportimport-portunus-vault-backup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Eager sync-down + vault export/import (portunus-vault-backup)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-org-hierarchy-sub-vault-navigation-and-custom-views-portunus-vault-trust-and-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. org hierarchy, sub-vault navigation, and custom views (portunus-vault-trust-and-access)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-metadata-crawl-deploy-docs-report-portunus-metadata-crawl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Metadata crawl + deploy-docs report (portunus-metadata-crawl)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-leak-detection-across-logsclaudelocal-files-portunus-leak-scan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Leak detection across logs/.claude/local files (portunus-leak-scan)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-container-deployment-cli-mcp-server-same-podsame-host-reachability-portunus-container-image" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Container deployment: CLI + MCP server, same-pod/same-host reachability (portunus-container-image)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-leak-visibility-across-the-ui-and-an-in-app-report-view-portunus-leak-visibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Leak visibility across the UI, and an in-app report view (portunus-leak-visibility)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-git-repository-history-as-a-scan-target-and-source-classification-portunus-leak-scan-git-awareness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Git-repository history as a scan target, and source classification (portunus-leak-scan-git-awareness)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-one-command-agent-onboarding-portunus-agent-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. One-command agent onboarding (portunus agent init)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-cli-self-update-portunus-update-and-the-security-posture-behind-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. CLI self-update (portunus update), and the security posture behind it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-portunus-petitio-rbac-closeout-new-vault-default-live-proof-deferred-follow-ups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. portunus-petitio-rbac closeout: new-vault default, live proof, deferred follow-ups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#18-vault-access-transfer-scoped-metadata-sharing-between-instances-portunus-vault-transfer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        18. Vault access transfer: scoped metadata sharing between instances (portunus-vault-transfer)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#19-masked-trimmed-agent-openable-secret-entry-portunus-secure-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        19. Masked, trimmed, agent-openable secret entry (portunus-secure-entry)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#20-generic-oauth-20-token-broker-portunus-oauth-token-broker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        20. Generic OAuth 2.0 token broker (portunus-oauth-token-broker)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#21-session-access-gate-a-corrected-playwright-bridge-portunus-session-access-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        21. Session-access gate + a corrected Playwright bridge (portunus-session-access-gate)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="portunus-architecture">Portunus Architecture<a class="headerlink" href="#portunus-architecture" title="Permanent link">&para;</a></h1>
+<p>This is the adopter-facing reference — the one page meant to answer "how does this actually
+work" without reading five source files first. For narrative/prose context see the main
+<a href="../README.md">README</a>; for the historical design record behind these decisions see
+<code>.pHive/epics/*/docs/</code>.</p>
+<h2 id="1-component-diagram">1. Component diagram<a class="headerlink" href="#1-component-diagram" title="Permanent link">&para;</a></h2>
+<p>Three OSTIARIUS entry points, one implementation underneath. Every request passes through
+Petitio before ARCA ever gives up a value, and every decision — allowed or denied — lands in
+the audit chain.</p>
+<div class="highlight"><pre><span></span><code>graph TD
+    accTitle: Portunus component diagram
+    accDescr: Three OSTIARIUS entry points funnel into one Resolver/Broker implementation, which asks Petitio before ARCA ever returns a value, with the audit chain recording every decision.
+
+    CLI["portunus CLI&lt;br/&gt;(cli.py)"]
+    UIRoutes["UI API routes&lt;br/&gt;(ui/app/api/*/route.ts)"]
+    MCP["MCP server&lt;br/&gt;(mcp_server.py, portunus mcp)"]
+
+    subgraph OSTIARIUS["OSTIARIUS — the gatekeeper API (one implementation, three entry points)"]
+        Resolver["Resolver&lt;br/&gt;(resolver.py)"]
+    end
+
+    subgraph Petitio["Petitio — the approval-gate wrapper"]
+        Broker["Broker.check_injectable()&lt;br/&gt;(broker.py)&lt;br/&gt;lifecycle guard + approval gate&lt;br/&gt;+ Identity/requester policy check (opt-in enforcement, §3)"]
+    end
+
+    subgraph ARCA["ARCA — the vault store (per-reference/per-project router)"]
+        Router["backend router&lt;br/&gt;(_make_backend_router)"]
+        Real["Real backends&lt;br/&gt;Local · GCP (+ sync-down cache)"]
+        Stub["Honest stubs&lt;br/&gt;AWS · Vault · Infisical · Doppler · 1Password · Azure"]
+    end
+
+    Audit[("Audit chain&lt;br/&gt;(audit.py)&lt;br/&gt;tamper-evident hash chain")]
+
+    CLI --&gt; Resolver
+    UIRoutes --&gt;|"shells out to the CLI"| CLI
+    MCP --&gt; Resolver
+
+    Resolver --&gt; Broker
+    Broker --&gt;|allowed| Router
+    Router --&gt; Real
+    Router --&gt; Stub
+
+    Broker -.-&gt;|every decision| Audit
+    Real -.-&gt;|every resolve| Audit
+</code></pre></div>
+<h2 id="2-arca-backend-selection-precedence">2. ARCA backend-selection precedence<a class="headerlink" href="#2-arca-backend-selection-precedence" title="Permanent link">&para;</a></h2>
+<p>A reference resolves through whichever backend actually applies to it — never one global
+<code>PORTUNUS_BACKEND</code> choice for the whole process. Three levels, checked in order:</p>
+<div class="highlight"><pre><span></span><code>graph TD
+    accTitle: ARCA backend-selection precedence
+    accDescr: A reference's backend is resolved by checking its own override first, then its project's VaultBinding, then falling back to the global PORTUNUS_BACKEND-selected backend.
+
+    Start(["Resolving a Reference"]) --&gt; RefBackend{"ref.backend set?"}
+    RefBackend --&gt;|yes| UseRefBackend["Use that backend directly&lt;br/&gt;(local / gcp / aws / vault / infisical / doppler / onepassword / azure)"]
+    RefBackend --&gt;|no, empty| ProjectBinding{"VaultBinding for&lt;br/&gt;ref.project exists?"}
+    ProjectBinding --&gt;|yes| CheckSyncMode{"binding.backend == gcp&lt;br/&gt;AND sync_mode == cached?"}
+    CheckSyncMode --&gt;|yes| SyncingBackend["SyncingBackend&lt;br/&gt;(GcloudBackend + LocalEncryptedBackend,&lt;br/&gt;offline-resilient)"]
+    CheckSyncMode --&gt;|no| UseBindingBackend["Use binding.backend directly"]
+    ProjectBinding --&gt;|no| GlobalFallback["Global fallback:&lt;br/&gt;today's PORTUNUS_BACKEND env var&lt;br/&gt;(local / gcloud / aws / mock)"]
+
+    UseRefBackend --&gt; Resolve(["backend.access(sm_name, project)"])
+    UseBindingBackend --&gt; Resolve
+    SyncingBackend --&gt; Resolve
+    GlobalFallback --&gt; Resolve
+</code></pre></div>
+<p><code>PORTUNUS_BACKEND=mock</code> always short-circuits this entire tree — every reference resolves
+through the single <code>MockBackend</code> regardless of any configured binding, a safety rail for tests
+and dry runs.</p>
+<p><strong>Configuring this tree from the UI, not just the CLI</strong> (portunus-bindings-settings-ui): the
+Standalone UI's Project Explorer edits a <code>VaultBinding</code>'s full field set inline —
+<code>backend</code>/<code>sync_mode</code> (already live before this epic) and, as of this epic, <code>account</code>/
+<code>wif_audience</code> too, via <code>POST /api/bindings</code>. Both new fields are identity-selector/topology
+strings, not credentials, so no new UI trust boundary is introduced — the write path simply
+catches up to what <code>GET /api/bindings</code> already returned. A <code>RotationBinding</code>'s <code>account</code> (free-
+text rotation context, e.g. a Vercel team slug) is likewise editable inline, in a reference's
+detail view next to the Auto-rotate button (<code>POST /api/rotation-status</code>, new). Its <code>status</code>
+(<code>stub</code>/<code>real</code>) stays derived from the real adapter registry and is structurally unreachable
+from the UI — the handler never reads a <code>status</code> field off the request body at all, so a UI
+control can never make a stub provider look real.</p>
+<h2 id="3-petitio-real-opt-in-per-agent-access-control-portunus-petitio-rbac">3. Petitio: real, opt-in per-agent access control (portunus-petitio-rbac)<a class="headerlink" href="#3-petitio-real-opt-in-per-agent-access-control-portunus-petitio-rbac" title="Permanent link">&para;</a></h2>
+<p><code>Identity</code>/<code>requester</code> are no longer inert. Every <code>check_injectable()</code> call with a real
+<code>requester</code> gets evaluated against <code>roles.py</code>'s <code>PolicyRecord</code> store via <code>roles.evaluate()</code> --
+every resolve gets a <code>would-allow</code>/<code>would-deny</code> audit line regardless of enforcement state, but
+that decision only actually <em>raises</em> <code>NotAuthorized</code> when <code>portunus roles enforce on</code> has been
+explicitly run for that vault. Default: off. Even with enforcement globally on, a scope with
+zero configured policies always stays fully open -- enforcement only ever narrows behavior for
+a scope that has at least one policy record, for a principal not named there.</p>
+<div class="highlight"><pre><span></span><code>graph TD
+    accTitle: Petitio's real access-control flow
+    accDescr: check_injectable checks lifecycle state and approval first, same as always, then evaluates a policy decision that is always audited but only enforced (raised) when the opt-in enforcement flag is on.
+
+    T1["check_injectable(name, requester)"] --&gt; T2{"lifecycle state&lt;br/&gt;enabled/locked?"}
+    T2 --&gt;|no| T3["NotInjectable&lt;br/&gt;(fail closed)"]
+    T2 --&gt;|yes| T4{"approval gate&lt;br/&gt;required?"}
+    T4 --&gt;|yes, no valid approval| T5["ApprovalRequired"]
+    T4 --&gt;|no, or valid approval| T6{"requester given?"}
+    T6 --&gt;|no| T10["Allowed&lt;br/&gt;(nothing to evaluate)"]
+    T6 --&gt;|yes| T7["roles.evaluate(policies, requester, ref)&lt;br/&gt;the ONE seam for all scope/precedence logic"]
+    T7 --&gt; T8{"decision.allow?"}
+    T8 --&gt;|yes| T9A["Audit: would-allow:&amp;lt;reason&amp;gt;&lt;br/&gt;Allowed"]
+    T8 --&gt;|no| T9B{"roles.enforcement_is_on()?"}
+    T9B --&gt;|off, the default| T9C["Audit: would-deny:&amp;lt;reason&amp;gt;&lt;br/&gt;Allowed anyway"]
+    T9B --&gt;|on, opt-in| T9D["Audit: would-deny:&amp;lt;reason&amp;gt;&lt;br/&gt;NotAuthorized (fail closed)"]
+</code></pre></div>
+<p><strong>Precedence today, a deliberate v1 choice:</strong> a flat OR across every matching <code>PolicyRecord</code> --
+any one matching, allowing policy is sufficient (no most-specific-wins narrowing yet). This is
+intentionally the only place matching/precedence logic lives: <code>check_injectable()</code> and every
+CLI/MCP caller only ever call <code>roles.evaluate()</code> and act on its <code>Decision</code>, never reimplement
+matching themselves -- so a future precedence model (most-specific-wins, or adopting an engine
+like Casbin, the documented fallback from this epic's research) is a change to that one
+function's internals, not a rewrite across every call site.</p>
+<p><strong>What's still not scope-aware, by explicit, named decision (not oversight):</strong> the <code>list</code>/
+<code>tree</code> MCP tools return full-vault metadata regardless of the caller's own access scope --
+only the actual <code>resolve</code>/inject path is gated. <code>Broker.approve()</code>'s token is scoped to a
+reference name only, not the requesting identity, so a different concurrently-running agent can
+walk through the same approval window. Both are real findings from this epic's own research and
+self-grill, deliberately deferred rather than silently missed -- see README's Roadmap.</p>
+<p><strong>Threat model, in one sentence:</strong> this defends against honest mistakes and prompt-injected
+instructions (an agent resolving something outside its actual task), not a genuinely
+adversarial co-resident process -- a self-reported <code>DOSTAL_AGENT</code> identity can't defeat that,
+and <code>--home</code> (full vault isolation) is the correct tool for a known-untrusted caller instead.</p>
+<h2 id="4-requestresolve-sequence">4. Request/resolve sequence<a class="headerlink" href="#4-requestresolve-sequence" title="Permanent link">&para;</a></h2>
+<p>The invariant this diagram exists to make legible: <strong>the value never flows through Petitio at
+all</strong> -- <code>check_injectable()</code> (lifecycle + approval + policy evaluation, §3) returns metadata
+only, and only the resolver's own boundary sink (env var, file, or exec argv) ever holds the
+plaintext. It's never returned up the stack, including through the access-control decision
+itself.</p>
+<div class="highlight"><pre><span></span><code>sequenceDiagram
+    accTitle: Portunus request/resolve sequence
+    accDescr: A caller resolves a placeholder through OSTIARIUS, Petitio checks injectability (lifecycle, approval, and policy), ARCA fetches the value, and the resolver injects it at the boundary sink without ever returning it.
+
+    participant Caller as Caller (CLI/UI/MCP)
+    participant Resolver as OSTIARIUS (Resolver)
+    participant Broker as Petitio (Broker)
+    participant ARCA as ARCA (backend)
+    participant Audit as Audit chain
+    participant Sink as Boundary sink&lt;br/&gt;(env var / file / exec argv)
+
+    Caller-&gt;&gt;Resolver: resolve {{secret:NAME}}
+    Resolver-&gt;&gt;Broker: check_injectable(name, requester)
+    Broker-&gt;&gt;Broker: lifecycle + approval check,&lt;br/&gt;then roles.evaluate() (§3)
+    alt not injectable / needs approval
+        Broker--&gt;&gt;Resolver: raise NotInjectable / ApprovalRequired
+        Broker-&gt;&gt;Audit: append(denied-*)
+        Resolver--&gt;&gt;Caller: error (never a value)
+    else denied by policy AND enforcement is on
+        Broker--&gt;&gt;Resolver: raise NotAuthorized
+        Broker-&gt;&gt;Audit: append(would-deny:reason)
+        Resolver--&gt;&gt;Caller: error (never a value)
+    else injectable (incl. would-deny with enforcement off)
+        Broker--&gt;&gt;Resolver: Reference (metadata only)
+        Broker-&gt;&gt;Audit: append(would-allow/would-deny:reason)
+        Resolver-&gt;&gt;ARCA: backend.access(sm_name, project)
+        ARCA--&gt;&gt;Resolver: plaintext value
+        Resolver-&gt;&gt;Sink: inject value directly
+        Resolver-&gt;&gt;Audit: append(resolve, ok)
+        Resolver--&gt;&gt;Caller: success signal only&lt;br/&gt;(never the value)
+    end
+</code></pre></div>
+<h2 id="5-rotation-provenance">5. Rotation provenance<a class="headerlink" href="#5-rotation-provenance" title="Permanent link">&para;</a></h2>
+<p>A second, genuinely different kind of "real vs. stub" split from ARCA's own (§2, §1's <code>Stub</code>
+node): ARCA answers <em>where a value lives</em>, <code>RotationBinding</code>/<code>RotationAdapter</code> (<code>rotation.py</code>)
+answer <em>who would rotate it, and whether Portunus can yet</em>. <strong>Zero real adapters exist today —
+every provider is <code>status="stub"</code>.</strong> This section documents the shape now so the docs don't
+overstate what's built; treat every "would" below as aspirational, not shipped.</p>
+<div class="highlight"><pre><span></span><code>graph TD
+    accTitle: Rotation provenance -- config today, real integration later
+    accDescr: RotationBinding records which provider and what account context; RotationAdapter is a stub registry today. A future real adapter fetches its own admin credential via Portunus's own resolver, never a special-cased credential path.
+
+    RB["RotationBinding&lt;br/&gt;(provider, status: real|stub, account)&lt;br/&gt;PORTUNUS_HOME/rotation-bindings.json"]
+    Registry["RotationAdapter registry&lt;br/&gt;Vercel (priority target) · GitHub · Stripe"]
+    Button["DetailDrawer 'Auto-rotate…' button&lt;br/&gt;enabled only if status==real"]
+
+    RB --&gt;|drives| Button
+    Registry --&gt;|every adapter today| Stub["raises RotationAdapterError&lt;br/&gt;(no real API call, ever)"]
+
+    subgraph Future["Once a real adapter ships (none do yet)"]
+        Real["VercelRotationAdapter.rotate(ref)"] --&gt;|resolves its OWN admin token via| SelfResolve["resolver.resolve_call(&lt;br/&gt;'{{secret:portunus-admin-vercel-token}}', boundary=...)"]
+        SelfResolve --&gt;|same boundary-only sink&lt;br/&gt;every other value uses| ProviderAPI["Provider's rotate API"]
+    end
+
+    Registry -.-&gt;|becomes, once real| Real
+</code></pre></div>
+<p>The recursive property worth naming explicitly: a real rotation adapter authenticates to its
+provider using a credential that is <strong>itself just another Portunus-managed <code>Reference</code></strong> —
+resolved through the same <code>Resolver.resolve_call()</code> boundary sink every other value in this
+codebase already uses, never hardcoded into the adapter and never handled outside the normal
+resolve path. Portunus would rotate <em>other</em> secrets by using <em>its own</em> vaulted admin secret — no
+second credential-handling mechanism, ever. This is a design decision recorded ahead of the
+build, not a description of running code.</p>
+<h2 id="6-the-desktop-app-is-packaging-not-a-new-component">6. The desktop app is packaging, not a new component<a class="headerlink" href="#6-the-desktop-app-is-packaging-not-a-new-component" title="Permanent link">&para;</a></h2>
+<p>Worth stating plainly: the Tauri desktop app (<code>ui/src-tauri/</code>) is <strong>not</strong> a fifth architecture
+component alongside OSTIARIUS/ARCA/Petitio/audit. It's a native wrapper around the existing UI
+API-routes entry point (§1's <code>UIRoutes</code> node) — a menu-bar presence and a self-update mechanism
+around the same Next.js app <code>npm run dev</code> already serves, spawned as a sidecar process instead
+of run manually. It introduces zero new request paths into OSTIARIUS, zero new backend logic,
+and doesn't change how the CLI/MCP surfaces work — cross-project secret access already worked
+before this existed, against the one shared <code>PORTUNUS_HOME</code>, regardless of which repo an agent
+session happens to be rooted in. The one genuinely new piece of logic is the self-update
+check, which shells out to the user's own already-authenticated <code>gh</code> CLI rather than embedding
+a credential in the shipped app — the same "never hold a credential you don't have to"
+posture this whole system already enforces everywhere else.</p>
+<h2 id="7-provenance-metadata-reposource_files-are-ostiarius-layer-not-a-new-store">7. Provenance metadata: repo/source_files are OSTIARIUS-layer, not a new store<a class="headerlink" href="#7-provenance-metadata-reposource_files-are-ostiarius-layer-not-a-new-store" title="Permanent link">&para;</a></h2>
+<p><code>repo</code> and <code>source_files</code> (<code>registry.py</code>) answer <em>which git repo, and which file in it, actually
+consumes a secret</em> — a real gap found by inspecting the real demo-cicd data: 342 references, one
+shared GCP project spanning many repos, and nothing distinguishing which repo owned which
+secret. This is registry metadata, the same layer <code>group</code>/<code>related</code>/<code>description</code> already live
+on — it doesn't add a new component, doesn't change ARCA's backend-selection precedence (§2),
+and doesn't touch how a value is resolved. <code>portunus tree --by repo</code> is the same tree-rendering
+path as <code>--by group</code> (§1's <code>Resolver</code> node is unaffected), keyed on a different field.</p>
+<h2 id="8-eager-sync-down-vault-exportimport-portunus-vault-backup">8. Eager sync-down + vault export/import (portunus-vault-backup)<a class="headerlink" href="#8-eager-sync-down-vault-exportimport-portunus-vault-backup" title="Permanent link">&para;</a></h2>
+<p>Two related but mechanically distinct additions on top of §2's ARCA backend-selection tree and
+the local-encrypted vault's own file layout, both added to close a real gap: nothing purpose-
+built existed for either "get a freshly-discovered secret's value cached locally right away" or
+"move/restore the whole vault."</p>
+<p><strong>Eager sync-down.</strong> <code>discover --register</code> (CLI and MCP) previously left a freshly-registered
+reference's local cache cold — <code>SyncingBackend</code> (§2) only pulls a value down on the <em>first real
+resolve</em>, and a freshly-registered reference always lands at <code>state=requested</code>, which
+<code>Broker.check_injectable</code> fails closed on. For a project bound <code>sync_mode=cached</code>, registration
+now also calls <code>_eager_sync_down()</code> (<code>cli.py</code>), which warms the local cache immediately by
+calling the routed backend's <code>access()</code> directly — deliberately bypassing <code>check_injectable</code> for
+this one internal, value-never-returned cache-populate call. The reference's <code>state</code> stays
+<code>requested</code> throughout: every real resolve/inject/ask/MCP path is gated exactly as before: only
+<em>when</em> it's warm changes, never <em>whether</em> it's injectable.</p>
+<p><strong>Vault export/import.</strong> <code>portunus vault export</code>/<code>portunus vault import</code> (CLI-only — no MCP
+tool, no UI surface: a full-vault archive should never be triggerable by an LLM-facing tool
+without a human directly initiating it) move the vault's critical-state surface as one portable,
+passphrase-locked archive. Two pieces make this safe, both in <code>backup.py</code>:</p>
+<ul>
+<li><strong>Coordinated snapshot.</strong> <code>registry.json</code>, <code>master.key</code>, <code>vault.enc.json</code>,
+  <code>vault-bindings.json</code>, and <code>audit.log</code> + <code>.clock</code> (the append() sequence counter — MUST travel
+  with <code>audit.log</code>, not just alongside it, or a restored chain's next <code>append()</code> can re-mint a
+  seq that already exists) are all read together under every relevant lock — <code>registry.lock</code>,
+  <code>vault.enc.lock</code>, <code>vault-bindings.lock</code> (new; previously the only critical-state file with no
+  lock at all), <code>.clock.lock</code> — acquired in one fixed, alphabetically-sorted order so the result
+  reflects one consistent instant, never independent reads straddling a concurrent writer.
+  Legacy <code>gcp-bindings.json</code>/<code>rotation-bindings.json</code> are included if present, read unlocked
+  (neither has a dedicated writer-side lock today either).</li>
+<li><strong>Passphrase re-encryption.</strong> The snapshot is bundled and re-encrypted under a PBKDF2-SHA256-
+  derived key (600k iterations) from an operator passphrase — never the vault's own <code>master.key</code>
+  bundled as-is. <code>master.key</code> alone is sufficient to decrypt every stored value; an archive
+  meant to leave the access-controlled <code>PORTUNUS_HOME</code> must not carry a live decryption key
+  un-re-encrypted. The passphrase itself is sourced only via <code>PORTUNUS_EXPORT_PASSPHRASE</code> or an
+  interactive prompt, never an inline flag — the same boundary-only convention <code>portunus drop</code>
+  uses for its own sensitive input.</li>
+</ul>
+<p>No bidirectional multi-machine sync was built — <code>SyncingBackend</code> already solves the narrower
+"stay usable while disconnected" problem it exists for, and real sync would need genuine
+conflict-resolution design given this vault has real concurrent-writer traffic (see the
+<code>AuditChain</code>/<code>LocalEncryptedBackend</code> lock fixes this epic's own prerequisite work built on).</p>
+<h2 id="9-org-hierarchy-sub-vault-navigation-and-custom-views-portunus-vault-trust-and-access">9. <code>org</code> hierarchy, sub-vault navigation, and custom views (portunus-vault-trust-and-access)<a class="headerlink" href="#9-org-hierarchy-sub-vault-navigation-and-custom-views-portunus-vault-trust-and-access" title="Permanent link">&para;</a></h2>
+<p>Planned with a heavier horizontal/vertical process (<code>.pHive/epics/portunus-vault-trust-and-
+access/docs/</code>) rather than the lighter research-brief-only shape recent epics defaulted to —
+the ask (metadata quality, an organizational hierarchy, stubbed RBAC, onboarding) was
+genuinely large and interdependent enough to warrant it, the same process
+<code>portunus-standalone-core</code> used for the original registry/adapter/UI buildout.</p>
+<p><strong><code>org</code>, one level above <code>project</code>.</strong> <code>Reference</code> gains <code>org: str = ""</code> — the same flat-
+structured-tag pattern <code>provider</code>/<code>project</code>/<code>env</code>/<code>repo</code> already use, added to
+<code>_STRUCTURED_TAG_FIELDS</code> (so <code>find --tags org=...</code> and <code>retag()</code>'s collision check both pick it
+up immediately) rather than a new nested hierarchy object. <code>VaultBinding</code> + <code>project</code> already
+gave "each vault is its own thing" (per-project backend/credential, already proven for GCP
+multi-account); <code>org</code> fills the one real missing rung — grouping several projects under one
+organizational umbrella (e.g. <code>firefly-events</code> spanning <code>demo-cicd</code>/<code>shindig</code>).</p>
+<p><strong>Sub-vault navigation is a UI concept, not a new store.</strong> The Standalone UI's Vault Map
+renders an org → project drill-down over the <code>org</code>/<code>project</code> fields — no new backend, no new
+API call, no new permission boundary (that's explicitly deferred, stubbed-only future work).
+Drilling into a project <em>feels</em> like its own small vault (its own list, its own completeness
+summary) without duplicating any state.</p>
+<p><strong>Custom views</strong> (<code>views.py</code>, <code>PORTUNUS_HOME/views.json</code>) are deliberately orthogonal to that
+structural hierarchy — a named, human-curated list of reference names for task-shaped
+clustering ("everything for the Shindig deploy") that doesn't map onto org/project/env.
+Every mutator wraps its own load→mutate→save inside one <code>flock</code> acquisition from the start —
+unlike <code>vault-bindings.json</code>'s own retrofitted save-only lock (§8), this store never had the
+race in the first place, proven with a real multi-process concurrent-write test.</p>
+<p><strong>Missing-metadata signal</strong> (<code>ui/app/completeness.ts</code>) is a pure, derived-on-render function
+over fields the UI already fetches — no new stored field, nothing to drift out of sync with
+what it's computed from.</p>
+<p><strong>Role/policy schema — shipped here as a deliberate stub, since activated (§3).</strong> At the time
+this epic shipped, <code>roles.py</code> persisted <code>PolicyRecord(scope_type: org|project|env, scope_value,
+role, actions[])</code> to <code>PORTUNUS_HOME/roles.json</code> for real — <code>portunus roles set/delete/show</code> and
+the Settings page both genuinely read and wrote it — but <code>check_injectable()</code>/<code>retag()</code> never
+consumed it. <code>tests/test_roles.py::test_check_injectable_and_retag_are_byte_identical_with_or_
+without_roles_configured</code> was the defining test proving that: byte-identical behavior with or
+without policies configured, not just "defaults to permissive" (a materially weaker guarantee a
+future edit could silently erode) — and it still passes today, unmodified, extended rather than
+broken by the epic that activated this seam. <strong>portunus-petitio-rbac (§3, §17) built directly on
+this exact stub</strong>: <code>PolicyRecord</code> gained <code>principal</code> + a <code>repo</code> scope type, <code>roles.evaluate()</code>
+became the real evaluation function this section once flagged as unresolved (flat-OR precedence,
+a deliberate v1 choice — see §3), and <code>portunus roles enforce on</code> is the real, opt-in activation.</p>
+<p><strong>LLM-suggests, human-confirms metadata.</strong> <code>Reference.suggested</code> is a sidecar dict
+(<code>{field_name: {value, by, at}}</code>), written only by <code>Registry.suggest_metadata()</code> (and the MCP
+tool of the same name) — restricted to <code>SUGGESTIBLE_FIELDS</code> (<code>description</code>/<code>purpose</code>/<code>tags</code>/
+<code>group</code>). Routing fields are structurally rejected: <code>suggest_metadata()</code> raises rather than
+silently ignoring them, so a caller never mistakes "was rejected" for "was suggested but not
+shown yet." Confirming a suggestion is NOT a new mutation path — it's the existing <code>retag()</code>
+applying the suggested value, then <code>clear_suggestion()</code> drops the sidecar entry; rejecting is
+just <code>clear_suggestion()</code> with the live field never touched. This keeps <code>retag()</code> as the ONLY
+code path that ever writes the four suggestible fields, whether a human typed the value or
+confirmed an agent's proposal.</p>
+<p><strong>Settings, the setup wizard, and About are UI-only additions</strong> with no new backend concepts
+beyond what's already described above: Settings surfaces the org/project hierarchy (read-only
+summary) and roles.json (genuinely editable; the enforcement state itself is a separate,
+explicit <code>portunus roles enforce on|off|status</code> toggle, §3/§17 -- Settings never implies a
+policy is enforced just because it's configured);
+<code>SetupWizard</code> is a first-run-only flow (<code>portunus vault status</code> detects an uninitialized
+<code>PORTUNUS_HOME</code> — absence of BOTH <code>registry.json</code> and <code>vault-bindings.json</code>) that walks through
+backend choice and an in-UI trigger for <code>gcloud auth login</code> (the real, unmodified gcloud OAuth
+flow — the wizard doesn't reimplement or intercept it, just gives it a button); its own Roles
+step is literally disabled (<code>&lt;fieldset disabled&gt;</code>), a deliberately different treatment from
+Settings' editable-but-labeled stub, since a first-run flow isn't the place to risk someone
+getting lost configuring permissions before they have a vault at all.</p>
+<h2 id="10-metadata-crawl-deploy-docs-report-portunus-metadata-crawl">10. Metadata crawl + deploy-docs report (portunus-metadata-crawl)<a class="headerlink" href="#10-metadata-crawl-deploy-docs-report-portunus-metadata-crawl" title="Permanent link">&para;</a></h2>
+<p>Follow-on to §9's suggest/confirm workflow — the "bulk-suggest" work that epic's own
+design-discussion.md explicitly deferred. Two independent, read-only tools, neither of which
+calls an LLM or writes a <code>Reference</code> field itself.</p>
+<p><strong><code>crawl_candidates()</code> (<code>src/portunus/crawl.py</code>) is a discovery bundler, not a writer.</strong> For
+every reference missing description/purpose/org, it bundles everything already known —
+<code>sm_name</code>, <code>group</code>, <code>project</code>, <code>org</code>, <code>repo</code>, <code>source_files</code>, its project's <code>VaultBinding</code>, its
+provider's <code>RotationBinding</code> — into one JSON object, for an LLM (Claude Code, another
+MCP-connected agent, or a human) to read and act on via the already-shipped
+<code>Registry.suggest_metadata()</code>/<code>portunus_suggest_metadata</code> (§9). Portunus has zero LLM-API-key
+infrastructure anywhere, deliberately — this design bundles context for an <em>external</em> caller
+rather than inventing one. Real vault data checked during planning (393 references) showed
+<code>repo</code> set on fewer than 1% of references — a repo-cloning crawler would have almost nothing
+to scan — while <code>sm_name</code> (often the literal env var name) and <code>group</code> (91% filled) are the
+strongest signals actually available today; real external-repo scanning stays out of scope
+until repo fill-rate rises. Exposed as <code>portunus crawl [--org] [--project] [--json]</code> and the
+<code>portunus_crawl_candidates</code> MCP tool.</p>
+<p><strong><code>generate_report()</code> renders current vault state as Markdown</strong> — an org → project structure,
+each reference's known metadata, and an explicit <code>## Gaps</code> section — independent of whether
+<code>crawl_candidates()</code> ever found or fixed anything. Useful immediately as a real "deploy docs"
+starting point (the user's own framing, for a company with no documentation of what's using
+which credential). Exposed as <code>portunus report [--org] [--project] [--out path]</code>.</p>
+<p><strong>The Settings UI surfaces both as thin shells, never an automatic filler.</strong> <code>/api/crawl</code> and
+<code>/api/report</code> shell out to the same CLI commands every other route already uses
+(<code>runPortunus</code>) — no second implementation. The Settings page's "Crawl &amp; report" section
+reuses <code>completeness.ts</code>'s existing derivation (§9) to count references missing metadata, adds
+a "Fetch crawl bundle" button (framed explicitly as context for an LLM session to read, not an
+auto-fill), and a "Download report" button. Confirming any metadata a human or LLM proposes
+from the bundle still goes through the existing <code>portunus metadata confirm</code> flow (§9) — this
+epic adds no new write path.</p>
+<h2 id="11-leak-detection-across-logsclaudelocal-files-portunus-leak-scan">11. Leak detection across logs/.claude/local files (portunus-leak-scan)<a class="headerlink" href="#11-leak-detection-across-logsclaudelocal-files-portunus-leak-scan" title="Permanent link">&para;</a></h2>
+<p>Detects whether a managed secret's actual decrypted value shows up somewhere it shouldn't --
+logs, <code>.claude</code> conversation transcripts, shell history, or any other explicitly-configured
+local path. Advisory only: proven, not just asserted, that <code>check_injectable()</code>/<code>resolve()</code>
+behave byte-identically whether or not a reference has active leak findings, mirroring §3's
+roles.json precedent.</p>
+<p><strong>The strictest instance of the secret-boundary-invariant in the codebase.</strong> Every other module
+that touches a decrypted value either hands it only to a boundary sink (<code>resolver.py</code>) or never
+calls <code>Backend.access()</code> at all (<code>crawl.py</code>, §10). <code>leakscan.py</code> is a new third shape: it MUST
+call <code>.access()</code> to get values to search FOR, then guarantee those values never escape beyond an
+in-memory per-line comparison. Values live only in a local dict inside the scan function's own
+stack frame; <code>Finding(ref_name, path, line_number, byte_offset)</code> has no field capable of holding
+a value; a forced mid-scan exception's message is verified never to contain the searched value.</p>
+<p><strong>Line-based, incremental scanning.</strong> Every configured file is scanned line-by-line (free line
+numbers, no chunk-boundary-match bugs) with a per-file <code>Watermark</code> (byte offset + a
+<code>(size, mtime)</code> fingerprint + consumed line count) so a re-scan only reads newly-appended bytes.
+A shrunk/replaced file is rescanned from byte 0. Values shorter than
+<code>MIN_SEARCHABLE_VALUE_LENGTH</code> (8) are never fetched into the search set — a trivial-length value
+would false-positive-match constantly. A single compiled multi-pattern alternation does one
+linear pass per file, not one pass per secret — real scale data checked during planning
+(3.4 GB / 4,421 files under one <code>~/.claude</code> alone) ruled out anything less.</p>
+<p><strong>Three separate locked JSON stores</strong>, deliberately not one: <code>leak-scan-config.json</code> (scan-path
+globs, empty by default — never auto-populated), <code>leak-status.json</code> (findings + escalation
+state, rewritten on new findings/rotations), <code>leak-scan-watermarks.json</code> (rewritten on every
+scan, the highest-churn of the three). Sharing one lock across all three would serialize a
+frequent cheap watermark update behind a lock a rare config-edit also wants, for no benefit.</p>
+<p><strong>Escalation is derived, not stored.</strong> Severity (<code>warn</code>/<code>urgent</code>/<code>critical</code>) is computed at read
+time from elapsed time since the EARLIEST <code>first_detected_at</code> across a reference's findings
+(0–2d / 3–6d / 7+d) — never persisted redundantly. <code>portunus leak mark-rotated &lt;name&gt;</code> is an
+explicit, documented human assertion Portunus cannot independently verify; it also invalidates
+the watermark for every file where that reference had a finding, so a genuinely premature
+mark-rotated gets caught by the next scan rather than silently protected by a watermark that
+already scanned past the still-leaked bytes — a real gap the epic's own live-proof pass against
+the actual Settings page caught and fixed before shipping.</p>
+<p><strong>MCP surface: full parity with the CLI, by explicit user decision.</strong> <code>portunus_leak_status</code>
+exposes only already-computed severity/finding-count/timestamps and still never triggers a
+scan. <code>portunus_run_leak_scan</code>, <code>portunus_leak_scan_config_show/add_path/remove_path</code>, and
+<code>portunus_leak_mark_rotated</code> mirror the CLI 1:1, and were added AFTER the epic initially shipped
+<code>portunus_leak_status</code> as the only MCP surface, deliberately keeping scan-triggering CLI/UI-only
+(an agent triggering reads of a user's own conversation history at its own initiative was judged
+a materially different trust boundary than reading metadata the vault already had). The user
+explicitly revisited that tradeoff and chose to widen it — recorded, not silently reversed, in
+<code>.pHive/epics/portunus-leak-scan/docs/design-discussion.md</code> §2's addendum. What did NOT change:
+the human-configured scan-path set is still the only thing an agent can ever cause Portunus to
+read — <code>portunus_run_leak_scan</code> takes no path argument, so widening WHO can trigger a scan never
+widened WHAT can be scanned. Every new tool is structurally verified to never decode file
+content, call <code>.access(</code>, or open a file directly — they only ever call the same
+<code>leakscan.py</code> functions the CLI itself uses.</p>
+<p><strong>A detective control, not a preventive one</strong>, said explicitly in every surface's own copy
+(CLI help text, Settings section, README). This finds secrets that already leaked; it does
+nothing to stop the next paste into a chat window. The standing project policy (never act on a
+credential pasted in chat; flag it and ask the user to rotate) remains the actual first line of
+defense — this epic is a safety net under it, not a replacement.</p>
+<h2 id="12-container-deployment-cli-mcp-server-same-podsame-host-reachability-portunus-container-image">12. Container deployment: CLI + MCP server, same-pod/same-host reachability (portunus-container-image)<a class="headerlink" href="#12-container-deployment-cli-mcp-server-same-podsame-host-reachability-portunus-container-image" title="Permanent link">&para;</a></h2>
+<p>The <code>Dockerfile</code> at the repo root packages the CLI + MCP server only — not the Next.js UI/desktop
+app, which is a human-facing dashboard, not something you'd run as a k8s sidecar (§6 already
+established the desktop app is packaging, not a new component; this section makes the same call
+for the container image's scope).</p>
+<p><strong>Targets same-pod/same-host reachability, not a network-shared broker service.</strong> The MCP server
+is stdio-only today (<code>mcp_server.py::main</code> calls <code>mcp.run()</code> with no transport argument, even
+though the underlying <code>mcp</code> library already supports <code>sse</code>/<code>streamable-http</code>). Rather than treat
+that as a gap to close immediately, the container epic treats it as the natural v1 boundary: a
+consumer reaches Portunus via <code>docker exec</code>/<code>kubectl exec</code>, a shared pod volume, or by having
+Portunus itself start the consumer (<code>resolve --exec &lt;command&gt;</code>, already the exact pattern local
+CLI usage has always used). A genuinely network-reachable shared service — one Portunus instance
+many pods call over the network — would need real network-level authentication between caller
+and broker (today's access control, §3/§17, assumes a trusted local-process caller, same as
+every other same-host boundary in this design); that's real, separate, larger future work, not
+silently assumed here.</p>
+<p><strong>Non-root, VOLUME-declared <code>PORTUNUS_HOME</code>.</strong> The container runs as a dedicated non-root user —
+<code>PORTUNUS_HOME</code>'s own 0600/0700 file permissions are already the real access control, so running
+as root inside the container adds no benefit and is an avoidable hardening gap for a
+secret-handling image. A real bug the epic's own live-proof pass caught before shipping: a fresh
+Docker named volume defaults to root:root ownership, which broke writes for the non-root user on
+first use. Fixed by creating and <code>chown</code>-ing <code>PORTUNUS_HOME</code> in the image BEFORE both the
+<code>VOLUME</code> instruction and the <code>USER</code> switch — Docker initializes an empty named/anonymous volume
+by copying the image's existing content/ownership at that mount path, so this is what makes the
+volume writable by the right user from first use.</p>
+<p><strong>The persistent-volume requirement is a real, documented hazard, not a footnote.</strong>
+<code>LocalEncryptedBackend</code>'s master key self-bootstraps (no secret-zero problem — no human
+passphrase needed for normal operation), but that same self-bootstrapping means an unmounted or
+removed volume silently generates a NEW key on next start, making every previously-stored value
+permanently unrecoverable. This risk is specific to the local-encrypted backend; GCP-backend-only
+usage has no local ciphertext to lose.</p>
+<p><strong>One image, <code>gcloud</code> CLI included, not a slim/full split.</strong> <code>GcloudBackend</code> shells out to the
+real <code>gcloud</code> binary (confirmed: no <code>google-cloud-*</code> Python SDK dependency in <code>pyproject.toml</code>),
+so GCP backend support requires the CLI baked into the image. A second, smaller local-only image
+is real future polish, deliberately not built now — image size matters little for a sidecar/CI
+image, and two images is ongoing maintenance cost for an early, unproven feature.</p>
+<p><strong>Auth is already solved per backend, not newly invented.</strong> Local-encrypted: zero-config. GCP
+local dev: mount the developer's own <code>~/.config/gcloud</code> read-only, reusing today's exact ambient
+<code>gcloud</code> auth behavior. GCP real Kubernetes: GKE Workload Identity — already keyless (§ auth.py's
+<code>GCPWorkloadIdentityAuth</code>), the recommended production path, not a new capability this epic had
+to build.</p>
+<h2 id="13-leak-visibility-across-the-ui-and-an-in-app-report-view-portunus-leak-visibility">13. Leak visibility across the UI, and an in-app report view (portunus-leak-visibility)<a class="headerlink" href="#13-leak-visibility-across-the-ui-and-an-in-app-report-view-portunus-leak-visibility" title="Permanent link">&para;</a></h2>
+<p>Immediately after dogfooding leak-scan against the real vault (83 genuine findings, including a
+Google Generative AI key leaked into 48 locations), the UI needed to actually surface what the
+engine had already found — Settings' own "Leak scan" section (§11) was the only place any of it
+was visible.</p>
+<p><strong><code>LeakBadge</code> is a new, independent signal — not a write into <code>RotationBadge</code>'s
+<code>tags.rotation_requested</code>.</strong> Reusing that tag would mean leak-scan calling <code>retag()</code> on every
+new finding, a real write path the engine was never designed for (§11's own advisory-only proof
+covers <code>check_injectable()</code>/<code>resolve()</code>, not a hypothetical registry write from the scan engine
+itself), and it would collapse two different facts — an agent-requested rotation and a
+leak-detected one — into one indistinguishable boolean. <code>LeakBadge</code> is driven directly by
+leak-status data (fetched once per page load into a <code>ref_name -&gt; LeakSummary</code> map in
+<code>page.tsx</code>, passed down — not a per-row fetch), rendered next to <code>RotationBadge</code>/
+<code>CompletenessBadge</code> wherever a reference's name already appears: Console (plus a new "Leaked"
+facet, matching the existing Metadata facet's pattern exactly), Vault Map, Project Explorer, and
+DetailDrawer (the richest surface — a full expandable finding history and a working "Mark
+rotated" action, fetched per-reference only when the drawer is open for a leaked one).</p>
+<p><strong>"Leaked in N conversations" counts distinct files, not raw finding count.</strong> A <code>.claude</code>
+transcript can match the same secret on many lines — confirmed live during the real-vault
+dogfooding pass — so the headline number a human sees is unique file paths
+(<code>summarize(..., detail=True)</code>'s new <code>distinct_files</code> field), not an inflated raw count.</p>
+<p><strong>The report gained a real in-app view, not just a download.</strong> <code>generate_report()</code>'s Markdown
+output is narrow and fully controlled, so <code>ui/app/renderReportMarkdown.tsx</code> is a small custom
+converter rather than a markdown-parsing dependency — <code>ui/package.json</code> still has exactly 3
+runtime dependencies. Unrecognized lines render as plain text rather than being dropped, so a
+future <code>generate_report()</code> change degrades gracefully instead of silently losing content.</p>
+<h2 id="14-git-repository-history-as-a-scan-target-and-source-classification-portunus-leak-scan-git-awareness">14. Git-repository history as a scan target, and source classification (portunus-leak-scan-git-awareness)<a class="headerlink" href="#14-git-repository-history-as-a-scan-target-and-source-classification-portunus-leak-scan-git-awareness" title="Permanent link">&para;</a></h2>
+<p>Immediately after manually verifying (dump the portunus repo's full git history to a scratch
+file, scan it with the existing engine, delete the scratch file) that none of the real leak-scan
+findings from earlier dogfooding had ever touched the codebase, that manual technique became a
+real, built-in capability: <code>portunus leak-scan config add-repo &lt;path&gt;</code>.</p>
+<p><strong>Reuses <code>scan_paths()</code> unchanged — no second matching engine.</strong> <code>_scan_repo_history()</code> dumps
+<code>git log --all -p --full-history --reverse</code> to a fresh temp file per scan run and feeds it
+through the exact same line-based engine §11 already established, then deletes the temp file.
+Oldest-first (<code>--reverse</code>) is deliberate, not cosmetic: with the default newest-first ordering,
+every new commit shifts every existing line's position in the dump, which would break the
+<code>(path, line_number)</code> dedup key <code>record_findings()</code> relies on and cause the escalation clock to
+keep resetting on an actively-developed repo. Findings are remapped from the (fresh-every-run)
+temp path to a stable <code>"&lt;repo&gt; (git history)"</code> label before persisting, so the dedup key stays
+meaningful across runs even though the literal file scanned is different every time.</p>
+<p><strong>Always a full re-scan per repo per run — never incremental.</strong> Git history can be rewritten
+(rebase, force-push) in ways that make the byte-offset watermark built for append-only log files
+(§11) unsafe here; repo histories are also far smaller than the 3.4 GB corpus that motivated
+incremental scanning in the first place. A deliberate, documented tradeoff, not an oversight.</p>
+<p><strong>Source classification — <code>log</code> / <code>local</code> / <code>git-history</code>, plus public/private for the latter.</strong>
+Every finding now carries <code>source_kind</code>. Plain-path findings get a soft, named heuristic
+(log-like filename/extension → <code>"log"</code>, else <code>"local"</code>) — explicitly documented as a heuristic,
+not a rigorous classifier, since getting it wrong is cosmetic, never a security gap. Git-history
+findings carry <code>repo_path</code> and <code>repo_visibility</code> (<code>"public"</code> / <code>"private"</code> / <code>"unknown"</code>),
+resolved via <code>gh repo view &lt;remote&gt;</code> — the SAME gh-CLI, user's-own-credential posture
+<code>ui/src-tauri/src/updater.rs</code> already established for this codebase's self-updater, never an
+embedded token. No remote, a non-GitHub remote, or <code>gh</code> unavailable all resolve to <code>"unknown"</code> —
+never a guess. Resolved ONCE per configured repo per scan run (a single secret can appear at
+dozens of locations in one repo's history — confirmed live, 48 locations for one real finding),
+not once per finding.</p>
+<p><strong>A public-repo finding gets the loudest UI treatment.</strong> DetailDrawer's expandable finding
+history (§13) labels each entry by source — <code>"⚠ PUBLIC repo: &lt;name&gt;"</code> renders in the same
+critical-severity red used elsewhere in this codebase, distinct from private/unknown/log/local,
+because it's the single most severity-relevant fact this whole feature can surface.</p>
+<h2 id="15-one-command-agent-onboarding-portunus-agent-init">15. One-command agent onboarding (<code>portunus agent init</code>)<a class="headerlink" href="#15-one-command-agent-onboarding-portunus-agent-init" title="Permanent link">&para;</a></h2>
+<p><code>portunus mcp</code> (§1) and this repo's own <code>.claude/skills/</code> had both existed for a while, but only
+by hand: registering the MCP server and copying the skill files to <code>~/.claude/skills/</code> was a
+manual, one-machine, one-repo affair. <code>portunus agent init</code> packages both into one idempotent
+command, and the new <code>scripts/install.sh</code> (published to the gh-pages site root) chains it after
+a fresh install — <code>curl -fsSL https://mdostal.github.io/portunus/install.sh | bash</code> end to end.</p>
+<p><strong>Detection, not configuration.</strong> <code>detect_harnesses()</code> checks <code>shutil.which("claude")</code>/
+<code>shutil.which("codex")</code> — no config file names which harnesses to support; a harness is "in
+scope" purely by being present on the machine. <code>--harness</code> (repeatable) narrows an explicit run
+to fewer than all detected.</p>
+<p><strong>A real-world timing finding changed the registration check.</strong> The first cut of
+<code>mcp_registered()</code> shelled out to <code>claude mcp list</code> and checked for "portunus" in the output —
+correct in principle, but <code>claude mcp list</code> health-checks <em>every</em> registered MCP server, not
+just the one being asked about. On a machine with several servers configured (one dev machine's
+own: 11), one slow/unreachable server alone can eat a 30-second timeout, making the check
+unreliably slow under any short timeout. Fixed by using <code>claude mcp get portunus</code> instead — a
+fast, targeted lookup for exactly one server, no fleet-wide health check. Codex CLI's own
+<code>mcp list</code> has no equivalent per-server health check and stays fine as-is.</p>
+<p><strong>Skills ship as real package data, not read from the repo at install time.</strong> The canonical
+skill content lives at <code>src/portunus/agent_skills/&lt;name&gt;/SKILL.md</code> inside the Python package
+itself (declared in <code>pyproject.toml</code>'s <code>[tool.setuptools.package-data]</code>, backed by
+<code>MANIFEST.in</code>) — confirmed to actually land in site-packages via a real <code>pipx install</code> of this
+project, not just assumed from the config. This repo's own <code>.claude/skills/&lt;name&gt;/SKILL.md</code>
+(what Claude Code loads when working in this codebase) is a second, independently-maintained
+copy of the same content; <code>tests/test_agent_setup.py::test_packaged_skills_match_repo_dotclaude_copies</code>
+guards against the two drifting apart, byte-for-byte, rather than trusting manual diligence.</p>
+<p><strong>Zero secret-boundary surface, structurally enforced.</strong> This whole feature is local agent-CLI
+config plumbing — MCP registration, copying markdown files — and has no legitimate reason to
+import <code>Registry</code>/<code>Broker</code>/<code>Resolver</code>/<code>SecretBackend</code> at all. <code>tests/test_cli_agent.py</code> asserts
+that via AST inspection of the actual imports, not just by the module's own description.</p>
+<p><strong>PyPI naming, decided while this feature was built.</strong> PyPI's existing <code>portunus</code> project is an
+unrelated, unmaintained package (<a href="https://github.com/IQTLabs/portunus"><code>IQTLabs/portunus</code></a>) —
+the README previously said <code>pipx install portunus # once published</code>, which would have silently
+installed the wrong tool the day that line was ever acted on. <code>pyproject.toml</code>'s <code>name</code> is now
+<code>pantheon-portunus</code> (confirmed unclaimed on PyPI); <code>[project.scripts]</code> keeps the installed
+command as plain <code>portunus</code>, unaffected. Not yet actually published under either name —
+<code>scripts/install.sh</code> installs straight from GitHub (<code>pipx install git+https://...</code>) until a real
+release ships.</p>
+<h2 id="16-cli-self-update-portunus-update-and-the-security-posture-behind-it">16. CLI self-update (<code>portunus update</code>), and the security posture behind it<a class="headerlink" href="#16-cli-self-update-portunus-update-and-the-security-posture-behind-it" title="Permanent link">&para;</a></h2>
+<p>The desktop app has had a real, working auto-updater for a while (<code>ui/src-tauri/src/
+updater.rs</code>, §1). The CLI didn't — worth closing, not just for parity, but because the CLI is
+the piece most likely to run standalone and often: a local key-value store on its own machine,
+not only a plugin invoked occasionally by an agent. That framing raises the stakes, not lowers
+them — this tool already holds real vault access, so its own update path gets treated with at
+least as much care as anything it protects.</p>
+<p><strong>Two paths, deliberately unequal in what they're allowed to do.</strong> A passive check runs once per
+CLI invocation (<code>update.maybe_notify()</code>, called from <code>cli.py::main()</code> for every command except
+<code>mcp</code> and <code>update</code> itself): throttled to once per 24 hours via a cache file
+(<code>PORTUNUS_HOME/update-check.json</code>), it spawns a detached, non-blocking subprocess to do a live
+check and prints at most one line to <strong>stderr</strong> (never stdout — would corrupt scripted/<code>--json</code>
+output) if a previously-cached check found something newer. It is structurally incapable of
+installing anything — <code>apply_update()</code> (the one function that ever mutates the install) is never
+referenced anywhere in <code>maybe_notify()</code>'s call graph, verified by an AST check on the function's
+own source, not just by convention. Only <code>portunus update run</code> — an explicit command requiring
+either an interactive confirm or <code>--yes</code> — may ever call it. Same "never a silent unattended
+swap" rule the desktop app's dialog-based confirm already encodes, applied to a headless context
+where there's no dialog to show.</p>
+<p><strong>Every real check is live, never cached.</strong> <code>update.check_now()</code> is what both <code>update check</code> and
+<code>update run</code> actually call — it always shells out fresh; the cache file exists purely so <em>other</em>
+invocations' passive notice has something to read, never as a substitute for <code>run</code>'s own
+decision about whether there's something to install.</p>
+<p><strong>Installs are pinned, never a floating <code>main</code>.</strong> <code>apply_update(tag)</code> installs
+<code>git+https://github.com/mdostal/portunus.git@{tag}</code> — the <em>exact</em> release tag <code>check_now()</code>
+resolved, not the default branch's current HEAD. What lands on disk is always one specific,
+auditable commit, decided once and used unchanged for that install, not two separate reads
+(check, then install) that could observe different code if <code>main</code> moved in between.</p>
+<p><strong>Refuses to touch a dev checkout.</strong> <code>is_dev_checkout()</code> walks upward from the installed
+package's own path looking for a <code>.git</code> directory; if found, <code>update run</code> refuses outright and
+points at <code>git pull</code> instead. A real pipx/pip install's <code>site-packages</code> never lives inside a git
+working tree, so this is a clean, dependency-free signal — confirmed directly against a real
+<code>pipx install</code> during development (§15 established the same verification discipline for
+<code>agent_setup.py</code>'s packaged skills).</p>
+<p><strong>Zero secret-boundary surface, by construction.</strong> <code>update.py</code> has no legitimate reason to
+import <code>Registry</code>/<code>Broker</code>/<code>Resolver</code>/<code>SecretBackend</code> at all — verified structurally (an AST scan
+of the module's actual imports), the same discipline <code>agent_setup.py</code> already established (§15).
+The update path is exactly the part of this codebase an attacker would most want to compromise,
+so it's exactly the part with the least code, and the least ability, to reach a secret.</p>
+<p><strong>A real bug found and fixed while building this.</strong> The <code>gh</code> invocation this whole feature
+started from (<code>updater.rs</code>'s own <code>check_latest_release_tag()</code>) passed a literal <code>latest</code> as the
+release-tag argument to <code>gh release view</code>. That's wrong: <code>gh release view &lt;tag&gt;</code> treats <code>&lt;tag&gt;</code>
+as a tag name to look up, not a keyword meaning "the latest one" — omitting the argument
+entirely is what actually does that. Confirmed live against the real repo (<code>gh release view
+--repo mdostal/portunus latest ...</code> → <code>release not found</code>; the same command without <code>latest</code> →
+the real current tag). This means the desktop app's auto-updater has likely never successfully
+detected an update in production — the background timer only logs a warning on failure, so
+nothing ever surfaced it. Fixed in both <code>updater.rs</code> and <code>update.py</code> in the same pass.</p>
+<h2 id="17-portunus-petitio-rbac-closeout-new-vault-default-live-proof-deferred-follow-ups">17. portunus-petitio-rbac closeout: new-vault default, live proof, deferred follow-ups<a class="headerlink" href="#17-portunus-petitio-rbac-closeout-new-vault-default-live-proof-deferred-follow-ups" title="Permanent link">&para;</a></h2>
+<p><strong>Default-on for genuinely brand-new vaults only, never retroactive.</strong> <code>paths.py::home()</code> is the
+one place in the whole codebase that can reliably tell "this <code>PORTUNUS_HOME</code> directory never
+existed before" apart from "an existing vault that just hasn't been touched today" -- checking
+<code>registry.json</code>/<code>roles.json</code> for that signal doesn't work, since by the time <code>check_injectable()</code>
+ever runs, a real registry entry (and therefore <code>registry.json</code>) already exists. <code>home()</code> checks
+<code>path.exists()</code> <em>before</em> its own <code>mkdir()</code> call and, only on a genuine first-creation, stamps
+<code>roles-enforce.json</code> to <code>on</code> right then (a deferred import into <code>roles.py</code> to avoid a cycle).
+Flipping an <em>existing</em> vault's default would have been this project's first-ever breaking
+upgrade behavior -- this story deliberately avoids that. Since a fresh vault also starts with
+zero configured <code>PolicyRecord</code>s, permissive-if-unconfigured (§3) means the new default is
+behaviorally invisible until the operator configures their first scoped policy -- no friction
+added to the actual first-run/setup-wizard flow.</p>
+<p><strong>Live-verified against the real vault, not a synthetic fixture.</strong> A throwaway <code>--home</code> was
+seeded with a direct copy of the real <code>~/.portunus/registry.json</code> (410 real references at the
+time -- metadata only, <code>registry.json</code> structurally has no value field, so this is exactly as
+safe to copy as any other read of it) -- never the real backend's stored values, never the real
+live <code>PORTUNUS_HOME</code> itself. One real scoped policy was configured for one real project
+(<code>demo-project-483920</code>); enforcement turned on for the throwaway copy only. Result: the matching
+principal resolved successfully, a non-matching principal was genuinely denied
+(<code>NotAuthorized</code>), and — checked against all 410 real references, not just the one under test —
+every reference outside that one configured project's scope stayed fully resolvable for an
+entirely unconfigured, random requester identity. Permissive-if-unconfigured holds at real scale,
+confirmed directly, not just asserted from unit tests.</p>
+<p><strong>A real, separate bug found and fixed while shipping Story 03.</strong> <code>NotAuthorized</code> wasn't caught
+anywhere <code>NotInjectable</code>/<code>ApprovalRequired</code> already were. <code>cmd_resolve</code> would have shown a raw
+Python traceback instead of a clean CLI error. Worse: <code>cmd_sync</code>/<code>portunus_sync</code>/
+<code>leakscan.get_values()</code> all <code>continue</code> past <code>NotInjectable</code>/<code>ApprovalRequired</code> to skip one
+inaccessible reference and keep processing the rest -- <code>NotAuthorized</code> wasn't in those <code>except</code>
+clauses either, so the <em>first</em> policy-denied reference in a sync or leak-scan run would have
+crashed the entire loop instead of being skipped like every other inaccessible reference already
+is. Fixed at all four sites; <code>NotAuthorized</code> also now exported from <code>portunus/__init__.py</code>
+alongside <code>NotInjectable</code>/<code>ApprovalRequired</code>.</p>
+<p><strong>Explicitly deferred, not silently missed</strong> (§3 already names these; repeated here since this
+is the epic's own closeout record): scope-aware <code>list</code>/<code>tree</code> MCP tools, and identity-scoped
+approval tokens (<code>Broker.approve()</code>'s token is keyed on a reference name only today). Both
+surfaced by this epic's own research and self-grill pass, both real, neither built here --
+tracked in README's Roadmap for whoever picks them up next.</p>
+<p><strong>Research provenance.</strong> This epic is grounded in a 13-agent, multi-provider research pass
+(Gemini API / Codex CLI / native Claude, 4 topics × 3 providers + 1 synthesis judge) surveying
+existing access-control systems (OPA, Cedar, Casbin, the Zanzibar family, SPIFFE/SPIRE, and
+more) before concluding a hand-rolled evaluator was the right-sized v1 for this project's actual
+shape -- full raw output at <code>.pHive/research/petitio-rbac-synthesis.md</code>, distilled at
+<code>.pHive/epics/portunus-petitio-rbac/docs/research-brief.md</code>.</p>
+<h2 id="18-vault-access-transfer-scoped-metadata-sharing-between-instances-portunus-vault-transfer">18. Vault access transfer: scoped metadata sharing between instances (portunus-vault-transfer)<a class="headerlink" href="#18-vault-access-transfer-scoped-metadata-sharing-between-instances-portunus-vault-transfer" title="Permanent link">&para;</a></h2>
+<p><strong>Distinct from <code>vault export</code>/<code>import</code> (§8), on purpose.</strong> That pair moves the vault's <em>whole</em>
+critical-state surface — registry, master key, encrypted values, bindings, audit log — as one
+passphrase-locked archive: a full-vault backup/restore, for a machine move or a reinstall.
+<code>vault access export/import/verify</code> (new module <code>vault_transfer.py</code>) instead shares <em>working
+access</em> to some or all of a vault between two Portunus instances, without ever moving a value.
+For the common case — a GCP/AWS-backed reference — the value already lives with the cloud
+provider, not locally; only the registry pointer and its bindings ever need to move. The bundle
+is plain JSON, never passphrase-locked, because it structurally cannot contain a secret value:
+only <code>Reference</code>/<code>VaultBinding</code>/<code>RotationBinding</code> fields, each independently confirmed non-secret
+by its own docstring. This is also the literal answer to a standing ask this session: "portunus
+can already inject so it should be able to help setup and get that going" — <code>verify</code> reuses the
+exact same <code>Resolver.resolve_call()</code> boundary a real <code>resolve</code>/<code>ask</code>/<code>mcp</code> call already uses, no
+new fetch mechanism.</p>
+<p><strong><code>resolved_backend</code> is computed once, at export time, on the source.</strong> <code>resolved_backend_kind()</code>
+mirrors <code>cli.py::_make_backend_router()</code>'s own 3-level precedence (explicit <code>ref.backend</code>
+override → project's <code>VaultBinding.backend</code> → the global <code>PORTUNUS_BACKEND</code> fallback,
+normalizing the env var's own <code>"gcloud"</code> spelling to the <code>"gcp"</code> kind string every other field in
+this codebase uses) — but returns a plain string, baked into each exported reference. This can
+only be computed correctly on the source: an unscoped reference relying on the source's own
+global fallback has no equivalent on the target, which doesn't share that fallback value. Import
+never re-derives it — <code>import_bundle()</code> only ever reads the precomputed field and pins it
+directly into the target's own <code>ref.backend</code>, an explicit override that makes the target resolve
+that reference to the exact backend kind the source did, regardless of the target's own env/
+bindings.</p>
+<p><strong>The one piece of real import logic: <code>resolved_backend == "local"</code> always forces
+<code>state=requested</code>.</strong> Regardless of the reference's state on the source, a local-backed value
+lives only on the source machine — landing it as anything else on the target would be a silent
+lie about readiness, exactly the failure mode <code>Registry.request()</code>'s existing "value-less
+placeholder" semantics already exist to prevent for agent-initiated asks. Every other backend's
+state transfers unchanged; no value ever needs to move for those. A per-reference conflict (same
+name, different <code>sm_name</code>/backend) never aborts the batch — refused without <code>--force</code>, reported
+by name with both the existing and incoming <code>sm_name</code>/backend, and overwritten with it — matching
+<code>drop_bulk</code>'s own established "one bad entry doesn't abort the batch" precedent.</p>
+<p><strong><code>verify</code> is CLI-only for a different reason than <code>vault export</code>/<code>import</code> are.</strong> Those are
+CLI-only because an archive containing every value should never be triggerable by an LLM-facing
+tool. <code>verify</code> never touches a value at all — its boundary (<code>_reachable_boundary</code>, structurally
+verified by AST to ignore its own argument entirely and always return the same literal) discards
+the resolved plaintext on arrival. It's CLI-only because it can trigger real backend API calls
+across every reference in the registry in a single invocation — a quota/cost/IAM-error-surfacing
+side effect, the same "a human initiates this" posture <code>vault export</code>/<code>import</code> already have, for
+a genuinely different reason.</p>
+<p><strong>Live-verified, not just unit-tested.</strong> A real scoped export of the actual vault (one real,
+low-risk project's 19 references, all local-backed) was imported into a throwaway <code>--home</code> and
+verified there. <code>verify</code> correctly reported all 19 as needing <code>portunus drop</code> — an accurate
+readiness report, not a false "reachable" claim, since the values genuinely don't exist on the
+throwaway target. A direct filesystem check afterward confirmed <code>vault.enc.json</code> (the file that
+would actually hold an encrypted value) was never created. <code>master.key</code> <em>was</em> created — a
+pre-existing, unrelated side effect of <code>_build()</code> constructing a fallback <code>LocalEncryptedBackend</code>
+instance, which generates its key eagerly in <code>__init__</code> regardless of whether any local
+operation ever actually happens (true for <code>portunus list</code> on a fresh home today, not something
+this epic introduced or fixed). It's an inert Fernet key applied to no data — a real, precisely
+scoped finding from this epic's own live proof, not glossed over, and left as a known gap rather
+than an in-scope fix (lazy key generation would be a real behavior change to a load-bearing
+primitive, deserving its own dedicated story if pursued).</p>
+<p><strong>Self-grill: selective local-value transfer, explicitly deferred.</strong> This epic's own
+design-discussion self-grill considered letting <code>export</code> optionally carry a <em>chosen</em> local
+value too (with the operator's explicit, per-reference consent) rather than always landing
+local-backed references as <code>state=requested</code>. Deliberately not built here — it's a materially
+different trust/consent model than "share a pointer," and conflating the two would have made
+this epic's own scope boundary (never move a value, structurally) harder to reason about and
+verify. Tracked as a real, separate follow-up, not silently dropped. See also <code>vault-backup</code>'s
+own §4 (portunus-vault-backup design-discussion.md) — the sibling decision to defer full
+bidirectional multi-machine sync as separate, bigger future work; this epic's "share access,
+not values" scope is intentionally narrower than that too.</p>
+<h2 id="19-masked-trimmed-agent-openable-secret-entry-portunus-secure-entry">19. Masked, trimmed, agent-openable secret entry (portunus-secure-entry)<a class="headerlink" href="#19-masked-trimmed-agent-openable-secret-entry-portunus-secure-entry" title="Permanent link">&para;</a></h2>
+<p><strong>The problem was never the value's flow — it was the human/agent handoff.</strong> <code>cmd_drop</code> already
+got the hard invariant right (<code>del value</code> after <code>store()</code>, never the audit log, never an argv
+flag); the real gap was UX: an agent's own tool-execution channel is fundamentally
+non-interactive — it runs a command to completion and captures stdout/stderr, with no live TTY
+a human can type into. So an agent literally cannot itself run a masked prompt and hand it to a
+human; verified directly, not assumed — <code>getpass.getpass()</code> against closed/empty stdin (exactly
+what an agent's own tool call provides) raises <code>EOFError</code> immediately, not a hang. This epic's
+four pieces exist specifically for that handoff moment: a human entering a value while an agent
+is mid-task.</p>
+<p><strong>Whitespace, trimmed once, at the one real choke.</strong> <code>cmd_drop</code>'s <code>--stdin</code>/<code>--value-file</code> read
+previously applied only <code>.rstrip("\n")</code> — a leading/trailing space or <code>\r</code> (a classic
+copy-paste artifact) silently corrupted the stored value with no error anywhere. Now <code>.strip()</code>
+at that one assignment; the web dashboard's <code>/api/drop</code> route pipes straight to this same
+command, so it inherits the fix for free — one implementation, not two.</p>
+<p><strong><code>portunus drop</code>'s interactive mode is for a human, not an agent — and degrades safely either
+way.</strong> When neither <code>--stdin</code> nor <code>--value-file</code> is given, <code>getpass.getpass()</code> prompts twice
+(masked, no echo), refusing unless both entries match — the same reason <code>passwd</code>/<code>ssh-keygen</code>
+confirm twice: masked input has zero visual feedback, so a typo is otherwise silent. If an
+agent's own tool call somehow reaches this branch anyway (closed/empty stdin), the resulting
+<code>EOFError</code> is caught and reported as the same kind of clean, actionable CLI error every other
+failure mode in this codebase already gets — never a raw traceback.</p>
+<p><strong>The dashboard already existed — this epic wired the missing connection.</strong>
+<code>ui/app/components/AddSecretForm.tsx</code> (a masked <code>type="password"</code> field, POSTing to
+<code>/api/drop</code>, which pipes to <code>portunus drop --stdin</code>) and <code>Registry.request()</code>'s
+<code>state=requested</code> placeholders (from <code>portunus ask "add ..."</code>) both predate this epic — they
+just weren't connected. <code>DetailDrawer</code> now shows a "Fulfill…" action (only when
+<code>state === "requested"</code>) that opens <code>AddSecretForm</code> pre-filled from every metadata field the
+agent already captured, mirroring the existing rotate-flow pre-fill exactly. A <code>?fulfill=&lt;name&gt;</code>
+query param does the same on page load — the deep link <code>portunus ui open --fulfill</code> points a
+browser at. (<code>useSearchParams()</code> required wrapping the page in a <code>Suspense</code> boundary — a
+Next.js build-time requirement, not a behavior change.)</p>
+<p><strong><code>portunus ui open</code> is the one piece an agent CAN run itself.</strong> Unlike the interactive drop
+prompt, this command only ever constructs a URL and calls <code>webbrowser.open()</code> (Python stdlib,
+cross-platform — no per-OS branching) — no TTY needed, returns immediately. A short, bounded
+TCP-connect probe (<code>_ui_reachable()</code>, explicit timeout — matching this codebase's own pattern of
+bounded operations, e.g. the registry/audit lock timeouts) runs first, so it never opens a
+browser to a dead connection; <code>--fulfill NAME</code> is validated against the registry (exists,
+<code>state=requested</code>) <em>before</em> that probe even runs, so it never opens a misleading URL either.
+Deliberately does NOT launch the packaged desktop app (same Next.js UI wrapped in Tauri per §6 —
+opening the web UI is functionally equivalent) or auto-start the dev server (a separate, real
+process-lifecycle feature) — both explicitly deferred, not silently dropped.</p>
+<p><strong>Live-verified, not just unit-tested.</strong> A real <code>portunus ask "add ..."</code> call created a genuine
+<code>state=requested</code> reference; against a real <code>npm run dev</code> server, both the DetailDrawer button
+and a <code>?fulfill=&lt;name&gt;</code> URL (via Playwright) landed on an identically pre-filled form, and
+submitting a value with deliberate leading/trailing whitespace stored it correctly trimmed and
+resolved cleanly. Separately, <code>portunus ui open --fulfill &lt;name&gt;</code> against that same real server
+was confirmed to open a real browser tab — the dev server's own request log shows the exact
+<code>GET /?fulfill=&lt;name&gt; 200</code> hit landing.</p>
+<h2 id="20-generic-oauth-20-token-broker-portunus-oauth-token-broker">20. Generic OAuth 2.0 token broker (portunus-oauth-token-broker)<a class="headerlink" href="#20-generic-oauth-20-token-broker-portunus-oauth-token-broker" title="Permanent link">&para;</a></h2>
+<p><strong>The right-sized answer to "capture a Gmail session."</strong> A browser session cookie is a
+continuously-used, full-account bearer credential with no single boundary call site to inject
+it at -- structurally incompatible with Portunus's core invariant. An OAuth access token is the
+legitimate version of the same underlying ask: scoped, short-lived, revocable independently of
+the account's actual login session, and a plain string -- exactly the shape every other secret
+already is. Full research/design/CBA trail: <code>.pHive/epics/portunus-oauth-token-broker/docs/</code>.</p>
+<p><strong>Portunus is storage + minting only -- never the consent flow.</strong> The one-time OAuth bootstrap
+(obtaining a refresh token) happens entirely outside Portunus, through whatever mechanism
+already legitimately covers the target scope. This isn't a corner cut for time -- it's a
+deliberate scope boundary: Google's own verification/CASA requirements for sensitive/restricted
+scopes are a real, recurring administrative cost that Portunus's own engineering cannot pay
+down regardless of how well it's built (research-brief.md §4). Building a consent-flow runner
+into Portunus would take on that cost as if it were solvable code; it isn't.</p>
+<p><strong>Storage reuses the session vault's exact plumbing, under a distinct namespace.</strong>
+<code>LocalEncryptedBackend.store_oauth_credential()</code>/<code>load_oauth_credential()</code>/
+<code>list_oauth_credentials()</code>/<code>remove_oauth_credential()</code> mirror <code>store_session()</code>'s encrypted-
+storage mechanics exactly (<code>self.store()</code>/<code>self.access()</code> underneath, the same namespace-part
+sanitization) but under <code>oauth:&lt;provider&gt;:&lt;account&gt;</code>, not <code>session:&lt;site&gt;:&lt;account&gt;</code> -- and
+deliberately TTL-free, unlike sessions. A stored refresh token's real expiry authority is the
+provider itself (a failed refresh grant IS the signal), not a client-side guess; inventing a TTL
+here would be exactly the kind of lie an arbitrary <code>state=enabled</code> would have been in
+portunus-vault-transfer's own local-only-reference handling.</p>
+<p><strong>Minting mirrors <code>GCPWorkloadIdentityAuth.mint()</code>'s exact shape, generalized.</strong>
+<code>OAuthRefreshTokenAuth</code> (auth.py) is the same transport-injection/audit-identity-only pattern
+already established for WIF token exchange, but for the standard RFC 6749 §6 refresh_token
+grant every OAuth 2.0 provider implements at their own <code>token_endpoint</code> -- one class covers
+Google, GitHub, Microsoft, etc., not a Google-specific one.</p>
+<p><strong>Zero Resolver-side changes -- <code>OAuthBackend</code> is just another <code>SecretBackend</code>.</strong> <code>sm_name</code>
+encodes <code>"&lt;provider&gt;:&lt;account&gt;"</code>, the same opaque-identifier role GCP Secret Manager's own
+<code>sm_name</code> already plays; no new Protocol parameter. <code>.access()</code> returns a plain access-token
+string, so <code>resolve</code>/<code>resolve_exec</code>/<code>resolve_to_tempfile</code> need no changes at all -- proven
+directly by resolving a real reference through the actual <code>Registry</code>/<code>Broker</code>/<code>Resolver</code> stack,
+not by reasoning about it. An in-memory access-token cache (this process only, never persisted)
+reuses <code>GCPWorkloadIdentityAuth</code>/<code>OIDCToken.expired()</code>'s existing skew-check convention exactly.
+<code>local_backend</code> is duck-typed rather than imported directly (mirrors <code>SyncingBackend</code>'s own
+<code>local</code> parameter) to avoid a circular import between backend.py and localvault.py.</p>
+<p><strong>Multiple accounts per provider is a first-class case, live-verified with two real, distinct
+Google accounts, not synthetic fixtures.</strong> <code>(provider, account)</code> namespacing means
+<code>google:personal</code> and <code>google:firefly-events</code> coexist as fully independent credentials. The live
+proof bootstrapped both via <code>gcloud auth application-default login</code> against the real ADC file,
+minted a genuine access token for each, and confirmed they were actually different values --
+by comparing SHA-256 digests, never by printing or diffing raw tokens. A real mistake happened
+and was caught during this: an early verification script used <code>a != b and a and b</code> to report
+"are these different," which in Python returns the last truthy operand (the raw token) instead
+of a boolean -- it printed a live access token into the session's own output. Caught immediately,
+disclosed to the user without minimizing it, the leaked (short-lived, ~1hr, cloud-platform-scope
+only) access token's temp files were deleted, and the check was rewritten to compare digests,
+never raw values. Documented here rather than glossed over, matching this project's own standing
+discipline: real findings from a live proof get recorded, not smoothed away.</p>
+<p><strong>Real finding, not assumed</strong>: minting failed initially in this session's own Python environment
+with an SSL certificate verification error -- a stock python.org macOS installer issue (its
+Python doesn't automatically inherit the system CA trust store), unrelated to Portunus's own
+code; confirmed by the fact that <code>curl</code> reached the same endpoint fine while <code>urllib</code> didn't.
+Fixed for the proof via <code>SSL_CERT_FILE</code> pointed at <code>certifi</code>'s bundle; documented as a
+troubleshooting note in README.md rather than worked around in Portunus's own code, since it's
+an environment prerequisite common to any Python HTTPS client on an affected install, not
+something specific to this feature.</p>
+<p><strong>Story 05 (shipped as a same-day follow-up): a Standalone UI entry point.</strong> <code>OAuthCredentialForm</code>
+mirrors <code>AddSecretForm</code>'s own metadata-rich pattern exactly (same field set: name/provider/
+account/org/project/env/tags/description/purpose/injected_as/group/related/repo/source_files)
+with one addition: an explicit, never-ambiguous choice between two credential sources. Checking
+"auto-fill from local gcloud ADC" hides the manual credential fields entirely and has the
+Next.js server (<code>/api/oauth-store</code> GET <code>?detect=adc</code>) read <code>~/.config/gcloud/
+application_default_credentials.json</code> directly -- the one well-known path this route ever reads
+outside <code>PORTUNUS_HOME</code>, never an arbitrary user-supplied one, and only ever opt-in (a checkbox
+the human ticks, never automatic). The values are never sent to or shown in the browser; GET
+only ever reports presence (<code>{available: true/false}</code>), never content. Leaving the box unchecked
+shows masked <code>client_secret</code>/<code>refresh_token</code> fields, same <code>type="password"</code> discipline as every
+other secret value in this UI. On submit, the route chains the same two CLI calls a human would
+otherwise run by hand (<code>portunus oauth store</code>, then <code>portunus drop --backend oauth</code> with the
+full metadata) -- no new storage/minting mechanism, no behavioral fork from a CLI-entered
+credential, confirmed by resolving a form-submitted credential through the real boundary and
+getting back a real <code>ya29.</code> access token. Live-verified end to end via Playwright, including a
+direct filesystem check that the real ADC secret never touched the throwaway proof home in
+plaintext.</p>
+<h2 id="21-session-access-gate-a-corrected-playwright-bridge-portunus-session-access-gate">21. Session-access gate + a corrected Playwright bridge (portunus-session-access-gate)<a class="headerlink" href="#21-session-access-gate-a-corrected-playwright-bridge-portunus-session-access-gate" title="Permanent link">&para;</a></h2>
+<p><strong>Origin: a branch-cleanup audit, not a planned epic.</strong> Cleaning up 30 stale git branches
+(2026-09-02) surfaced two never-merged branches (<code>feat/PAN-7807</code>, <code>feat/PAN-7835</code>) with real,
+unshipped work matching <code>portunus-session-vault</code>'s own already-documented Stories 03/05 (that
+epic's 2026-08-19 reconciliation note had already confirmed these two were genuinely unstarted).
+Filed as GitHub issue #136, then re-scoped against current code rather than resurrecting either
+branch as-is.</p>
+<p><strong>The gate reuses <code>roles.evaluate()</code> -- no second policy engine.</strong> <code>Broker.check_session_access()</code>
+builds a synthetic, in-memory <code>Reference</code> (never written to the Registry) from a session's own
+optional <code>org</code>/<code>project</code>/<code>env</code>/<code>repo</code> scope metadata and hands it to the <em>exact</em> <code>roles.evaluate()</code>
+call <code>check_injectable()</code> already makes. This was a real, deliberate correction versus the old
+branches' own approach: <code>feat/PAN-7807</code>'s <code>check_session_access()</code> used a bespoke
+<code>owner_role</code>/<code>agent_role</code> scheme, predating <code>portunus-petitio-rbac</code>'s general policy engine.
+Confirmed via <code>roles.py</code>'s own <code>_scope_matches()</code> (<code>getattr(ref, policy.scope_type, "")</code>) that
+<code>roles.evaluate()</code> is fully duck-typed and needs no Reference subclass or Registry entry at all —
+the cheapest possible integration, not a new mechanism. Only <code>session load</code> (the one
+payload-exposure boundary) is gated, mirroring exactly which single call <code>check_injectable()</code>
+itself gates — <code>store</code>/<code>remove</code>/<code>inspect</code>/<code>list</code> stay ungated, the same way <code>drop</code>/<code>retag</code>/
+<code>reg show</code> are never policy-gated either.</p>
+<p><strong>The Playwright question, and a real correction caught by insisting on a live proof.</strong> Verified
+directly against Playwright's own API that <code>browser.new_context(storage_state=...)</code> accepts
+either a dict or a file path — meaning <code>cmd_session_load</code>'s existing tempfile-path output looked,
+on paper, like a complete bridge already, no new "playwright.py" injection module needed. The
+first version of this epic's own docs said exactly that. <strong>The live proof (installing <code>playwright</code>
+for real, launching a real Chromium context) caught that this claim was one step too strong</strong>:
+<code>cmd_session_load</code> writes the <em>full</em> record (<code>schema</code>/<code>namespace</code>/<code>ttl</code>/<code>rotation</code>/<code>scope</code>/
+<code>session</code>), not the bare <code>session</code> payload Playwright's <code>storage_state</code> actually expects — the
+first real test run genuinely failed (<code>assert any(...)</code> came back empty, since Playwright silently
+treats an object with no top-level <code>cookies</code>/<code>origins</code> keys as an empty state rather than
+erroring). The fix wasn't a Portunus code change — <code>cmd_session_load</code>'s existing full-record
+output is itself intentional, established, tested behavior (a pre-existing test asserts exactly
+that shape) — the fix was correcting the <em>documentation</em>: bridging to Playwright needs one line
+(<code>json.load(open(path))["session"]</code>) before the payload is handed onward, not zero. Corrected in
+this epic's own <code>research-brief.md</code> before it shipped inaccurately, and in README.md's own
+example. The resulting test (<code>tests/test_session_playwright_integration.py</code>,
+<code>pytest.importorskip("playwright")</code>-guarded so the core suite never requires the package) proves
+the corrected chain against a real Chromium browser context — a real <code>cookies()</code> call on a real
+<code>BrowserContext</code>, not a synthetic JSON-shape assertion.</p>
+<p><strong><code>portunus-session-vault</code>'s own epic.yaml is now fully reconciled</strong> — all 5 stories complete
+(01/02/04 done-elsewhere per its 2026-08-19 note; 03/05 shipped here, re-scoped against current
+code rather than resurrecting the old branches' own now-superseded designs).</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../README.md">README.md</a> — component model table, install/usage, MCP tool reference</li>
+<li><code>.pHive/CONTEXT.md</code> — terminology glossary</li>
+<li><code>.pHive/epics/portunus-swappable-trio/docs/</code> — the research and design record behind this
+  page (6-product vault-adapter research, RBAC/escalation-pattern research, OSS
+  adapter-marketplace UX research)</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.top", "navigation.sections", "navigation.instant", "content.code.copy", "search.suggest", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
