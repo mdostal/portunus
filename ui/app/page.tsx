@@ -13,8 +13,9 @@ import ProjectExplorer from "./components/ProjectExplorer";
 import SettingsPage from "./components/SettingsPage";
 import SetupWizard from "./components/SetupWizard";
 import AboutPage from "./components/AboutPage";
+import SearchBar from "./components/SearchBar";
 
-type Tab = "console" | "map" | "project" | "settings" | "about";
+type Tab = "console" | "map" | "project" | "settings" | "about" | "search";
 
 /** {a: "1", b: "2"} -> "a=1,b=2" -- same convention as DetailDrawer's own
  * local dictToKvString (not imported from there to keep this a plain,
@@ -195,6 +196,9 @@ function HomeInner() {
           <button className={`tab-btn ${tab === "settings" ? "active" : ""}`} onClick={() => setTab("settings")}>
             Settings
           </button>
+          <button className={`tab-btn ${tab === "search" ? "active" : ""}`} onClick={() => setTab("search")}>
+            Search
+          </button>
           <button className={`tab-btn ${tab === "about" ? "active" : ""}`} onClick={() => setTab("about")}>
             About
           </button>
@@ -237,6 +241,7 @@ function HomeInner() {
           )}
           {tab === "project" && <ProjectExplorer onSelect={setSelected} leakMap={leakMap} />}
           {!loading && !error && tab === "settings" && <SettingsPage refs={refs} />}
+          {tab === "search" && <SearchBar />}
           {tab === "about" && <AboutPage />}
         </main>
 
