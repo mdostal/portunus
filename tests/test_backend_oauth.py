@@ -93,6 +93,43 @@ def test_oauth_backend_malformed_sm_name_raises_backend_error(home):
         backend.access("no-colon-here")
 
 
+def test_oauth_backend_persists_a_rotated_refresh_token(home):
+    # Some providers (confirmed live for Codex CLI's refresh grant against
+    # auth.openai.com/oauth/token, 2026-09-14) return a NEW refresh_token on
+    # every refresh -- the one just spent is dead for future refreshes. The
+    # backend must persist the rotated value immediately so the next
+    # access() (once the in-memory cache expires) doesn't mint against an
+    # already-consumed token.
+    _seed_credential(home)
+
+    def transport(url, data, headers, timeout):
+        return {"access_token": "ACCESS.1", "expires_in": 60, "refresh_token": "ROTATED-REFRESH-TOKEN"}
+
+    backend = OAuthBackend(audit=AuditChain(), transport=transport)
+    backend.access("google:user@example.com")
+
+    local = LocalEncryptedBackend()
+    record = local.load_oauth_credential("google", "user@example.com")
+    assert record["credential"]["refresh_token"] == "ROTATED-REFRESH-TOKEN"
+    # Everything else about the stored bundle is untouched.
+    assert record["credential"]["client_id"] == CREDENTIAL["client_id"]
+    assert record["credential"]["client_secret"] == CREDENTIAL["client_secret"]
+
+
+def test_oauth_backend_no_rotation_in_response_leaves_stored_credential_untouched(home):
+    _seed_credential(home)
+
+    def transport(url, data, headers, timeout):
+        return {"access_token": "ACCESS.1", "expires_in": 60}  # no refresh_token key at all
+
+    backend = OAuthBackend(audit=AuditChain(), transport=transport)
+    backend.access("google:user@example.com")
+
+    local = LocalEncryptedBackend()
+    record = local.load_oauth_credential("google", "user@example.com")
+    assert record["credential"]["refresh_token"] == CREDENTIAL["refresh_token"]
+
+
 def test_oauth_backend_mints_for_a_public_client_credential_with_no_secret(home):
     # A genuinely secret-less public OAuth client -- e.g. Codex CLI's real
     # refresh grant against auth.openai.com/oauth/token, confirmed live

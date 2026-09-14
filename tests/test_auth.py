@@ -176,6 +176,24 @@ def test_oauth_refresh_no_expires_in_means_unknown_expiry_not_a_crash():
     assert minted.expires_at == 0
 
 
+def test_oauth_refresh_captures_a_rotated_refresh_token_when_present():
+    def transport(url, data, headers, timeout):
+        return {"access_token": "X", "expires_in": 60, "refresh_token": "NEW-REFRESH-TOKEN"}
+
+    auth = _oauth_auth(transport)
+    minted = auth.mint()
+    assert minted.rotated_refresh_token == "NEW-REFRESH-TOKEN"
+
+
+def test_oauth_refresh_no_rotation_leaves_rotated_refresh_token_none():
+    def transport(url, data, headers, timeout):
+        return {"access_token": "X", "expires_in": 60}
+
+    auth = _oauth_auth(transport)
+    minted = auth.mint()
+    assert minted.rotated_refresh_token is None
+
+
 def test_oauth_refresh_omits_client_secret_entirely_for_a_public_client():
     # Confirmed live 2026-09-14 against codex-rs's own source: Codex CLI's
     # refresh grant (auth.openai.com/oauth/token) sends no client_secret
