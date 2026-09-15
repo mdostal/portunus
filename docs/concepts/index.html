@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://mdostal.github.io/portunus/docs/audit/">
+        <link rel="canonical" href="https://mdostal.github.io/portunus/docs/concepts/">
       
       
-        <link rel="prev" href="../access-control/">
+        <link rel="prev" href="../quickstart/">
       
       
-        <link rel="next" href="../rotation/">
+        <link rel="next" href="../architecture/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Audit Log - Portunus</title>
+        <title>Core Concepts - Portunus</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#audit-log-and-chain-verification" class="md-skip">
+        <a href="#core-concepts" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Audit Log
+              Core Concepts
             
           </span>
         </div>
@@ -313,10 +313,37 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../concepts/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Concepts
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -332,6 +359,103 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#arca" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ARCA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ostiarius" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OSTIARIUS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#petitio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Petitio
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#injection-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Injection modes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit chain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fail-closed-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fail-closed default
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -394,8 +518,6 @@
       
   
   
-    
-  
   
   
     
@@ -408,11 +530,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
           <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
@@ -433,7 +555,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -476,35 +598,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Audit Log
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../audit/" class="md-nav__link">
         
   
   
@@ -520,90 +617,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#audit-log-and-chain-verification" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Audit log and chain verification
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-is-logged" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What is logged
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#how-the-hash-chain-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How the hash chain works
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#browsing-the-log" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Browsing the log
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verifying-the-chain" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Verifying the chain
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-is-not-logged" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What is NOT logged
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -802,6 +815,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -810,10 +825,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#audit-log-and-chain-verification" class="md-nav__link">
+  <a href="#reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Audit log and chain verification
+        Reference
       
     </span>
   </a>
@@ -821,10 +836,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-is-logged" class="md-nav__link">
+  <a href="#arca" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is logged
+        ARCA
       
     </span>
   </a>
@@ -832,10 +847,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#how-the-hash-chain-works" class="md-nav__link">
+  <a href="#ostiarius" class="md-nav__link">
     <span class="md-ellipsis">
       
-        How the hash chain works
+        OSTIARIUS
       
     </span>
   </a>
@@ -843,10 +858,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#browsing-the-log" class="md-nav__link">
+  <a href="#petitio" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Browsing the log
+        Petitio
       
     </span>
   </a>
@@ -854,10 +869,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#verifying-the-chain" class="md-nav__link">
+  <a href="#injection-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verifying the chain
+        Injection modes
       
     </span>
   </a>
@@ -865,10 +880,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-is-not-logged" class="md-nav__link">
+  <a href="#audit-chain" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What is NOT logged
+        Audit chain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fail-closed-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fail-closed default
       
     </span>
   </a>
@@ -895,97 +921,42 @@
   
 
 
-  <h1>Audit Log</h1>
-
-<h2 id="audit-log-and-chain-verification">Audit log and chain verification<a class="headerlink" href="#audit-log-and-chain-verification" title="Permanent link">&para;</a></h2>
-<p>Every access decision Portunus makes is recorded in a tamper-evident hash chain. The log is append-only; any deletion or modification breaks the chain in a way <code>portunus verify</code> detects.</p>
+<h1 id="core-concepts">Core Concepts<a class="headerlink" href="#core-concepts" title="Permanent link">&para;</a></h1>
+<p>The domain vocabulary behind every Portunus command and component.</p>
 <hr />
-<h2 id="what-is-logged">What is logged<a class="headerlink" href="#what-is-logged" title="Permanent link">&para;</a></h2>
-<p>Every event recorded to the audit log follows this shape:</p>
-<table>
-<thead>
-<tr>
-<th>Field</th>
-<th>Contents</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>seq</code></td>
-<td>Monotonic sequence number (from a <code>.clock</code> file, never a wall clock)</td>
-</tr>
-<tr>
-<td><code>actor</code></td>
-<td>The identity making the request (<code>DOSTAL_AGENT</code> env var for agents, <code>USER</code> for humans)</td>
-</tr>
-<tr>
-<td><code>task</code></td>
-<td>The task identifier (<code>DOSTAL_TASK</code> env var, if set)</td>
-</tr>
-<tr>
-<td><code>action</code></td>
-<td>What happened: <code>resolve</code>, <code>drop</code>, <code>approve</code>, <code>gate</code>, <code>grant</code>, <code>retag</code>, <code>session_store</code>, <code>session_load</code>, etc.</td>
-</tr>
-<tr>
-<td><code>secret</code></td>
-<td>The <strong>reference name or SM name</strong> being acted on — never the secret value</td>
-</tr>
-<tr>
-<td><code>result</code></td>
-<td>Outcome string, e.g. <code>ok:env:MY_VAR</code>, <code>denied-dropped</code>, <code>would-allow:no-policy-configured</code></td>
-</tr>
-<tr>
-<td><code>prev</code></td>
-<td>The hash of the immediately preceding entry (or <code>"genesis"</code> for the first entry)</td>
-</tr>
-<tr>
-<td><code>h</code></td>
-<td>SHA-256 of <code>prev</code> + the current entry's JSON body</td>
-</tr>
-</tbody>
-</table>
-<p><strong>The secret value, raw credentials, and caller environment variables are never written.</strong> The <code>secret</code> field contains the reference or SM name only — the metadata that describes what was accessed, not what the value is.</p>
+<h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
+<p>A <strong>Reference</strong> is a named credential slot — a metadata record that says "there is a secret called <code>my-anthropic</code>, it lives at <code>dostal-shared-anthropic</code> in the vault backend, it belongs to project <code>dostal-shared</code> with env <code>prod</code>." It is never the value itself. A Reference has a name, an SM name (the backend key), scope tags (<code>org</code>/<code>project</code>/<code>env</code>/<code>repo</code>), a lifecycle state, and optional descriptive metadata — but it has no <code>value</code> field at all, structurally. This is what makes it safe to list, copy, inspect, and hand to an agent: the registry can never leak what it doesn't store.</p>
 <hr />
-<h2 id="how-the-hash-chain-works">How the hash chain works<a class="headerlink" href="#how-the-hash-chain-works" title="Permanent link">&para;</a></h2>
-<p>Each entry's hash <code>h</code> is computed over the previous entry's hash (<code>prev</code>) plus the current entry's JSON body:</p>
-<div class="highlight"><pre><span></span><code>h = SHA-256(prev_hash + json_body)
-</code></pre></div>
-<p>The <code>prev</code> field of each entry carries the previous <code>h</code>, forming a chain. The chain root uses the literal string <code>"genesis"</code> as the initial <code>prev</code>. Any edit to any entry — even changing a single character — produces a different <code>h</code> that no longer matches the next entry's <code>prev</code>, making the tampering detectable.</p>
+<h2 id="arca">ARCA<a class="headerlink" href="#arca" title="Permanent link">&para;</a></h2>
+<p><strong>ARCA</strong> is the vault abstraction layer — the component that actually retrieves a secret value from whichever backend holds it. ARCA is pluggable: each reference resolves through its own backend rather than one global choice for the whole process. Backend selection follows three levels of precedence, checked in order:</p>
+<ol>
+<li>The reference's own <code>backend</code> override field (set via <code>reg add</code>/<code>retag --backend</code>).</li>
+<li>The project's <code>VaultBinding</code> (configured with <code>portunus bindings set &lt;project&gt; --backend ...</code>).</li>
+<li>The global <code>PORTUNUS_BACKEND</code> environment variable as the final fallback.</li>
+</ol>
+<p>Real backends today: <code>local</code> (local-encrypted vault, the default) and <code>gcp</code> (GCP Secret Manager, keyless via Workload Identity Federation). All others (<code>aws</code>, <code>vault</code>, <code>infisical</code>, <code>doppler</code>, <code>onepassword</code>, <code>azure</code>) are honest stubs that fail closed with a clear error. <code>mock</code> always short-circuits the entire selection tree — used for tests and dry runs only.</p>
 <hr />
-<h2 id="browsing-the-log">Browsing the log<a class="headerlink" href="#browsing-the-log" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="c1"># Show the last 20 entries (default)</span>
-portunus<span class="w"> </span>audit
-
-<span class="c1"># Show only entries for a specific secret reference</span>
-portunus<span class="w"> </span>audit<span class="w"> </span>--secret<span class="w"> </span>my-sm-name
-
-<span class="c1"># Show more entries</span>
-portunus<span class="w"> </span>audit<span class="w"> </span>--n<span class="w"> </span><span class="m">100</span>
-
-<span class="c1"># Output as JSON</span>
-portunus<span class="w"> </span>audit<span class="w"> </span>--json
-</code></pre></div>
-<p>Each line shows: sequence number, actor, action, secret name, and result.</p>
+<h2 id="ostiarius">OSTIARIUS<a class="headerlink" href="#ostiarius" title="Permanent link">&para;</a></h2>
+<p><strong>OSTIARIUS</strong> (Latin: the gatekeeper) is the single API layer that all secret requests and deposits must pass through. It has three entry points — the <code>portunus</code> CLI, the standalone UI's API routes, and the MCP stdio server — but exactly one implementation underneath them all (<code>resolver.py</code>). Nothing reaches ARCA directly; every request goes through OSTIARIUS, which then delegates to Petitio before ARCA ever gives up a value. This single-implementation, multiple-entry-point design means the boundary guarantee holds regardless of which surface the caller uses.</p>
 <hr />
-<h2 id="verifying-the-chain">Verifying the chain<a class="headerlink" href="#verifying-the-chain" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>portunus<span class="w"> </span>verify
-</code></pre></div>
-<p>Output is one of:</p>
+<h2 id="petitio">Petitio<a class="headerlink" href="#petitio" title="Permanent link">&para;</a></h2>
+<p><strong>Petitio</strong> (Latin: the request, the petition) is the approval-gate wrapper that OSTIARIUS calls before ARCA resolves anything. Its central function is <code>check_injectable()</code>, which enforces two things: lifecycle state (a <code>dropped</code>/<code>requested</code>/<code>revoked</code> reference is never injectable — fail-closed) and optional per-agent access control (policy records from <code>roles.py</code>, evaluated but only enforced when <code>portunus roles enforce on</code> has been explicitly run). Every resolve gets a <code>would-allow</code> or <code>would-deny</code> audit line regardless of enforcement state — the log reflects policy decisions even while enforcement is off. Petitio returns only metadata back up the stack; the plaintext value flows exclusively from ARCA into the boundary sink, never through the policy gate itself.</p>
+<hr />
+<h2 id="injection-modes">Injection modes<a class="headerlink" href="#injection-modes" title="Permanent link">&para;</a></h2>
+<p>Portunus injects a secret at the <strong>execution boundary</strong> — the actual outbound call — never earlier. Four modes:</p>
 <ul>
-<li><code>audit chain: INTACT (N entries)</code> — the hash chain is unbroken; exit code 0.</li>
-<li><code>audit chain: BROKEN (N entries)</code> — at least one entry's hash does not match; exit code 2.</li>
+<li><strong>Subprocess argv</strong> (<code>resolve --exec &lt;cmd&gt; {{secret:ref}}</code>): the value is substituted into the child process's argument vector only. It never appears in this shell's history, <code>ps</code> output, or any log.</li>
+<li><strong>Environment variable</strong> (<code>inject --target env --var VAR_NAME</code>): set in the subprocess's own environment, never exported to the parent shell.</li>
+<li><strong>File</strong> (<code>inject --target file --format env|json|yaml</code>): written as a <code>0600</code> file in the specified format; caller is responsible for deleting it after use.</li>
+<li><strong>0600 temp file</strong> (<code>resolve &lt;template&gt;</code> / <code>portunus_resolve_to_tempfile</code>): Portunus writes a temp file, prints only the <strong>path</strong>, and returns. The caller reads the path, uses the content, and deletes the file. The value never travels through the tool return value or stdout.</li>
 </ul>
-<p>Run this after a vault restore or whenever you suspect tampering. A broken chain does not tell you <em>which</em> entry was modified — it signals that the chain cannot be trusted from that point forward.</p>
+<p>These modes exist to cover different execution shapes — a CLI command, a subprocess environment, a config file — while keeping the invariant consistent: the value never enters the model's context, a log line, or a return value.</p>
 <hr />
-<h2 id="what-is-not-logged">What is NOT logged<a class="headerlink" href="#what-is-not-logged" title="Permanent link">&para;</a></h2>
-<p>The following are deliberately excluded from every audit entry:</p>
-<ul>
-<li><strong>Secret values</strong> — the plaintext of any managed credential.</li>
-<li><strong>Raw credentials</strong> — refresh tokens, access tokens, OAuth client secrets.</li>
-<li><strong>Caller environment variables</strong> — shell env at the time of the resolve.</li>
-<li><strong>The WIF audience or access token</strong> — only the identity and scope metadata of a minted token appear in auth events, never the token itself.</li>
-</ul>
-<p>The audit log is safe to share with an administrator for compliance review without risk of exposing any managed secret.</p>
+<h2 id="audit-chain">Audit chain<a class="headerlink" href="#audit-chain" title="Permanent link">&para;</a></h2>
+<p>Every resolve decision — allowed or denied — is appended to a tamper-evident hash chain (<code>audit.py</code>). Each entry carries the reference name, the SM name, and the outcome; it never carries the value. The chain is keyed by reference name so the audit record is meaningful and inspectable without ever storing what was actually fetched. <code>portunus verify</code> walks the entire chain and confirms each entry's hash matches the previous one — proving the log has not been modified since it was written. The chain also records policy decisions (<code>would-allow:&lt;reason&gt;</code>, <code>would-deny:&lt;reason&gt;</code>) even when enforcement is off, so the audit trail reflects what access control <em>would have done</em> before it's ever activated.</p>
+<hr />
+<h2 id="fail-closed-default">Fail-closed default<a class="headerlink" href="#fail-closed-default" title="Permanent link">&para;</a></h2>
+<p>A freshly dropped or registered reference starts in <code>state=dropped</code> (or <code>state=requested</code> for agent-initiated placeholders). In either state, <code>check_injectable()</code> refuses resolution — the reference is not injectable until a human explicitly runs <code>portunus state &lt;ref&gt; enabled</code>. This is the fail-closed default: a new credential slot does nothing until deliberately activated. It prevents a race where a newly stored secret becomes injectable before an operator has had a chance to review it, and it means a misconfigured or placeholder reference never silently resolves to a wrong value — it fails loudly and immediately instead.</p>
 
 
 
