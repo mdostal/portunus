@@ -34,6 +34,15 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Backends & Configuration: backends.md
+  - Security:
+    - Access Control (Petitio): access-control.md
+    - Audit Log: audit.md
+  - Rotation: rotation.md
+  - Provider Rotation Matrix: provider-rotation-matrix.md
 plugins:
   - search
 nav:
