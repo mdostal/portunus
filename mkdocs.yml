@@ -36,3 +36,11 @@ markdown_extensions:
       permalink: true
 plugins:
   - search
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Rotation: rotation.md
+  - Provider Rotation Matrix: provider-rotation-matrix.md
+  - Reference:
+    - CLI Reference: cli-reference.md
+    - MCP Server & Agent Integration: mcp-server.md
