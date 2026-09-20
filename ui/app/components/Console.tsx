@@ -7,6 +7,7 @@ import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
 import LeakBadge from "./LeakBadge";
 import { checkMetadataCompleteness } from "../completeness";
+import SearchBar from "./SearchBar";
 
 export default function Console({
   refs,
@@ -111,6 +112,7 @@ export default function Console({
 
   return (
     <div className="console">
+      <SearchBar />
       <aside className="console-rail">
         <div className="rail-group">
           <span className="k">Provider</span>

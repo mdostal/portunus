@@ -30,10 +30,11 @@ from .leakscan import (
     summarize,
 )
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
+from .search import search_references
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
-from .rotation import load_rotation_bindings
+from .rotation import load_rotation_bindings, rotation_adapter_for, rotation_audit_data
 
 mcp = FastMCP("portunus")
 
@@ -76,6 +77,44 @@ def portunus_list(project: str) -> list:
     portunus_resolve_to_tempfile or portunus_resolve_exec."""
     registry = Registry()
     return [ref.to_dict() for ref in registry.list_by_project(project)]
+
+
+@mcp.tool()
+def portunus_search(
+    query: str,
+    project: str = "",
+    provider: str = "",
+    env: str = "",
+    state: str = "",
+) -> list:
+    """Free-text search across all registered secrets -- metadata only,
+    never a value. Matches case-insensitively against each reference's name,
+    sm_name, description, purpose, tags (keys and values), and group path.
+    Returns zero to many results; an empty list means no matches.
+
+    All filter params are optional narrow-down scopes that combine with the
+    text query (AND semantics). Empty string means "no filter" -- the FastMCP
+    convention for optional parameters.
+
+    Results are sorted: enabled references first, then alphabetically by name.
+
+    Examples:
+        portunus_search("linear")          -- all references mentioning "linear"
+        portunus_search("token", project="ffe-cicd")  -- tokens in one project
+        portunus_search("stripe", env="prod")         -- prod Stripe credentials
+        portunus_search("discord", state="enabled")   -- live Discord tokens only
+        portunus_search("vercel", provider="vercel", env="prod")  -- combined
+    """
+    registry = Registry()
+    results = search_references(
+        registry,
+        query,
+        project=project or None,
+        provider=provider or None,
+        env=env or None,
+        state=state or None,
+    )
+    return [ref.to_dict() for ref in results]
 
 
 @mcp.tool()
@@ -153,15 +192,46 @@ def portunus_rotation_status(provider: str = "") -> dict:
     one provider or all. Metadata only, never a credential -- rotation
     adapters resolve their own admin token via the normal boundary-only
     resolver, never a value this tool could see. Same values as
-    `portunus rotation-bindings show --json`. Every provider is a stub
-    today (status="stub") -- no real rotation has ever fired."""
+    `portunus rotation-bindings show --json`. Real adapters: `oauth`
+    (wraps OAuthBackend -- drives every stored OAuth refresh credential
+    through a single job). Stub adapters: vercel, github, stripe."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
         if binding is None:
             return {}
         bindings = {provider: binding}
-    return {p: {"status": b.status, "account": b.account} for p, b in bindings.items()}
+    result = {}
+    for p, b in bindings.items():
+        adapter = rotation_adapter_for(p)
+        capability = adapter.capability() if adapter is not None else "unknown"
+        result[p] = {"status": b.status, "account": b.account, "capability": capability}
+    return result
+
+
+@mcp.tool()
+def portunus_rotation_audit() -> dict:
+    """Inventory what is stored vs. what can actually be rotated: group all
+    registry references and OAuth credentials by provider, join each to its
+    rotation capability (auto/manual/unknown), and report counts per
+    capability with the specific reference names and any un-retired
+    superseded key IDs. Metadata only -- never a credential value.
+
+    Returns:
+      providers: {provider: {capability, refs, oauth_accounts,
+                              superseded_key_ids}}
+      totals:    {auto, manual, unknown}
+      unreadable_oauth_count: int
+    """
+    registry = Registry()
+    rotation_bindings = load_rotation_bindings()
+    local_backend = None
+    try:
+        from .localvault import LocalEncryptedBackend
+        local_backend = LocalEncryptedBackend()
+    except Exception:
+        pass
+    return rotation_audit_data(registry, rotation_bindings, local_backend)
 
 
 @mcp.tool()

@@ -1,7 +1,7 @@
 site_name: Portunus
 site_description: >-
   A standalone, boundary-only secret broker — reference a secret by name; the value is injected only at the execution boundary, never inside an LLM or agent context.
-site_url: https://mdostal.github.io/portunus/
+site_url: https://mdostal.github.io/portunus/docs/
 repo_url: https://github.com/mdostal/portunus
 repo_name: mdostal/portunus
 theme:
@@ -34,5 +34,19 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Core Concepts: concepts.md
+  - Architecture: architecture.md
+  - Backends & Configuration: backends.md
+  - Security:
+    - Access Control (Petitio): access-control.md
+    - Audit Log: audit.md
+  - Rotation: rotation.md
+  - Provider Rotation Matrix: provider-rotation-matrix.md
+  - Reference:
+    - CLI Reference: cli-reference.md
+    - MCP Server & Agent Integration: mcp-server.md
 plugins:
   - search

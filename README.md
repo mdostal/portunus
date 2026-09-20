@@ -514,6 +514,40 @@ portunus list --project mdostal.com
 portunus ask "what secrets are available for mdostal.com"
 ```
 
+### `portunus search` — find a key without knowing its exact name
+
+`portunus list` dumps every reference for a project. `portunus search` finds the ones you
+actually care about — a free-text substring match across name, sm_name, description, purpose,
+tags, and group, across one project or all of them at once:
+
+```bash
+# Find anything mentioning "linear" across all projects
+portunus search "linear"
+
+# Scope to one project
+portunus search "discord" --project ffe-cicd
+
+# Machine-readable output (what the MCP tool and UI route use)
+portunus search "stripe" --json
+
+# Narrow by state or env
+portunus search "api" --state enabled --env prod
+```
+
+Results sorted: `enabled` references first, then alphabetical. An empty query always returns
+nothing — the command never dumps the whole registry. Same three-entry-point shape as
+`portunus list`: one core implementation (`search.py`), wired into the CLI, the MCP tool
+(`portunus_search`), and the UI API route (`/api/search?query=<text>`).
+
+The MCP tool is the recommended path for agents — call it before `portunus_resolve_*` when
+you don't know the exact reference name:
+
+```python
+# Agent: find the Linear token, then inject it
+refs = portunus_search("linear", project="ffe-cicd")
+# refs[0]["name"] → "linear-token"
+```
+
 ### GCP: multi-project + keyless auth (WIF) + discovery
 
 `GcloudBackend` authenticates keyless by default — no static service-account JSON, no long-lived

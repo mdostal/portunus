@@ -35,7 +35,10 @@ from .backend import (
 )
 from .backup import ExportError, export_archive, import_archive
 from .paths import home
-from .rotation import RotationBinding, load_rotation_bindings, save_rotation_bindings
+from .rotation import (
+    RotationBinding, capability_for_status, load_rotation_bindings,
+    rotation_audit_data, save_rotation_bindings,
+)
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .roles import (
     PolicyError,
@@ -434,6 +437,46 @@ def cmd_list(args) -> int:
         print(f"no references found for project={args.project}")
         return 0
     _print_reference_list(refs)
+    return 0
+
+
+def cmd_search(args) -> int:
+    """Free-text search across the registry -- metadata only, never a value."""
+    from .search import search_references
+    registry, *_ = _build()
+    results = search_references(
+        registry,
+        args.query,
+        project=args.project or None,
+        provider=args.provider or None,
+        env=args.env or None,
+        state=args.state or None,
+    )
+    if args.json:
+        print(json.dumps([r.to_dict() for r in results]))
+        return 0
+    if not results:
+        scope_parts = []
+        if args.project:
+            scope_parts.append(f"project={args.project}")
+        if args.provider:
+            scope_parts.append(f"provider={args.provider}")
+        if args.env:
+            scope_parts.append(f"env={args.env}")
+        if args.state:
+            scope_parts.append(f"state={args.state}")
+        scope_note = f" ({', '.join(scope_parts)})" if scope_parts else ""
+        print(f"no matches for {args.query!r}{scope_note}")
+        return 0
+    if args.project:
+        _print_reference_list(results)
+        return 0
+    by_project: dict = {}
+    for ref in results:
+        by_project.setdefault(ref.project or "(no project)", []).append(ref)
+    for proj in sorted(by_project):
+        print(f"{proj}:")
+        _print_reference_list(by_project[proj])
     return 0
 
 
@@ -1299,7 +1342,135 @@ def cmd_rotation_bindings_show(args) -> int:
         print("(no rotation bindings configured)")
         return 0
     for provider, b in sorted(bindings.items()):
-        print(f"  {provider}  status={b.status}  account={b.account or '-'}")
+        status_str = (
+            f"{b.status} [no programmatic rotation -- human re-issue required]"
+            if b.status == "manual"
+            else b.status
+        )
+        print(f"  {provider}  status={status_str}  account={b.account or '-'}")
+    return 0
+
+
+def cmd_rotation_run(args) -> int:
+    """Run a real rotation for a single reference.
+
+    Looks up the reference by name, resolves its provider's rotation adapter,
+    and drives it through the full create→verify→store cycle. With
+    ``--retire-old`` the superseded key is also DISABLED (never deleted --
+    deletion requires a separate grace-period sweep). Only the key
+    identifier is reported; no credential material ever reaches stdout.
+    """
+    from .rotation import rotation_adapter_for, RotationAdapterError
+
+    registry, audit, broker, resolver = _build()
+    ref = registry.get(args.ref_name)
+    if ref is None:
+        _err(f"no reference {args.ref_name!r} in registry")
+        return 1
+
+    provider = ref.provider or (ref.sm_name.split(":")[0] if ":" in ref.sm_name else "")
+    if not provider:
+        _err(
+            f"reference {args.ref_name!r} has no provider set -- "
+            "set it with `portunus reg add --provider gcp ...`"
+        )
+        return 1
+
+    adapter = rotation_adapter_for(provider)
+    if adapter is None:
+        _err(
+            f"no rotation adapter registered for provider {provider!r} -- "
+            "check `portunus rotation-bindings show`"
+        )
+        return 1
+
+    cap = getattr(adapter, "capability", lambda: "stub")()
+    if cap != "auto":
+        _err(
+            f"rotation adapter for {provider!r} is a stub (capability={cap!r}) -- "
+            "no real rotation is possible; see docs/rotation.md"
+        )
+        return 1
+
+    try:
+        result = adapter.rotate(ref, resolver=resolver, retire_old=args.retire_old)
+    except RotationAdapterError as exc:
+        _err(str(exc))
+        audit.append("rotate", ref.sm_name, "error")
+        return 1
+
+    print(
+        f"rotated {result.ref_name}  "
+        f"provider={result.provider}  phase={result.phase}  "
+        f"retired_old={result.retired_old}"
+    )
+    return 0
+
+
+def cmd_rotation_audit(args) -> int:
+    """Walk everything Portunus knows about -- registry references, vault
+    bindings, and list_oauth_credentials() -- group by provider, join to
+    rotation capability, and report counts per capability with the reference
+    names behind each. Never prints a credential value."""
+    registry = Registry()
+    rotation_bindings = load_rotation_bindings()
+
+    # Best-effort: list OAuth credentials from the local vault. If the vault
+    # is unavailable or the backend isn't local-encrypted, skip gracefully.
+    local_backend = None
+    try:
+        local_backend = LocalEncryptedBackend()
+    except Exception:
+        pass
+
+    report = rotation_audit_data(registry, rotation_bindings, local_backend)
+
+    if args.json:
+        print(json.dumps(report))
+        return 0
+
+    providers = report["providers"]
+    totals = report["totals"]
+    unreadable = report["unreadable_oauth_count"]
+
+    if not providers:
+        print("(no references or bindings found -- vault is empty)")
+        return 0
+
+    total_refs = sum(totals.values())
+    print(f"  -- rotation audit -- {len(providers)} providers  {total_refs} refs")
+    print()
+
+    for capability in ("auto", "manual", "unknown"):
+        group = {p: e for p, e in providers.items() if e["capability"] == capability}
+        if not group:
+            continue
+        cap_total = totals[capability]
+        if capability == "auto":
+            label = f"AUTO ({cap_total} refs -- programmatic rotation available)"
+        elif capability == "manual":
+            label = f"MANUAL ({cap_total} refs -- human re-issue required)"
+        else:
+            label = f"UNKNOWN ({cap_total} refs -- rotation story not established)"
+        print(f"  {label}")
+        for prov, entry in sorted(group.items()):
+            prov_label = prov or "(no provider)"
+            ref_names = entry["refs"]
+            oauth_accts = entry["oauth_accounts"]
+            superseded = entry["superseded_key_ids"]
+            parts = []
+            if ref_names:
+                parts.append(f"refs: {', '.join(ref_names)}")
+            if oauth_accts:
+                parts.append(f"oauth: {', '.join(oauth_accts)}")
+            if superseded:
+                parts.append(f"superseded: {', '.join(superseded)}")
+            detail = "  |  ".join(parts) if parts else "(no refs)"
+            print(f"    {prov_label}  {detail}")
+        print()
+
+    if unreadable:
+        print(f"  note: {unreadable} OAuth credential(s) were unreadable and skipped")
     return 0
 
 
@@ -2201,6 +2372,19 @@ def build_parser() -> argparse.ArgumentParser:
     ls.add_argument("--json", action="store_true", help="machine-readable output")
     ls.set_defaults(func=cmd_list)
 
+    sc = sub.add_parser(
+        "search",
+        help="free-text search across all secrets by name, description, purpose, tags, group "
+             "(metadata only, never a value)",
+    )
+    sc.add_argument("query", help="text to search for (case-insensitive substring match)")
+    sc.add_argument("--project", default="", help="scope to one project")
+    sc.add_argument("--provider", default="", help="scope to one provider")
+    sc.add_argument("--env", default="", help="scope to one environment")
+    sc.add_argument("--state", default="", help="scope to one lifecycle state (e.g. enabled, requested)")
+    sc.add_argument("--json", action="store_true", help="machine-readable output")
+    sc.set_defaults(func=cmd_search)
+
     fd = sub.add_parser("find", help="find a reference by tags (metadata only, never a value)")
     fd.add_argument("--tags", required=True,
                      help="comma-separated k=v pairs, e.g. provider=vercel,project=mdostal.com")
@@ -2464,18 +2648,42 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_show.add_argument("--json", action="store_true")
     bnd_show.set_defaults(func=cmd_bindings_show)
 
+    rot_run = sub.add_parser(
+        "rotation",
+        help="rotation operations -- run a real rotation or audit what is stored vs. what can be rotated",
+    )
+    rot_sub = rot_run.add_subparsers(dest="rotation_action", required=True)
+    rot_run_cmd = rot_sub.add_parser(
+        "run",
+        help="rotate a reference's credential (create→verify→store; disable old with --retire-old)",
+    )
+    rot_run_cmd.add_argument("ref_name", help="reference name in the registry (e.g. ffe-cicd-sa-key)")
+    rot_run_cmd.add_argument(
+        "--retire-old",
+        action="store_true",
+        default=False,
+        help="disable the superseded credential after storing the new one (never deletes in the same call)",
+    )
+    rot_run_cmd.set_defaults(func=cmd_rotation_run)
+    rot_audit = rot_sub.add_parser(
+        "audit",
+        help="group registry refs by provider, join to rotation capability, report superseded keys",
+    )
+    rot_audit.add_argument("--json", action="store_true")
+    rot_audit.set_defaults(func=cmd_rotation_audit)
+
     rbnd = sub.add_parser(
         "rotation-bindings",
-        help="configure per-provider rotation provenance (status/account) -- "
-             "every provider is a stub today, this is config only, no real rotation ever fires",
+        help="configure per-provider rotation provenance (status/account)",
     )
     rbnd_sub = rbnd.add_subparsers(dest="action", required=True)
     rbnd_set = rbnd_sub.add_parser("set", help="upsert a provider's rotation binding -- only passed fields change")
-    rbnd_set.add_argument("provider", help="e.g. vercel, github, stripe")
-    rbnd_set.add_argument("--status", choices=("", "real", "stub"), default="",
-                           help="whether a real RotationAdapter exists for this provider (default: stub)")
+    rbnd_set.add_argument("provider", help="e.g. gcp, vercel, github, stripe")
+    rbnd_set.add_argument("--status", choices=("", "real", "stub", "manual"), default="",
+                           help="rotation capability: 'real'=auto adapter, 'stub'=not built yet, "
+                                "'manual'=no programmatic path exists (human re-issue required)")
     rbnd_set.add_argument("--account", default="",
-                           help="free-text rotation context, e.g. a Vercel team slug or GitHub org")
+                           help="free-text rotation context, e.g. a service account email or GitHub org")
     rbnd_set.set_defaults(func=cmd_rotation_bindings_set)
     rbnd_show = rbnd_sub.add_parser("show", help="show one or all rotation bindings")
     rbnd_show.add_argument("provider", nargs="?", default="")
