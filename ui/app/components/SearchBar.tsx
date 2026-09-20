@@ -35,6 +35,7 @@ export default function SearchBar() {
       <form onSubmit={handleSearch} className="ask-form">
         <input
           className="field mono"
+          data-testid="search-input"
           placeholder='Search secrets by name, tag, description… (e.g. "linear", "discord")'
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -49,11 +50,11 @@ export default function SearchBar() {
       {error && <p className="inline-status error">✗ {error}</p>}
 
       {results !== null && results.length === 0 && (
-        <p className="inline-status">No matches for "{query}".</p>
+        <p className="inline-status" data-testid="search-empty">No matches for "{query}".</p>
       )}
 
       {results !== null && results.length > 0 && (
-        <ul className="search-results">
+        <ul className="search-results" data-testid="search-results">
           {results.map((ref) => (
             <li key={ref.name} className="result-card">
               <div className="result-row-head">
