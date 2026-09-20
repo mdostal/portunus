@@ -51,8 +51,12 @@ test.describe("SearchBar", () => {
 
     await page.goto("/");
 
+    // SearchBar lives in the Search tab — navigate there first
+    await page.getByRole("navigation").getByRole("button", { name: "Search" }).click();
+
     const input = page.getByTestId("search-input");
     await input.fill("github");
+    await input.press("Enter");
 
     const results = page.getByTestId("search-results");
     await expect(results).toBeVisible({ timeout: 5000 });
@@ -78,8 +82,12 @@ test.describe("SearchBar", () => {
 
     await page.goto("/");
 
+    // SearchBar lives in the Search tab — navigate there first
+    await page.getByRole("navigation").getByRole("button", { name: "Search" }).click();
+
     const input = page.getByTestId("search-input");
     await input.fill("zzznomatch");
+    await input.press("Enter");
 
     const empty = page.getByTestId("search-empty");
     await expect(empty).toBeVisible({ timeout: 5000 });
