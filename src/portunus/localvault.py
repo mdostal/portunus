@@ -13,10 +13,8 @@ boundary sinks may touch).
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
-import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,14 +23,13 @@ from urllib.parse import quote
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from .atomicio import atomic_write
 from .backend import BackendError
+from .filelock import flock_path
 from .paths import home
 
 SESSION_SCHEMA = "portunus.session.v1"
 OAUTH_CREDENTIAL_SCHEMA = "portunus.oauth-credential.v1"
-
-_LOCK_POLL_INTERVAL = 0.05
-_LOCK_TIMEOUT = 10.0
 
 
 class SessionExpired(BackendError):
@@ -66,29 +63,11 @@ class LocalEncryptedBackend:
         existed. A read-modify-write across a whole-file JSON blob is not
         safe to run unlocked when more than one process/session can be
         resolving/syncing secrets against the same vault at once -- which
-        is the normal case here, not an edge case. Same flock idiom
-        Registry._locked()/AuditChain._locked() already use."""
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(self.lock_path, "w")
-        deadline = time.monotonic() + _LOCK_TIMEOUT
-        acquired = False
-        try:
-            while time.monotonic() < deadline:
-                try:
-                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    acquired = True
-                    break
-                except OSError:
-                    time.sleep(_LOCK_POLL_INTERVAL)
-            if not acquired:
-                raise TimeoutError(
-                    f"could not acquire vault lock within {_LOCK_TIMEOUT}s ({self.lock_path})"
-                )
+        is the normal case here, not an edge case. Same shared
+        filelock.flock_path primitive Registry._locked()/AuditChain._locked()
+        use."""
+        with flock_path(self.lock_path):
             yield
-        finally:
-            if acquired:
-                fcntl.flock(fh, fcntl.LOCK_UN)
-            fh.close()
 
     # --- master key --------------------------------------------------------
     def _load_or_create_key(self) -> bytes:
@@ -110,12 +89,7 @@ class LocalEncryptedBackend:
             return {}
 
     def _flush(self, data: Dict[str, str]) -> None:
-        self.vault_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.vault_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.vault_path)
-        os.chmod(self.vault_path, 0o600)
+        atomic_write(self.vault_path, json.dumps(data))
 
     # --- SecretBackend + drop/remove ---------------------------------------
     def store(self, sm_name: str, value: str) -> None:

@@ -48,7 +48,11 @@ from .auth import (
     assert_no_long_lived_cloud_keys,
 )
 
-__version__ = "0.32.0"
+# Must equal pyproject.toml's `version` (and manifest.json / the Tauri shell's) --
+# tests/test_version_consistency.py fails the build if they drift. A literal rather than
+# importlib.metadata: an editable install's metadata is frozen at install time, so a
+# `git pull` that bumps pyproject would otherwise keep reporting the old version.
+__version__ = "0.33.0"
 
 __all__ = [
     "Registry",

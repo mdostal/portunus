@@ -9,6 +9,7 @@ UI:   subprocess invocation shape that /api/search uses (same pattern as
 import json
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -45,7 +46,7 @@ def _run_subprocess(args, home, *, env_extra=None):
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        ["portunus", *args], env=env,
+        [sys.executable, "-m", "portunus", *args], env=env,
         capture_output=True, text=True, timeout=10,
     )
 

@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
+from .atomicio import atomic_write
 from .paths import home
 
 REPO = "mdostal/portunus"
@@ -118,10 +119,7 @@ def check_now(current: Optional[str] = None, home_dir: Optional[Path] = None) ->
             error = str(e)
         result = {"current": current, "latest": tag, "update_available": available, "checked_at": time.time(), "error": error}
     path = _cache_path(home_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(result))
-    os.replace(tmp, path)
+    atomic_write(path, json.dumps(result), mode=0o644)
     return result
 
 

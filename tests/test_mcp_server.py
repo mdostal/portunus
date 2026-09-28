@@ -230,10 +230,9 @@ def _mock_gcloud_list(monkeypatch, secrets):
         return SimpleNamespace(returncode=0, stdout=json.dumps(secrets), stderr="")
 
     monkeypatch.setattr("portunus.discover._default_runner", fake_run)
-    monkeypatch.setattr("portunus.discover.shutil.which", lambda name: "/bin/gcloud")
 
 
-def test_portunus_discover_diff_only(home, monkeypatch):
+def test_portunus_discover_diff_only(home, monkeypatch, gcloud_on_path):
     from portunus import mcp_server
     _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
     result = mcp_server.portunus_discover("demo")
@@ -242,7 +241,7 @@ def test_portunus_discover_diff_only(home, monkeypatch):
     assert "wif_configured" in result
 
 
-def test_portunus_discover_register(home, monkeypatch):
+def test_portunus_discover_register(home, monkeypatch, gcloud_on_path):
     from portunus import mcp_server
     _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
     result = mcp_server.portunus_discover("demo", register=True)
@@ -250,7 +249,7 @@ def test_portunus_discover_register(home, monkeypatch):
     assert result["conflicts"] == []
 
 
-def test_portunus_discover_honors_project_binding_account_and_impersonation(home, monkeypatch):
+def test_portunus_discover_honors_project_binding_account_and_impersonation(home, monkeypatch, gcloud_on_path):
     """Regression: portunus_discover previously called list_gcp_secrets(project)
     with NO account/impersonation lookup at all -- silently falling back to
     gcloud's ambient active account even when the project has a configured
@@ -279,7 +278,6 @@ def test_portunus_discover_honors_project_binding_account_and_impersonation(home
         return SimpleNamespace(returncode=0, stdout=json.dumps([]), stderr="")
 
     monkeypatch.setattr("portunus.discover._default_runner", fake_run)
-    monkeypatch.setattr("portunus.discover.shutil.which", lambda name: "/bin/gcloud")
 
     mcp_server.portunus_discover("demo")
 
@@ -704,7 +702,7 @@ def test_state_no_backend_access():
 
 # --- story 04 (portunus-vault-routing): portunus_sync tool ---------------
 
-def test_portunus_sync_reports_synced(home, monkeypatch):
+def test_portunus_sync_reports_synced(home, monkeypatch, gcloud_on_path):
     import json as _json
     from types import SimpleNamespace as _NS
     from portunus import Registry, mcp_server
@@ -716,7 +714,6 @@ def test_portunus_sync_reports_synced(home, monkeypatch):
         return _NS(returncode=0, stdout="VALUE", stderr="")
 
     monkeypatch.setattr("portunus.backend.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
     save_vault_bindings({"demo": VaultBinding("demo", backend="gcp", sync_mode="cached")})
     Registry().add("x", "sm-x", project="demo")
 

@@ -31,11 +31,11 @@ against baking in one fixed vocabulary this early (design-discussion.md §1).
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .atomicio import atomic_write
 from .filelock import flock_path
 from .paths import home
 
@@ -97,7 +97,6 @@ def _load_unlocked(path: Optional[Path] = None) -> Dict[str, PolicyRecord]:
 
 def _save_unlocked(policies: Dict[str, PolicyRecord], path: Optional[Path] = None) -> None:
     roles_path = _roles_path(path)
-    roles_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
         key: {
             "scope_type": p.scope_type, "scope_value": p.scope_value,
@@ -105,11 +104,7 @@ def _save_unlocked(policies: Dict[str, PolicyRecord], path: Optional[Path] = Non
         }
         for key, p in policies.items()
     }
-    tmp = roles_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(raw, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, roles_path)
-    os.chmod(roles_path, 0o600)
+    atomic_write(roles_path, json.dumps(raw, indent=2))
 
 
 def load_policies(path: Optional[Path] = None) -> Dict[str, PolicyRecord]:
@@ -226,9 +221,4 @@ def enforcement_is_on(path: Optional[Path] = None) -> bool:
 
 def set_enforcement(on: bool, path: Optional[Path] = None) -> None:
     enforce_path = _enforce_path(path)
-    enforce_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = enforce_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"enforced": on}))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, enforce_path)
-    os.chmod(enforce_path, 0o600)
+    atomic_write(enforce_path, json.dumps({"enforced": on}))
