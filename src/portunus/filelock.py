@@ -1,14 +1,11 @@
 """Shared fcntl.flock primitive.
 
-The exact idiom Registry._locked(), AuditChain._locked(), and
-LocalEncryptedBackend._locked() each hand-roll per-file (exclusive,
-non-blocking flock, polled up to a bounded timeout). Factored out here so a
-caller that must coordinate a lock across more than one of those files at
-once (the vault-backup coordinated snapshot, portunus-vault-backup story 02)
-has one tested, generic building block instead of a fifth hand-rolled copy.
-This module does not replace the three existing `_locked()` methods -- each
-of those also does class-specific work (reload-before, flush-after) that a
-bare lock primitive shouldn't own.
+Exclusive, non-blocking flock polled up to a bounded timeout -- the one
+exclusive-lock acquisition loop in the codebase. Registry._locked(),
+AuditChain._locked() and LocalEncryptedBackend._locked() all build on it
+(each adds its own class-specific work, e.g. Registry's reload-before /
+flush-after), as do the per-file config stores (views, roles, bindings,
+leak-scan state) and the multi-lock coordinated snapshot in backup.py.
 """
 from __future__ import annotations
 

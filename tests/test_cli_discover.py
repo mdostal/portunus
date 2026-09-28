@@ -14,10 +14,9 @@ def _mock_gcloud_list(monkeypatch, secrets, seen_cmds=None):
         return SimpleNamespace(returncode=0, stdout=json.dumps(secrets), stderr="")
 
     monkeypatch.setattr("portunus.discover._default_runner", fake_run)
-    monkeypatch.setattr("portunus.discover.shutil.which", lambda name: "/bin/gcloud")
 
 
-def test_discover_diff_only_writes_nothing(home, monkeypatch, capsys):
+def test_discover_diff_only_writes_nothing(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
     rc = main(["discover", "--provider", "gcp", "--project", "demo"])
     out = capsys.readouterr().out
@@ -28,7 +27,7 @@ def test_discover_diff_only_writes_nothing(home, monkeypatch, capsys):
     assert "demo-api_key" not in reg
 
 
-def test_discover_register_writes_requested_state(home, monkeypatch, capsys):
+def test_discover_register_writes_requested_state(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud_list(monkeypatch, [
         {"name": "projects/demo/secrets/API_KEY", "labels": {"purpose": "billing"}}
     ])
@@ -41,7 +40,7 @@ def test_discover_register_writes_requested_state(home, monkeypatch, capsys):
     assert ref.description == "billing"
 
 
-def test_discover_json_diff_only(home, monkeypatch, capsys):
+def test_discover_json_diff_only(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
     rc = main(["discover", "--provider", "gcp", "--project", "demo", "--json"])
     out = capsys.readouterr().out
@@ -52,7 +51,7 @@ def test_discover_json_diff_only(home, monkeypatch, capsys):
     assert "wif_configured" in data
 
 
-def test_discover_json_register(home, monkeypatch, capsys):
+def test_discover_json_register(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud_list(monkeypatch, [{"name": "projects/demo/secrets/API_KEY", "labels": {}}])
     rc = main(["discover", "--provider", "gcp", "--project", "demo", "--register", "--json"])
     out = capsys.readouterr().out
@@ -63,7 +62,7 @@ def test_discover_json_register(home, monkeypatch, capsys):
     assert data["already_registered"] == []
 
 
-def test_discover_json_wif_configured_true_when_binding_has_audience(home, monkeypatch, capsys):
+def test_discover_json_wif_configured_true_when_binding_has_audience(home, monkeypatch, capsys, gcloud_on_path):
     from portunus.backend import VaultBinding, save_vault_bindings
     save_vault_bindings({"demo": VaultBinding("demo", "//iam.googleapis.com/some/audience")})
     _mock_gcloud_list(monkeypatch, [])
@@ -75,7 +74,7 @@ def test_discover_json_wif_configured_true_when_binding_has_audience(home, monke
     assert "iam.googleapis.com" not in out
 
 
-def test_discover_json_wif_configured_false_with_no_binding(home, monkeypatch, capsys):
+def test_discover_json_wif_configured_false_with_no_binding(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud_list(monkeypatch, [])
     rc = main(["discover", "--provider", "gcp", "--project", "demo", "--json"])
     out = capsys.readouterr().out
@@ -83,7 +82,7 @@ def test_discover_json_wif_configured_false_with_no_binding(home, monkeypatch, c
     assert data["wif_configured"] is False
 
 
-def test_cmd_discover_passes_binding_account_to_list_gcp_secrets(home, monkeypatch, capsys):
+def test_cmd_discover_passes_binding_account_to_list_gcp_secrets(home, monkeypatch, capsys, gcloud_on_path):
     from portunus.backend import VaultBinding, save_vault_bindings
     save_vault_bindings({"demo": VaultBinding("demo", account="user@example.com")})
     seen_cmds = []
@@ -93,7 +92,7 @@ def test_cmd_discover_passes_binding_account_to_list_gcp_secrets(home, monkeypat
     assert "--account=user@example.com" in seen_cmds[0]
 
 
-def test_cmd_discover_no_binding_means_no_account_flag(home, monkeypatch, capsys):
+def test_cmd_discover_no_binding_means_no_account_flag(home, monkeypatch, capsys, gcloud_on_path):
     seen_cmds = []
     _mock_gcloud_list(monkeypatch, [], seen_cmds=seen_cmds)
     rc = main(["discover", "--provider", "gcp", "--project", "demo"])
@@ -101,7 +100,7 @@ def test_cmd_discover_no_binding_means_no_account_flag(home, monkeypatch, capsys
     assert not any(arg.startswith("--account=") for arg in seen_cmds[0])
 
 
-def test_cmd_discover_passes_binding_impersonation_to_list_gcp_secrets(home, monkeypatch, capsys):
+def test_cmd_discover_passes_binding_impersonation_to_list_gcp_secrets(home, monkeypatch, capsys, gcloud_on_path):
     from portunus.backend import VaultBinding, save_vault_bindings
     save_vault_bindings({
         "demo": VaultBinding(

@@ -4,11 +4,13 @@
   "private": true,
   "description": "Localhost-only standalone UI for Portunus (Console + Vault Map + Ask Bar).",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H ${PORTUNUS_UI_HOST:-127.0.0.1}",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H ${PORTUNUS_UI_HOST:-127.0.0.1}",
+    "start:standalone": "HOSTNAME=${PORTUNUS_UI_HOST:-127.0.0.1} node .next/standalone/server.js",
     "lint": "next lint",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:bind": "node scripts/check-bind.mjs"
   },
   "dependencies": {
     "next": "16.3.0",

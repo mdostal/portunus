@@ -24,6 +24,7 @@ from typing import Dict, List, Optional
 
 from . import __version__
 from . import agent_setup
+from . import health as health_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
@@ -37,7 +38,7 @@ from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import (
     RotationBinding, capability_for_status, load_rotation_bindings,
-    rotation_audit_data, save_rotation_bindings,
+    rotation_audit_data, update_rotation_bindings,
 )
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .roles import (
@@ -1043,7 +1044,10 @@ def cmd_grant(args) -> int:
         ref = broker.grant(args.name, args.member)
     except KeyError:
         return _err(f"unknown reference: {args.name}")
-    print(f"granted {args.member} -> {ref.sm_name} (audited)")
+    print(
+        f"recorded grant {args.member} -> {ref.sm_name} in the audit log only "
+        f"-- no IAM change was made"
+    )
     return 0
 
 
@@ -1073,7 +1077,7 @@ def cmd_audit(args) -> int:
     audit = AuditChain()
     entries = audit.entries()
     if args.secret:
-        entries = [e for e in entries if e["secret"] == args.secret]
+        entries = [e for e in entries if e.get("secret") == args.secret]
     entries = entries[-args.n:]
     if args.json:
         import json
@@ -1081,16 +1085,35 @@ def cmd_audit(args) -> int:
         return 0
     print(f"{'seq':<4} {'actor':<14} {'action':<10} {'secret':<28} result")
     for e in entries:
-        print(f"{e['seq']:<4} {e['actor'][:14]:<14} {e['action']:<10} "
-              f"{e['secret'][:28]:<28} {e['result']}")
+        print(f"{str(e.get('seq', '?')):<4} {str(e.get('actor', ''))[:14]:<14} "
+              f"{str(e.get('action', '')):<10} {str(e.get('secret', ''))[:28]:<28} "
+              f"{e.get('result', '')}")
     return 0
 
 
 def cmd_verify(args) -> int:
     audit = AuditChain()
-    ok = audit.verify()
-    print(f"audit chain: {'INTACT' if ok else 'BROKEN'} ({len(audit.entries())} entries)")
-    return 0 if ok else 2
+    result = audit.check()
+    if result["ok"]:
+        print(f"audit chain: INTACT ({result['entries']} entries)")
+        return 0
+    print(f"audit chain: BROKEN at line {result['line']}: {result['reason']} "
+          f"({result['entries']} entries verified before it)")
+    return 2
+
+
+def cmd_health(args) -> int:
+    """Read-only deep self-check -- see health.py. Exits 0/1/2 for
+    ok/degraded/down so a Docker HEALTHCHECK or supervisor can act on it."""
+    result = health_mod.run_health()
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"portunus health: {result['status'].upper()}")
+        for check in result["checks"]:
+            mark = "ok  " if check["ok"] else "FAIL"
+            print(f"  {mark} {check['name']:<14} {check['detail']}")
+    return health_mod.exit_code(result)
 
 
 def cmd_auth_gcp(args) -> int:
@@ -1308,13 +1331,14 @@ def cmd_rotation_bindings_set(args) -> int:
     fields change (mirrors cmd_bindings_set's own only-passed-fields-change
     pattern). `account` is a free-text context hint (e.g. a Vercel team
     slug) -- never a credential."""
-    bindings = load_rotation_bindings()
-    existing = bindings.get(args.provider)
-    status = args.status if args.status else (existing.status if existing else "stub")
-    account = args.account if args.account else (existing.account if existing else "")
-    bindings[args.provider] = RotationBinding(provider=args.provider, status=status, account=account)
-    save_rotation_bindings(bindings)
-    print(f"rotation binding set: {args.provider} (status={status}, account={account or '-'})")
+    def _upsert(bindings):
+        existing = bindings.get(args.provider)
+        status = args.status if args.status else (existing.status if existing else "stub")
+        account = args.account if args.account else (existing.account if existing else "")
+        bindings[args.provider] = RotationBinding(provider=args.provider, status=status, account=account)
+
+    b = update_rotation_bindings(_upsert)[args.provider]
+    print(f"rotation binding set: {args.provider} (status={b.status}, account={b.account or '-'})")
     return 0
 
 
@@ -1676,7 +1700,12 @@ def cmd_vault_access_import(args) -> int:
     rotation_bindings = load_rotation_bindings()
     report = import_bundle(bundle, registry, vault_bindings, rotation_bindings, force=args.force)
     save_vault_bindings(vault_bindings)
-    save_rotation_bindings(rotation_bindings)
+    # Re-apply only the bundle's providers onto a fresh locked read, so a
+    # concurrent writer's binding for any other provider isn't clobbered by
+    # the snapshot loaded above. Kept outside import_bundle() so the
+    # rotation lock is never held while it takes the registry lock.
+    imported = {p: rotation_bindings[p] for p in bundle.get("rotation_bindings", {})}
+    update_rotation_bindings(lambda current: current.update(imported))
 
     audit.append(
         "vault_access_import", "-",
@@ -2577,7 +2606,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ttl", type=int, default=3)
     ap.set_defaults(func=cmd_approve)
 
-    gr = sub.add_parser("grant", help="record an audited access widening")
+    gr = sub.add_parser(
+        "grant", help="record an access widening in the audit log only (makes no IAM change)",
+    )
     gr.add_argument("name")
     gr.add_argument("member")
     gr.set_defaults(func=cmd_grant)
@@ -2599,6 +2630,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")
     ve.set_defaults(func=cmd_verify)
+
+    hl = sub.add_parser(
+        "health",
+        help="read-only deep self-check (home, registry, audit chain, backends) -- "
+             "never resolves a value; exits 0 ok / 1 degraded / 2 down",
+    )
+    hl.add_argument("--json", action="store_true")
+    hl.set_defaults(func=cmd_health)
 
     auth_p = sub.add_parser("auth", help="check keyless cloud credential minting")
     auth_sub = auth_p.add_subparsers(dest="provider", required=True)
@@ -3002,7 +3041,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # write would be pointless at best, protocol-adjacent noise at worst);
     # `update` already does its own live check -- a stale passive notice on
     # top of it would be confusing, not helpful.
-    skip_notify = args.cmd in ("mcp", "update")
+    skip_notify = args.cmd in ("mcp", "update", "health")
     if not args.home:
         rc = args.func(args)
         if not skip_notify:

@@ -80,8 +80,9 @@ That's portunus.
 - [ ] Native HTTP-client injection adapter *(today it's `portunus resolve --exec curl ...`, or a
       caller-supplied boundary callable via the library's `resolve_call` — works, but there's no
       built-in `HttpHeaderAdapter`/`HttpBodyAdapter` class yet, only `EnvVarAdapter`/`FileAdapter`)*
-- [ ] Secret rotation *(the provenance layer is real — `RotationBinding`, three stub adapters — but
-      every adapter still unconditionally raises; nothing rotates yet)*
+- [ ] More secret-rotation adapters *(two real adapters ship today — OAuth refresh tokens and GCP
+      service-account keys, both `auto` via `portunus rotation run`; Vercel, GitHub and Stripe are
+      still stubs that raise. See [docs/rotation.md](docs/rotation.md) for the capability matrix)*
 - [ ] Scope-aware `list`/`tree` — these two MCP tools still return full-vault metadata regardless
       of the caller's own access scope; only the actual `resolve`/inject path is gated today
       *(a real, named gap — not started; portunus-petitio-rbac design-discussion.md's self-grill)*
@@ -135,7 +136,7 @@ secret instead of dropping a new one, tag-based lookup, the MCP server, and the 
 - **Every design decision, with the reasoning, not just the outcome** —
   [`.pHive/epics/`](.pHive/epics/) holds a research brief + design discussion (often with an
   adversarial "grill" pass) for every feature this project has shipped: why local+GCP are the
-  only real ARCA backends today, why rotation ships as provenance-only, why the desktop app
+  only real ARCA backends today, why rotation first shipped as provenance-only, why the desktop app
   shells out to `gh` instead of embedding a token, and more. This is the actual paper trail, not
   a curated highlight reel.
 - **[CHANGELOG.md](CHANGELOG.md)** — what shipped, release by release.
@@ -153,7 +154,7 @@ their own (Latin, theme-consistent) names:
 |---|---|---|
 | **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project". **Three entry points, one implementation**: the `portunus` CLI, the standalone UI's API routes, and an MCP stdio server for other agents/harnesses | `resolver.py` + the `portunus` CLI (`cli.py`) + `mcp_server.py` (`portunus mcp`) |
 | **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice. **Real today:** local-encrypted (default), GCP Secret Manager (keyless via WIF, optionally with a recency-aware pull-only sync-down cache that survives a real network outage by serving the last-known-good cached value). **Honest stubs, not yet real:** AWS Secrets Manager, HashiCorp Vault, Infisical, Doppler, 1Password, Azure Key Vault — each fails closed with a clear error and a link to [request it](.github/ISSUE_TEMPLATE/adapter-request.yaml), never silently mis-routes. See `docs/architecture.md` for the full picture. | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `VaultBinding`, and the six stub classes); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
-| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **Per-agent access control is real and opt-in**: every call threads an `Identity` (`requester`) through `check_injectable()`, which evaluates it against `roles.py`'s `PolicyRecord`s (`org`/`project`/`env`/`repo` scope + `principal`) via `roles.evaluate()` — every resolve gets a `would-allow`/`would-deny` audit line regardless, but only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been explicitly run for that vault (default: off; a scope with zero configured policies always stays open). Not yet scope-aware: the `list`/`tree` MCP tools, and `approve()`'s token (scoped to a reference name, not the requesting identity) — see Roadmap. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter yet — config only, zero real adapters today, all stubs (Vercel is the confirmed priority target for the first real one). See `docs/architecture.md` §3/§17. | `broker.py`, `roles.py`, `rotation.py` |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **Per-agent access control is real and opt-in**: every call threads an `Identity` (`requester`) through `check_injectable()`, which evaluates it against `roles.py`'s `PolicyRecord`s (`org`/`project`/`env`/`repo` scope + `principal`) via `roles.evaluate()` — every resolve gets a `would-allow`/`would-deny` audit line regardless, but only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been explicitly run for that vault (default: off; a scope with zero configured policies always stays open). Not yet scope-aware: the `list`/`tree` MCP tools, and `approve()`'s token (scoped to a reference name, not the requesting identity) — see Roadmap. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter for it. Two adapters are real (`auto`): OAuth refresh tokens (`OAuthRefreshRotationAdapter`) and GCP service-account keys (`GCPServiceAccountKeyRotationAdapter`), run via `portunus rotation run`. Vercel, GitHub and Stripe are still stubs that raise. See `docs/rotation.md`. See `docs/architecture.md` §3/§17. | `broker.py`, `roles.py`, `rotation.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
 So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
@@ -207,7 +208,7 @@ Not on PyPI under this name yet — `portunus` there is an unrelated, unmaintain
 `pantheon-portunus` (the installed command is still just `portunus`) once a real release ships.
 The installer above pulls straight from GitHub in the meantime.
 
-Requires Python ≥ 3.9. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
+Requires Python ≥ 3.10. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
 `cryptography`'s Fernet recipe — AES-128-CBC + HMAC-SHA256; we never hand-roll a cipher). The master key
 lives in its own `0600` file, separate from the encrypted vault file, both under `PORTUNUS_HOME` (default
 `~/.portunus`, `0700`). Set `PORTUNUS_BACKEND=gcloud` to use GCP Secret Manager instead — keyless by
@@ -651,8 +652,9 @@ via `gcloud auth login`), so neither is masked in the UI.
 A rotation binding's `account` (the free-text context hint `portunus rotation-bindings set
 <provider> --account ...` already accepted, e.g. a Vercel team slug) is likewise editable inline
 in a reference's detail view, next to the Auto-rotate button. `status` (`stub`/`real`) stays
-code-driven and is never reachable from the UI — every rotation adapter is a stub today, and a
-UI control that could claim otherwise would misrepresent what actually happens on click.
+code-driven and is never reachable from the UI — only the OAuth and GCP service-account adapters
+are real today (Vercel/GitHub/Stripe are stubs), and a UI control that could flip a stub to real
+would misrepresent what actually happens on click.
 
 Bulk-import many secrets at once — e.g. importing a batch of candidate passwords/keys before
 trying each one against something via `portunus_resolve_exec`, without exposing which one worked
@@ -784,7 +786,7 @@ rm -f "$path"
 ```bash
 portunus gate shared-anthropic          # now requires human approval to resolve
 portunus approve shared-anthropic --ttl 3
-portunus grant shared-anthropic serviceAccount:agent-att@proj.iam   # audited widening
+portunus grant shared-anthropic serviceAccount:agent-att@proj.iam   # audit record only, no IAM change
 portunus state shared-anthropic revoked  # emergency: blocks all injection
 portunus status shared-anthropic
 ```
@@ -827,7 +829,7 @@ below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 
 | Tool | Returns |
 |---|---|
-| `portunus_health` | Liveness check |
+| `portunus_health(shallow=False)` | Read-only deep self-check, same as `portunus health --json`; `shallow=True` is liveness only |
 | `portunus_list(project)` | Every reference's metadata for a project — never a value |
 | `portunus_tree(project="")` | Group hierarchy + related links, same shape as `portunus tree --json` |
 | `portunus_ask_preview(request)` | What a plain-language fetch request would resolve to — metadata only, previews, never injects |
@@ -845,7 +847,7 @@ below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 | `portunus_drop_bulk(entries)` | Create many local-vault secrets in one call — `{"created": [names], "failed": [{"name","error"}]}`, never a value |
 | `portunus_state(name, state)` | Change a reference's lifecycle state — `{name, state}` |
 | `portunus_sync(project)` | Force a recency check for every cached-mode reference in a project — `{"synced", "already_fresh", "failed"}`, names only |
-| `portunus_rotation_status(provider="")` | Configured per-provider rotation bindings (status/account) — one provider or all. Every provider is a stub today (`status="stub"`) — no real rotation has ever fired |
+| `portunus_rotation_status(provider="")` | Configured per-provider rotation bindings (status/account/capability) — one provider or all. `capability` comes from the adapter registry: `auto` for `oauth` and `gcp`, `unknown` for the Vercel/GitHub/Stripe stubs |
 
 The injection tools use the same **dual addressing** as the CLI's own `inject`/`ask`: give an
 exact `name` (from a prior `portunus_list`/`portunus_tree` call) or `tags` — never raw
@@ -1125,10 +1127,27 @@ npm install
 npm run dev   # http://localhost:3000
 ```
 
+**Bind address.** Every way of starting the UI (`npm run dev`, `npm start`, and the standalone
+command below) listens on **`127.0.0.1` only** by default, so nothing else on your network can
+reach it. To bind somewhere else, set `PORTUNUS_UI_HOST` explicitly, e.g.
+`PORTUNUS_UI_HOST=0.0.0.0 npm start`. Nothing else changes the bind address. The npm scripts use
+POSIX `${VAR:-default}` expansion, so run them from a POSIX shell. `npm run test:bind` (after
+`npm run build`) checks each command's actual listening address.
+
+**Request guard.** `ui/proxy.ts` runs in front of every `/api/*` route. A non-GET request is
+rejected with **403** if it carries an `Origin` other than the UI's own, or if its `Host` isn't
+`localhost` / `127.0.0.1` / `[::1]` (this stops DNS rebinding; the check is skipped once you set
+`PORTUNUS_UI_HOST`). It is rejected with **415** if its `Content-Type` isn't
+`application/json`. That means another web page open in your browser can't drive the vault
+through the UI's API. A client with no `Origin` header, such as `curl`, still works as long as it
+sends JSON.
+
 ### Running as a supervised service (L2 plugin lifecycle)
 
 The UI also builds as a self-contained, host-supervisable service — `GET /api/health` returns
-`{"status":"ok"}` (a trivial liveness signal; it never touches the CLI/subprocess), and
+the result of `portunus health --json` (`{status: ok|degraded|down, checks}`; HTTP 503 when
+down), `GET /api/health?shallow=1` returns `{"status":"ok"}` without touching the CLI (the
+desktop app's readiness poll uses this), and
 `next.config.mjs` sets `output: "standalone"` so a single fixed entrypoint can be supervised
 directly:
 
@@ -1136,8 +1155,14 @@ directly:
 cd ui
 npm run build
 cp -r .next/static .next/standalone/.next/static   # standalone mode doesn't do this automatically
-PORT=7802 node .next/standalone/server.js
+PORT=7802 HOSTNAME="${PORTUNUS_UI_HOST:-127.0.0.1}" node .next/standalone/server.js
+# or, equivalently: PORT=7802 npm run start:standalone
 ```
+
+Set `HOSTNAME` on this command, as shown. Next's standalone `server.js` binds whatever `HOSTNAME`
+says and falls back to `0.0.0.0` (every interface), and Docker and some shells export
+`HOSTNAME` as the machine's name. A supervisor that launches `server.js` directly has to pass
+`HOSTNAME=127.0.0.1` itself, as the desktop app's sidecar already does.
 
 Runs on port **7802** (declared in `manifest.json`'s `ui.url`), matching the port Portunus is
 registered under in the Pantheon host's shared manifests.

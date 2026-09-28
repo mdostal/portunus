@@ -21,7 +21,7 @@ set -euo pipefail
 REPO="git+https://github.com/mdostal/portunus.git"
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "error: python3 (>=3.9) is required and wasn't found on PATH." >&2
+  echo "error: python3 (>=3.10) is required and wasn't found on PATH." >&2
   exit 1
 fi
 

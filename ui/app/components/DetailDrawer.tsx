@@ -205,9 +205,9 @@ export default function DetailDrawer({
   }, [reference.sm_name]);
 
   // Auto-rotate button state is DERIVED from the rotation-provenance
-  // registry, not hardcoded -- stays disabled today (every adapter is a
-  // stub) but would light up automatically once a real one ships, no UI
-  // change needed then. A missing/unconfigured provider is absent from
+  // bindings, not hardcoded -- enabled only when the provider's binding
+  // says status="real" (only the oauth and gcp adapters are real today;
+  // vercel/github/stripe are stubs), no UI change needed as more ship. A missing/unconfigured provider is absent from
   // the response entirely, which reads the same as status !== "real".
   useEffect(() => {
     let cancelled = false;

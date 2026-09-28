@@ -234,7 +234,8 @@ value is substituted only at the execution boundary — never inside an LLM/agen
   targets same-pod/same-host reachability (`docker exec`/`kubectl exec`, a shared pod volume, or
   Portunus starting the consumer via `resolve --exec`) rather than a network-reachable shared
   broker service — the MCP server is stdio-only today, and a genuinely shared service would need
-  the currently-stub-only RBAC (`roles.py`) actually enforced, explicitly deferred future work.
+  per-agent RBAC (`roles.py`, enforced via `portunus roles enforce on`) switched on plus
+  scope-aware `list`/`tree` and identity-scoped approvals, explicitly deferred future work.
   `PORTUNUS_HOME` must be a real persistent volume for the local-encrypted backend specifically
   (self-bootstrapping master key means an unmounted/removed volume silently and permanently loses
   every secret); GCP-backend-only usage is unaffected. GKE Workload Identity is the recommended
@@ -282,8 +283,10 @@ value is substituted only at the execution boundary — never inside an LLM/agen
 - `src/portunus/intent.py` — `parse_intent()`, the semantic front door's text-to-tags step.
 - `src/portunus/cli.py` — the `portunus` CLI entry point (`find`, `inject`, `ask`, `drop`, ...).
 - `src/portunus/views.py` — custom views (`PORTUNUS_HOME/views.json`), locked from day one.
-- `src/portunus/roles.py` — STUB role/policy schema (`PORTUNUS_HOME/roles.json`) — persists for
-  real, consumed by nothing.
+- `src/portunus/roles.py` — role/policy schema (`PORTUNUS_HOME/roles.json`) and `evaluate()`.
+  Consumed by `Broker.check_injectable()`: every call with a `requester` is evaluated and audited
+  (`would-allow`/`would-deny`), and denies raise `NotAuthorized` once `portunus roles enforce on`
+  is set (off by default; a scope with no policy stays open).
 - `src/portunus/agent_setup.py` — `portunus agent init`/`status`: MCP registration + usage-skill
   install for whatever agent CLIs are on the machine. Zero secret-boundary surface by
   construction (no `Registry`/`Broker`/`Resolver` import) — local agent-CLI config plumbing only.

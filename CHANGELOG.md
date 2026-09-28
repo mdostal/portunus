@@ -4,6 +4,81 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`requires-python` is now `>=3.10` (PANT-848).** The claimed `>=3.9` was never installable:
+  the `mcp` dependency itself requires Python 3.10+. CI now runs pytest on 3.10 and 3.12.
+- CI builds and tests `ui/` on every PR into dev/main: `npm ci`, `tsc --noEmit`, `next build`
+  and the Playwright E2E suite (Chromium, all API calls mocked). A failed Python install now
+  fails CI instead of being swallowed.
+
+### Added
+
+- **`portunus health [--json]` deep self-check (PANT-854).** Read-only: checks that
+  `PORTUNUS_HOME` exists with 0700/0600 permissions, the registry parses, the audit chain
+  verifies, the audit clock matches the log's last `seq` (catching a truncated tail the chain
+  can't see), and each backend in use is reachable without touching a value (local vault +
+  master key present; gcloud on `PATH` plus a `versions describe latest` probe on one non-WIF
+  reference). Prints `{status: ok|degraded|down, checks: [{name, ok, detail}]}` and exits
+  0/1/2. Never resolves a value, never writes to the home or the audit log.
+- The UI's `GET /api/health` now returns that result (503 when down); `?shallow=1` keeps the
+  old CLI-free liveness answer, which the desktop sidecar's readiness poll now uses.
+- The MCP `portunus_health` tool runs the same check (`shallow=True` for liveness only).
+- The Docker image gains `HEALTHCHECK CMD portunus health --json`, and creates its
+  `PORTUNUS_HOME` volume 0700 so a fresh container reports healthy.
+- `python -m portunus` now runs the CLI (new `portunus/__main__.py`).
+
+### Fixed
+
+- **UI API rejects cross-origin and non-JSON writes, and binds to loopback (PANT-847).** The new
+  `ui/proxy.ts` (Next.js 16's name for middleware) covers `/api/*`. A non-GET request gets 403
+  if its `Origin` isn't the UI's own or its `Host` isn't a loopback name (DNS rebinding), and
+  415 if it isn't `application/json`, before any route reaches the `portunus` CLI. Before this,
+  a `text/plain` POST from any open web page, which needs no CORS preflight, could reach
+  mutating routes such as `/api/inject`. `npm run dev`, `npm start` and the README's standalone
+  command now listen on `127.0.0.1` by default, and only `PORTUNUS_UI_HOST` changes that.
+  Previously only the desktop sidecar pinned it. New `npm run test:bind` checks each command's
+  real listening address, and `e2e/api-guard.spec.ts` covers the guard against a stub CLI.
+- **Hermetic test suite (PANT-849).** `pytest` now passes with no `gcloud`, `gh` or `portunus`
+  on `PATH` and an empty `HOME`. Tests that stub gcloud request one shared `gcloud_on_path`
+  fixture for the `which("gcloud")` guard, subprocess tests run `sys.executable -m portunus`,
+  an autouse fixture isolates `PORTUNUS_HOME` for every test so none can touch `~/.portunus`,
+  and the leak-scan visibility test no longer calls the real `gh`.
+
+### Fixed
+
+- **One release version everywhere (PANT-850).** `__version__` (what `portunus --version` and
+  the self-update check report), `manifest.json` and the Tauri desktop shell (`Cargo.toml`,
+  `Cargo.lock`, `tauri.conf.json`) said 0.32.0 while `pyproject.toml` and this file said
+  0.33.0, so 0.33.0 installs reported 0.32.0 and compared the wrong version against the latest
+  release. All now say 0.33.0, and `tests/test_version_consistency.py` fails if any of them, or
+  `portunus --version`, drifts from `pyproject.toml`.
+- `manifest.json`'s `engine.install` was `pipx install portunus`, which would install an
+  unrelated PyPI project. It's now the README's `install.sh` one-liner, and the same test
+  checks that it still appears in the README.
+- **Audit log reliability (PANT-851).** A missing or corrupt `.clock` no longer restarts
+  `seq` at 0 (duplicating sequence numbers): the next `seq` is recovered from the highest
+  `seq` in `audit.log` and `.clock` is rewritten. The broker's approval clock uses the same
+  recovery, so deleting `.clock` no longer changes whether an approval is still valid.
+  `AuditChain.verify()` / `verify_entries()` return `False` on a corrupt or malformed line
+  instead of raising, `AuditChain.check()` reports the first bad line and why, and
+  `portunus verify` prints `BROKEN at line L: <reason>` and exits 2. `entries()` skips
+  unparseable lines instead of raising.
+
+### Fixed
+
+- **Concurrent writers can no longer lose rotation bindings or corrupt state files on crash
+  (PANT-852).** `rotation-bindings set` and `vault access import` now do their
+  read-modify-write under a new `rotation-bindings.lock` (`update_rotation_bindings()`), so
+  CLI, MCP and UI writers running at once no longer drop each other's providers.
+- Every JSON state file (registry, local vault, vault/rotation bindings, views, roles,
+  leak-scan state, sync state, update cache) is now written through one `atomic_write()`
+  helper: a unique temp file, fsynced before `os.replace()`, then a directory fsync after it.
+  A crash can no longer leave an empty registry or vault.
+- `Registry`, `AuditChain` and `LocalEncryptedBackend` now lock through the shared
+  `filelock.flock_path`. The three hand-copied flock loops are gone. Error types are
+  unchanged: `RegistryLocked`, and `TimeoutError` (via its `LockTimeout` subclass).
+
 ## [0.33.0] - 2026-09-14
 
 ### Added

@@ -16,6 +16,13 @@ from portunus.discover import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _gcloud_on_path(monkeypatch):
+    # The runner is mocked; only the PATH guard needs gcloud, so CI stays
+    # self-contained whether or not the machine has the gcloud CLI.
+    monkeypatch.setattr("portunus.discover.shutil.which", lambda name: "/bin/gcloud")
+
+
 def _mock_runner(stdout_json):
     def runner(cmd, capture_output, text, timeout):
         return SimpleNamespace(returncode=0, stdout=json.dumps(stdout_json), stderr="")
@@ -36,7 +43,7 @@ def test_discover_module_never_imports_a_value_fetching_method():
     assert "access" not in names
 
 
-def test_list_gcp_secrets_parses_names_labels_create_time():
+def test_list_gcp_secrets_parses_names_labels_create_time(gcloud_on_path):
     runner = _mock_runner([
         {
             "name": "projects/123/secrets/API_KEY",
@@ -52,7 +59,7 @@ def test_list_gcp_secrets_parses_names_labels_create_time():
     assert secrets[1].labels == {}
 
 
-def test_list_gcp_secrets_never_calls_versions_access(monkeypatch):
+def test_list_gcp_secrets_never_calls_versions_access(gcloud_on_path):
     seen_cmds = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -65,7 +72,7 @@ def test_list_gcp_secrets_never_calls_versions_access(monkeypatch):
         assert "access" not in cmd
 
 
-def test_list_gcp_secrets_passes_account_flag_when_given():
+def test_list_gcp_secrets_passes_account_flag_when_given(gcloud_on_path):
     seen_cmds = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -76,7 +83,7 @@ def test_list_gcp_secrets_passes_account_flag_when_given():
     assert "--account=user@example.com" in seen_cmds[0]
 
 
-def test_list_gcp_secrets_no_account_flag_when_omitted():
+def test_list_gcp_secrets_no_account_flag_when_omitted(gcloud_on_path):
     seen_cmds = []
 
     def runner(cmd, capture_output, text, timeout):

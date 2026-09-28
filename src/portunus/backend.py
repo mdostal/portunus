@@ -31,6 +31,7 @@ from .auth import (
     OAuthAccessToken,
     OAuthRefreshTokenAuth,
 )
+from .atomicio import atomic_write
 from .filelock import flock_path
 from .paths import home
 
@@ -185,7 +186,6 @@ def save_vault_bindings(
     Registry._locked() already does, which is a bigger change than this
     story's scope (a dedicated lock file + the coordinated snapshot)."""
     bindings_path = _vault_bindings_path(path)
-    bindings_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
         proj: {
             "wif_audience": b.wif_audience, "account": b.account,
@@ -195,11 +195,7 @@ def save_vault_bindings(
         for proj, b in bindings.items()
     }
     with flock_path(_vault_bindings_lock_path(path)):
-        tmp = bindings_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(raw, indent=2))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, bindings_path)
-        os.chmod(bindings_path, 0o600)
+        atomic_write(bindings_path, json.dumps(raw, indent=2))
 
 
 class GcloudBackend:
@@ -590,12 +586,7 @@ class SyncingBackend:
         return {}
 
     def _save_state(self, state: Dict[str, str]) -> None:
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.state_path)
-        os.chmod(self.state_path, 0o600)
+        atomic_write(self.state_path, json.dumps(state, indent=2))
 
     def access(self, sm_name: str, project: str = "") -> str:
         cache_key = f"{project}:{sm_name}"
