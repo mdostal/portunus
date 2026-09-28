@@ -208,7 +208,7 @@ Not on PyPI under this name yet — `portunus` there is an unrelated, unmaintain
 `pantheon-portunus` (the installed command is still just `portunus`) once a real release ships.
 The installer above pulls straight from GitHub in the meantime.
 
-Requires Python ≥ 3.9. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
+Requires Python ≥ 3.10. **The default backend is the local-encrypted ARCA tier** (`LocalEncryptedBackend`,
 `cryptography`'s Fernet recipe — AES-128-CBC + HMAC-SHA256; we never hand-roll a cipher). The master key
 lives in its own `0600` file, separate from the encrypted vault file, both under `PORTUNUS_HOME` (default
 `~/.portunus`, `0700`). Set `PORTUNUS_BACKEND=gcloud` to use GCP Secret Manager instead — keyless by

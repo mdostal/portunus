@@ -14,6 +14,13 @@ from portunus.localvault import LocalEncryptedBackend
 pytestmark = pytest.mark.usefixtures("gcloud_on_path")
 
 
+@pytest.fixture(autouse=True)
+def _gcloud_on_path(monkeypatch):
+    # The runner is mocked; only the PATH guard needs gcloud, so CI stays
+    # self-contained whether or not the machine has the gcloud CLI.
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+
+
 def _mock_gcloud_runner(responses):
     """responses: list of (returncode, stdout, stderr) consumed in call order."""
     calls = []

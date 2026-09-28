@@ -4,6 +4,14 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`requires-python` is now `>=3.10` (PANT-848).** The claimed `>=3.9` was never installable:
+  the `mcp` dependency itself requires Python 3.10+. CI now runs pytest on 3.10 and 3.12.
+- CI builds and tests `ui/` on every PR into dev/main: `npm ci`, `tsc --noEmit`, `next build`
+  and the Playwright E2E suite (Chromium, all API calls mocked). A failed Python install now
+  fails CI instead of being swallowed.
+
 ### Added
 
 - **`portunus health [--json]` deep self-check (PANT-854).** Read-only: checks that

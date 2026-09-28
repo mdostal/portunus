@@ -373,6 +373,6 @@ def _format_time(value: datetime) -> str:
 
 def _parse_time(value: str) -> datetime:
     """Inverse of _format_time(). datetime.fromisoformat() doesn't accept a
-    bare "Z" suffix before Python 3.11 (this project supports >=3.9), so
+    bare "Z" suffix before Python 3.11 (this project supports >=3.10), so
     normalize it to "+00:00" first."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
