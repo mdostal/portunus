@@ -19,6 +19,18 @@ All notable changes to Portunus are documented in this file.
 - The Docker image gains `HEALTHCHECK CMD portunus health --json`, and creates its
   `PORTUNUS_HOME` volume 0700 so a fresh container reports healthy.
 
+### Fixed
+
+- **One release version everywhere (PANT-850).** `__version__` (what `portunus --version` and
+  the self-update check report), `manifest.json` and the Tauri desktop shell (`Cargo.toml`,
+  `Cargo.lock`, `tauri.conf.json`) said 0.32.0 while `pyproject.toml` and this file said
+  0.33.0, so 0.33.0 installs reported 0.32.0 and compared the wrong version against the latest
+  release. All now say 0.33.0, and `tests/test_version_consistency.py` fails if any of them, or
+  `portunus --version`, drifts from `pyproject.toml`.
+- `manifest.json`'s `engine.install` was `pipx install portunus`, which would install an
+  unrelated PyPI project. It's now the README's `install.sh` one-liner, and the same test
+  checks that it still appears in the README.
+
 ## [0.33.0] - 2026-09-14
 
 ### Added
