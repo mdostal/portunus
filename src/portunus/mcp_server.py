@@ -194,7 +194,8 @@ def portunus_rotation_status(provider: str = "") -> dict:
     resolver, never a value this tool could see. Same values as
     `portunus rotation-bindings show --json`. Real adapters: `oauth`
     (wraps OAuthBackend -- drives every stored OAuth refresh credential
-    through a single job). Stub adapters: vercel, github, stripe."""
+    through a single job) and `gcp` (service-account key create/verify/
+    store). Stub adapters: vercel, github, stripe."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
