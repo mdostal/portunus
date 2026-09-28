@@ -204,10 +204,9 @@ class Broker:
         return False
 
     def _clock_now(self) -> int:
-        try:
-            return int(self.audit.clock_path.read_text().strip() or "0")
-        except (OSError, ValueError):
-            return 0
+        # Same recovery as AuditChain._tick(): a missing/corrupt .clock falls
+        # back to the log's highest seq, so approval expiry doesn't shift.
+        return self.audit.current_seq()
 
     # --- grant -----------------------------------------------------------
     def grant(self, name: str, member: str) -> Reference:
