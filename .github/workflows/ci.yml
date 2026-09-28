@@ -9,8 +9,14 @@ on:
 
 jobs:
   ci:
-    name: ci
+    name: ci (py ${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lowest supported (pyproject `requires-python`) and current.
+        # Only the Python stack reads this; node/go ignore it.
+        python: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
 
@@ -47,15 +53,17 @@ jobs:
         if: steps.detect.outputs.stack == 'python'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
 
       - name: Python install / test
         if: steps.detect.outputs.stack == 'python'
         run: |
           set -e
           python -m pip install --upgrade pip
-          [ -f requirements.txt ] && pip install -r requirements.txt || true
-          if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e . || pip install . || true; fi
+          # No `|| true`: a broken install must fail the gate, not silently
+          # run the tests against whatever happens to be importable.
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ] || [ -f setup.py ]; then pip install -e .; fi
           pip install pytest
           set +e
           pytest -q
@@ -81,3 +89,38 @@ jobs:
       - name: No recognized stack
         if: steps.detect.outputs.stack == 'none'
         run: echo "No node/python/go project detected at repo root — CI gate passes (no-op)."
+
+  # ---- ui/ (Next.js console) ----
+  # The stack detection above only looks at the repo root, so ui/ needs its
+  # own job. Self-contained: the E2E suite mocks every /api/* call with
+  # page.route, so no vault, gcloud or cloud credentials are involved.
+  ui:
+    name: ui
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E
+        run: npm run test:e2e

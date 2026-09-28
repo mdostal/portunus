@@ -16,6 +16,13 @@ from portunus.discover import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _gcloud_on_path(monkeypatch):
+    # The runner is mocked; only the PATH guard needs gcloud, so CI stays
+    # self-contained whether or not the machine has the gcloud CLI.
+    monkeypatch.setattr("portunus.discover.shutil.which", lambda name: "/bin/gcloud")
+
+
 def _mock_runner(stdout_json):
     def runner(cmd, capture_output, text, timeout):
         return SimpleNamespace(returncode=0, stdout=json.dumps(stdout_json), stderr="")
