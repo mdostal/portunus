@@ -1,14 +1,14 @@
 {
   "name": "portunus",
   "type": "core",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "description": "Secret broker for the Dostal harness — reference registry + boundary-only resolver so a plaintext secret never enters an LLM/agent context.",
   "author": "Mathew Dostal",
   "license": "MIT",
   "engine": {
     "kind": "tool",
     "entry": "portunus",
-    "install": "pipx install portunus"
+    "install": "curl -fsSL https://mdostal.github.io/portunus/install.sh | bash"
   },
   "ui": {
     "url": "http://localhost:7802",
