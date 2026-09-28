@@ -38,7 +38,7 @@ from .backup import ExportError, export_archive, import_archive
 from .paths import home
 from .rotation import (
     RotationBinding, capability_for_status, load_rotation_bindings,
-    rotation_audit_data, save_rotation_bindings,
+    rotation_audit_data, update_rotation_bindings,
 )
 from .views import ViewError, add_to_view, create_view, delete_view, load_views, remove_from_view
 from .roles import (
@@ -1331,13 +1331,14 @@ def cmd_rotation_bindings_set(args) -> int:
     fields change (mirrors cmd_bindings_set's own only-passed-fields-change
     pattern). `account` is a free-text context hint (e.g. a Vercel team
     slug) -- never a credential."""
-    bindings = load_rotation_bindings()
-    existing = bindings.get(args.provider)
-    status = args.status if args.status else (existing.status if existing else "stub")
-    account = args.account if args.account else (existing.account if existing else "")
-    bindings[args.provider] = RotationBinding(provider=args.provider, status=status, account=account)
-    save_rotation_bindings(bindings)
-    print(f"rotation binding set: {args.provider} (status={status}, account={account or '-'})")
+    def _upsert(bindings):
+        existing = bindings.get(args.provider)
+        status = args.status if args.status else (existing.status if existing else "stub")
+        account = args.account if args.account else (existing.account if existing else "")
+        bindings[args.provider] = RotationBinding(provider=args.provider, status=status, account=account)
+
+    b = update_rotation_bindings(_upsert)[args.provider]
+    print(f"rotation binding set: {args.provider} (status={b.status}, account={b.account or '-'})")
     return 0
 
 
@@ -1699,7 +1700,12 @@ def cmd_vault_access_import(args) -> int:
     rotation_bindings = load_rotation_bindings()
     report = import_bundle(bundle, registry, vault_bindings, rotation_bindings, force=args.force)
     save_vault_bindings(vault_bindings)
-    save_rotation_bindings(rotation_bindings)
+    # Re-apply only the bundle's providers onto a fresh locked read, so a
+    # concurrent writer's binding for any other provider isn't clobbered by
+    # the snapshot loaded above. Kept outside import_bundle() so the
+    # rotation lock is never held while it takes the registry lock.
+    imported = {p: rotation_bindings[p] for p in bundle.get("rotation_bindings", {})}
+    update_rotation_bindings(lambda current: current.update(imported))
 
     audit.append(
         "vault_access_import", "-",

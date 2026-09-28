@@ -13,19 +13,16 @@ never a secret value.
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
-import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
+from .filelock import flock_path
 from .paths import home
 
-_LOCK_POLL_INTERVAL = 0.05
-_LOCK_TIMEOUT = 10.0
 
 
 class AuditChain:
@@ -46,29 +43,10 @@ class AuditChain:
         whole operation must be atomic, not just the counter increment.
         Confirmed via a real reproduction (two concurrent `portunus
         resolve` calls) that an unlocked version of this can race and
-        produce a duplicate seq, breaking the hash chain -- same flock
-        idiom Registry._locked() already uses."""
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(self.lock_path, "w")
-        deadline = time.monotonic() + _LOCK_TIMEOUT
-        acquired = False
-        try:
-            while time.monotonic() < deadline:
-                try:
-                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    acquired = True
-                    break
-                except OSError:
-                    time.sleep(_LOCK_POLL_INTERVAL)
-            if not acquired:
-                raise TimeoutError(
-                    f"could not acquire audit lock within {_LOCK_TIMEOUT}s ({self.lock_path})"
-                )
+        produce a duplicate seq, breaking the hash chain -- shared
+        filelock.flock_path primitive Registry._locked() also uses."""
+        with flock_path(self.lock_path):
             yield
-        finally:
-            if acquired:
-                fcntl.flock(fh, fcntl.LOCK_UN)
-            fh.close()
 
     def _read_clock(self) -> Optional[int]:
         """The counter file's value, or None when missing/unparsable."""

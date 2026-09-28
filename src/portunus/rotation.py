@@ -37,8 +37,10 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
+from .atomicio import atomic_write
+from .filelock import flock_path
 from .paths import home
 
 _ADAPTER_REQUEST_URL = "https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
@@ -121,13 +123,11 @@ def load_rotation_bindings(path: Optional[Path] = None) -> Dict[str, RotationBin
     }
 
 
-def save_rotation_bindings(
-    bindings: Dict[str, RotationBinding], path: Optional[Path] = None
-) -> None:
-    """Persist provider rotation bindings, 0600 on disk, atomic replace --
-    same idiom save_vault_bindings uses."""
-    bindings_path = _rotation_bindings_path(path)
-    bindings_path.parent.mkdir(parents=True, exist_ok=True)
+def _rotation_bindings_lock_path(path: Optional[Path] = None) -> Path:
+    return _rotation_bindings_path(path).with_suffix(".lock")
+
+
+def _save_unlocked(bindings: Dict[str, RotationBinding], path: Optional[Path] = None) -> None:
     raw = {
         provider: {
             "status": b.status,
@@ -136,11 +136,33 @@ def save_rotation_bindings(
         }
         for provider, b in bindings.items()
     }
-    tmp = bindings_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(raw, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, bindings_path)
-    os.chmod(bindings_path, 0o600)
+    atomic_write(_rotation_bindings_path(path), json.dumps(raw, indent=2))
+
+
+def save_rotation_bindings(
+    bindings: Dict[str, RotationBinding], path: Optional[Path] = None
+) -> None:
+    """Persist provider rotation bindings wholesale, 0600 on disk, atomic
+    replace under rotation-bindings.lock. Overwrites whatever is on disk --
+    a caller doing load/modify/save must use update_rotation_bindings()
+    instead, or a concurrent CLI/MCP/UI writer's update can be lost."""
+    with flock_path(_rotation_bindings_lock_path(path)):
+        _save_unlocked(bindings, path)
+
+
+def update_rotation_bindings(
+    mutate: Callable[[Dict[str, RotationBinding]], None], path: Optional[Path] = None
+) -> Dict[str, RotationBinding]:
+    """Locked read-modify-write: reload the freshest on-disk bindings under
+    rotation-bindings.lock, apply `mutate` (in place), persist, release.
+    Same shape as views.py's create/add/remove helpers. Returns the saved
+    bindings. `mutate` must not take another Portunus lock (keeps lock
+    ordering trivial against backup.snapshot())."""
+    with flock_path(_rotation_bindings_lock_path(path)):
+        bindings = load_rotation_bindings(path)
+        mutate(bindings)
+        _save_unlocked(bindings, path)
+        return bindings
 
 
 def rotation_audit_data(registry, rotation_bindings, local_backend=None):
