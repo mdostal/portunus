@@ -20,6 +20,7 @@ from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotAuthorized, NotInjectable
 from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
 from .crawl import crawl_candidates
+from .health import run_health
 from .leakscan import (
     add_scan_path,
     load_leak_status,
@@ -61,12 +62,16 @@ def _resolve_address(registry: Registry, name: str, tags: Optional[dict]):
 
 
 @mcp.tool()
-def portunus_health() -> str:
-    """Liveness check for the Portunus MCP server itself. Deliberately
-    trivial -- mirrors ui/app/api/health/route.ts: never touches the
-    registry, a backend, or PORTUNUS_HOME. Answers "is this process alive",
-    not "is the vault healthy"."""
-    return "ok"
+def portunus_health(shallow: bool = False) -> dict:
+    """Health of this Portunus install -- the same read-only deep self-check
+    as `portunus health --json`: {status: ok|degraded|down, checks: [{name,
+    ok, detail}]}. Checks PORTUNUS_HOME permissions, that the registry
+    parses, the audit chain and clock, and backend reachability. Never
+    resolves a secret value. `shallow=True` is a pure liveness answer for
+    this MCP process that touches nothing (mirrors /api/health?shallow=1)."""
+    if shallow:
+        return {"status": "ok", "checks": []}
+    return run_health()
 
 
 @mcp.tool()

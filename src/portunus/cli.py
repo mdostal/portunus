@@ -24,6 +24,7 @@ from typing import Dict, List, Optional
 
 from . import __version__
 from . import agent_setup
+from . import health as health_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
@@ -1091,6 +1092,20 @@ def cmd_verify(args) -> int:
     ok = audit.verify()
     print(f"audit chain: {'INTACT' if ok else 'BROKEN'} ({len(audit.entries())} entries)")
     return 0 if ok else 2
+
+
+def cmd_health(args) -> int:
+    """Read-only deep self-check -- see health.py. Exits 0/1/2 for
+    ok/degraded/down so a Docker HEALTHCHECK or supervisor can act on it."""
+    result = health_mod.run_health()
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"portunus health: {result['status'].upper()}")
+        for check in result["checks"]:
+            mark = "ok  " if check["ok"] else "FAIL"
+            print(f"  {mark} {check['name']:<14} {check['detail']}")
+    return health_mod.exit_code(result)
 
 
 def cmd_auth_gcp(args) -> int:
@@ -2600,6 +2615,14 @@ def build_parser() -> argparse.ArgumentParser:
     ve = sub.add_parser("verify", help="verify the audit hash chain")
     ve.set_defaults(func=cmd_verify)
 
+    hl = sub.add_parser(
+        "health",
+        help="read-only deep self-check (home, registry, audit chain, backends) -- "
+             "never resolves a value; exits 0 ok / 1 degraded / 2 down",
+    )
+    hl.add_argument("--json", action="store_true")
+    hl.set_defaults(func=cmd_health)
+
     auth_p = sub.add_parser("auth", help="check keyless cloud credential minting")
     auth_sub = auth_p.add_subparsers(dest="provider", required=True)
     auth_gcp = auth_sub.add_parser("gcp", help="mint a GCP WIF access token without printing it")
@@ -3002,7 +3025,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # write would be pointless at best, protocol-adjacent noise at worst);
     # `update` already does its own live check -- a stale passive notice on
     # top of it would be confusing, not helpful.
-    skip_notify = args.cmd in ("mcp", "update")
+    skip_notify = args.cmd in ("mcp", "update", "health")
     if not args.home:
         rc = args.func(args)
         if not skip_notify:

@@ -4,6 +4,21 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`portunus health [--json]` deep self-check (PANT-854).** Read-only: checks that
+  `PORTUNUS_HOME` exists with 0700/0600 permissions, the registry parses, the audit chain
+  verifies, the audit clock matches the log's last `seq` (catching a truncated tail the chain
+  can't see), and each backend in use is reachable without touching a value (local vault +
+  master key present; gcloud on `PATH` plus a `versions describe latest` probe on one non-WIF
+  reference). Prints `{status: ok|degraded|down, checks: [{name, ok, detail}]}` and exits
+  0/1/2. Never resolves a value, never writes to the home or the audit log.
+- The UI's `GET /api/health` now returns that result (503 when down); `?shallow=1` keeps the
+  old CLI-free liveness answer, which the desktop sidecar's readiness poll now uses.
+- The MCP `portunus_health` tool runs the same check (`shallow=True` for liveness only).
+- The Docker image gains `HEALTHCHECK CMD portunus health --json`, and creates its
+  `PORTUNUS_HOME` volume 0700 so a fresh container reports healthy.
+
 ## [0.33.0] - 2026-09-14
 
 ### Added
