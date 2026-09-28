@@ -18,6 +18,15 @@ All notable changes to Portunus are documented in this file.
 - The MCP `portunus_health` tool runs the same check (`shallow=True` for liveness only).
 - The Docker image gains `HEALTHCHECK CMD portunus health --json`, and creates its
   `PORTUNUS_HOME` volume 0700 so a fresh container reports healthy.
+- `python -m portunus` now runs the CLI (new `portunus/__main__.py`).
+
+### Fixed
+
+- **Hermetic test suite (PANT-849).** `pytest` now passes with no `gcloud`, `gh` or `portunus`
+  on `PATH` and an empty `HOME`. Tests that stub gcloud request one shared `gcloud_on_path`
+  fixture for the `which("gcloud")` guard, subprocess tests run `sys.executable -m portunus`,
+  an autouse fixture isolates `PORTUNUS_HOME` for every test so none can touch `~/.portunus`,
+  and the leak-scan visibility test no longer calls the real `gh`.
 
 ### Fixed
 

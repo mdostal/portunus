@@ -20,11 +20,10 @@ def _mock_gcloud(monkeypatch, value="FROM-GCLOUD"):
         return SimpleNamespace(returncode=0, stdout=value, stderr="")
 
     monkeypatch.setattr("portunus.backend.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
     return observed
 
 
-def test_ref_backend_override_wins_over_project_binding(home, monkeypatch):
+def test_ref_backend_override_wins_over_project_binding(home, monkeypatch, gcloud_on_path):
     """A reference explicitly set to backend='local' resolves locally even
     though its project is bound to backend='gcp' -- precedence level 1."""
     _mock_gcloud(monkeypatch)
@@ -41,7 +40,7 @@ def test_ref_backend_override_wins_over_project_binding(home, monkeypatch):
     assert seen["v"] == "LOCAL-VALUE"
 
 
-def test_project_binding_wins_when_no_ref_override(home, monkeypatch):
+def test_project_binding_wins_when_no_ref_override(home, monkeypatch, gcloud_on_path):
     """No ref.backend set -- routes via the project's VaultBinding (gcp),
     precedence level 2."""
     observed = _mock_gcloud(monkeypatch, value="FROM-GCLOUD")
@@ -87,7 +86,7 @@ def test_mock_backend_env_short_circuits_router_entirely(home, monkeypatch):
     assert seen["v"] == "FROM-MOCK"
 
 
-def test_two_projects_route_to_different_backends_in_same_process(home, monkeypatch):
+def test_two_projects_route_to_different_backends_in_same_process(home, monkeypatch, gcloud_on_path):
     """The actual headline fix: per-reference routing within ONE process,
     not one backend per process as before this epic."""
     observed = _mock_gcloud(monkeypatch, value="FROM-GCLOUD")
@@ -111,7 +110,7 @@ def test_two_projects_route_to_different_backends_in_same_process(home, monkeypa
     assert "--project=gcp-proj" in observed[0]
 
 
-def test_router_wraps_cached_gcp_binding_in_syncing_backend(home, monkeypatch):
+def test_router_wraps_cached_gcp_binding_in_syncing_backend(home, monkeypatch, gcloud_on_path):
     """A project bound with sync_mode='cached' routes through SyncingBackend
     -- second access serves from the local cache, no redundant gcloud
     value-fetch (story 03's wiring into the router)."""
@@ -127,7 +126,6 @@ def test_router_wraps_cached_gcp_binding_in_syncing_backend(home, monkeypatch):
         return _NS(returncode=0, stdout="CACHED-VALUE", stderr="")
 
     monkeypatch.setattr("portunus.backend.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
     save_vault_bindings({"demo": VaultBinding("demo", backend="gcp", sync_mode="cached")})
     registry = Registry()
     registry.add("x", "sm-x", project="demo")
@@ -142,7 +140,7 @@ def test_router_wraps_cached_gcp_binding_in_syncing_backend(home, monkeypatch):
     assert len(calls) == 3
 
 
-def test_backend_gate_no_longer_requires_manual_portunus_backend_env(home, monkeypatch):
+def test_backend_gate_no_longer_requires_manual_portunus_backend_env(home, monkeypatch, gcloud_on_path):
     """The exact friction point from this session: PORTUNUS_BACKEND=gcloud
     should no longer be REQUIRED for a bound project to resolve correctly."""
     _mock_gcloud(monkeypatch, value="FROM-GCLOUD")
