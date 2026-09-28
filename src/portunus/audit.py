@@ -131,15 +131,22 @@ class AuditChain:
 
     def verify(self) -> bool:
         """Return True iff the hash chain is intact."""
-        prev = "genesis"
-        for entry in self.entries():
-            body = json.dumps(
-                {k: entry[k] for k in
-                 ("seq", "actor", "task", "action", "secret", "result", "prev")},
-                separators=(",", ":"), sort_keys=False,
-            )
-            calc = hashlib.sha256((entry["prev"] + body).encode()).hexdigest()
-            if entry["prev"] != prev or calc != entry.get("h"):
-                return False
-            prev = entry["h"]
-        return True
+        return verify_entries(self.entries())
+
+
+def verify_entries(entries: List[dict]) -> bool:
+    """Return True iff `entries` form an intact hash chain. A free function
+    so `portunus health` can verify a log without constructing an
+    AuditChain, whose constructor creates/chmods the state home."""
+    prev = "genesis"
+    for entry in entries:
+        body = json.dumps(
+            {k: entry[k] for k in
+             ("seq", "actor", "task", "action", "secret", "result", "prev")},
+            separators=(",", ":"), sort_keys=False,
+        )
+        calc = hashlib.sha256((entry["prev"] + body).encode()).hexdigest()
+        if entry["prev"] != prev or calc != entry.get("h"):
+            return False
+        prev = entry["h"]
+    return True

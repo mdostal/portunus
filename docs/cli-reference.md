@@ -664,6 +664,33 @@ portunus verify
 
 ---
 
+### `health`
+
+Read-only deep self-check. Never resolves a secret value, never writes to `PORTUNUS_HOME`
+or the audit log.
+
+```
+portunus health [--json]
+```
+
+`--json` prints `{"status": "ok"|"degraded"|"down", "checks": [{"name", "ok", "detail"}]}`.
+Exit code: `0` ok, `1` degraded, `2` down.
+
+| Check | Fails as | What it proves |
+|---|---|---|
+| `home` | down | `PORTUNUS_HOME` exists and is a directory |
+| `permissions` | degraded | home is `0700` and state files are `0600` |
+| `registry` | down | `registry.json` parses and every entry is a valid reference |
+| `audit_chain` | degraded | the audit hash chain verifies (same as `portunus verify`) |
+| `audit_clock` | degraded | `.clock` equals the last audit `seq`, which catches a truncated log tail the chain alone can't see |
+| `bindings` | degraded | `vault-bindings.json` parses (only when present) |
+| `backend:<kind>` | degraded | each backend in use: local vault parses and its master key is present and valid; gcloud is on `PATH` and a `versions describe latest` metadata probe on one reference succeeds (WIF-bound references are skipped, since minting writes an audit entry); stub backends fail |
+
+The Docker image runs it as its `HEALTHCHECK`; the UI serves it at `GET /api/health`; the MCP
+server exposes it as `portunus_health`.
+
+---
+
 ### `status`
 
 Show a reference's current state and approval gate.

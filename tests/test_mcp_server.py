@@ -1,7 +1,7 @@
 """portunus mcp -- FastMCP stdio server (story 01, portunus-mcp-server).
 
-portunus_health is deliberately trivial (mirrors ui/app/api/health/route.ts):
-a pure liveness signal, never touches the registry/backend."""
+portunus_health runs the read-only deep self-check (health.py); its
+shallow=True mode is a pure liveness signal that touches nothing."""
 import ast
 import inspect
 import textwrap
@@ -18,16 +18,28 @@ def test_portunus_health_registered_as_a_tool():
     assert "portunus_health" in tool_names
 
 
-def test_portunus_health_returns_ok_without_touching_registry():
+def test_portunus_health_shallow_touches_nothing(tmp_path, monkeypatch):
+    """shallow=True is the pure liveness answer (mirrors /api/health?shallow=1):
+    it must not even look at PORTUNUS_HOME."""
     from portunus import mcp_server
+    missing = tmp_path / "nope"
+    monkeypatch.setenv("PORTUNUS_HOME", str(missing))
+    assert mcp_server.portunus_health(shallow=True) == {"status": "ok", "checks": []}
+    assert not missing.exists()
+
+
+def test_portunus_health_default_is_the_deep_check(home):
+    """Default is the same read-only deep self-check as `portunus health --json`."""
+    from portunus import mcp_server
+    from portunus.health import run_health
     result = mcp_server.portunus_health()
-    assert "ok" in result.lower()
+    assert result == run_health()
+    assert {c["name"] for c in result["checks"]} >= {"home", "registry", "audit_chain"}
 
 
-def test_portunus_health_source_never_imports_registry():
-    """Structural: portunus_health must be as trivial as the UI's own
-    /api/health -- no Registry/Resolver/Backend import, no process-env
-    dependency on PORTUNUS_HOME."""
+def test_portunus_health_source_never_touches_a_value():
+    """Structural: portunus_health never builds a Resolver or calls a
+    backend's access() -- it delegates to health.run_health()."""
     from portunus import mcp_server
     src = textwrap.dedent(inspect.getsource(mcp_server.portunus_health))
     tree = ast.parse(src)

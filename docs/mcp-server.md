@@ -84,7 +84,7 @@ All 23 tools are listed below. No tool ever returns a resolved secret value.
 
 | Tool | Description |
 |---|---|
-| `portunus_health` | Liveness check. Returns `"ok"`. Does not touch the registry or vault. |
+| `portunus_health(shallow=False)` | Same read-only deep self-check as `portunus health --json`: `{status: ok\|degraded\|down, checks: [{name, ok, detail}]}`. Never resolves a value. `shallow=True` returns `{"status": "ok", "checks": []}` without touching anything. |
 
 ### List / search / metadata
 

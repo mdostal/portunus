@@ -829,7 +829,7 @@ below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 
 | Tool | Returns |
 |---|---|
-| `portunus_health` | Liveness check |
+| `portunus_health(shallow=False)` | Read-only deep self-check, same as `portunus health --json`; `shallow=True` is liveness only |
 | `portunus_list(project)` | Every reference's metadata for a project — never a value |
 | `portunus_tree(project="")` | Group hierarchy + related links, same shape as `portunus tree --json` |
 | `portunus_ask_preview(request)` | What a plain-language fetch request would resolve to — metadata only, previews, never injects |
@@ -1130,7 +1130,9 @@ npm run dev   # http://localhost:3000
 ### Running as a supervised service (L2 plugin lifecycle)
 
 The UI also builds as a self-contained, host-supervisable service — `GET /api/health` returns
-`{"status":"ok"}` (a trivial liveness signal; it never touches the CLI/subprocess), and
+the result of `portunus health --json` (`{status: ok|degraded|down, checks}`; HTTP 503 when
+down), `GET /api/health?shallow=1` returns `{"status":"ok"}` without touching the CLI (the
+desktop app's readiness poll uses this), and
 `next.config.mjs` sets `output: "standalone"` so a single fixed entrypoint can be supervised
 directly:
 
