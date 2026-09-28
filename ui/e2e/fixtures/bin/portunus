@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stand-in for the real `portunus` CLI during e2e runs (playwright.config.ts
+# puts this directory first on the UI server's PATH). Records every
+# invocation so a spec can assert whether a route reached the CLI at all.
+[ -n "$PORTUNUS_STUB_LOG" ] && echo "$*" >> "$PORTUNUS_STUB_LOG"
+echo "stub ok"
+exit 0

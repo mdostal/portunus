@@ -1127,6 +1127,21 @@ npm install
 npm run dev   # http://localhost:3000
 ```
 
+**Bind address.** Every way of starting the UI (`npm run dev`, `npm start`, and the standalone
+command below) listens on **`127.0.0.1` only** by default, so nothing else on your network can
+reach it. To bind somewhere else, set `PORTUNUS_UI_HOST` explicitly, e.g.
+`PORTUNUS_UI_HOST=0.0.0.0 npm start`. Nothing else changes the bind address. The npm scripts use
+POSIX `${VAR:-default}` expansion, so run them from a POSIX shell. `npm run test:bind` (after
+`npm run build`) checks each command's actual listening address.
+
+**Request guard.** `ui/proxy.ts` runs in front of every `/api/*` route. A non-GET request is
+rejected with **403** if it carries an `Origin` other than the UI's own, or if its `Host` isn't
+`localhost` / `127.0.0.1` / `[::1]` (this stops DNS rebinding; the check is skipped once you set
+`PORTUNUS_UI_HOST`). It is rejected with **415** if its `Content-Type` isn't
+`application/json`. That means another web page open in your browser can't drive the vault
+through the UI's API. A client with no `Origin` header, such as `curl`, still works as long as it
+sends JSON.
+
 ### Running as a supervised service (L2 plugin lifecycle)
 
 The UI also builds as a self-contained, host-supervisable service — `GET /api/health` returns
@@ -1140,8 +1155,14 @@ directly:
 cd ui
 npm run build
 cp -r .next/static .next/standalone/.next/static   # standalone mode doesn't do this automatically
-PORT=7802 node .next/standalone/server.js
+PORT=7802 HOSTNAME="${PORTUNUS_UI_HOST:-127.0.0.1}" node .next/standalone/server.js
+# or, equivalently: PORT=7802 npm run start:standalone
 ```
+
+Set `HOSTNAME` on this command, as shown. Next's standalone `server.js` binds whatever `HOSTNAME`
+says and falls back to `0.0.0.0` (every interface), and Docker and some shells export
+`HOSTNAME` as the machine's name. A supervisor that launches `server.js` directly has to pass
+`HOSTNAME=127.0.0.1` itself, as the desktop app's sidecar already does.
 
 Runs on port **7802** (declared in `manifest.json`'s `ui.url`), matching the port Portunus is
 registered under in the Pantheon host's shared manifests.
