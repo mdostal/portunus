@@ -1044,7 +1044,10 @@ def cmd_grant(args) -> int:
         ref = broker.grant(args.name, args.member)
     except KeyError:
         return _err(f"unknown reference: {args.name}")
-    print(f"granted {args.member} -> {ref.sm_name} (audited)")
+    print(
+        f"recorded grant {args.member} -> {ref.sm_name} in the audit log only "
+        f"-- no IAM change was made"
+    )
     return 0
 
 
@@ -2592,7 +2595,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ttl", type=int, default=3)
     ap.set_defaults(func=cmd_approve)
 
-    gr = sub.add_parser("grant", help="record an audited access widening")
+    gr = sub.add_parser(
+        "grant", help="record an access widening in the audit log only (makes no IAM change)",
+    )
     gr.add_argument("name")
     gr.add_argument("member")
     gr.set_defaults(func=cmd_grant)

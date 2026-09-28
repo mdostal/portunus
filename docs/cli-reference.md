@@ -378,7 +378,7 @@ portunus approve <name> [--ttl <N>]
 
 ### `grant`
 
-Record an audited access widening to a named member.
+Record an access widening to a named member in the audit log only. No IAM change is made; apply the real permission at the provider yourself.
 
 ```
 portunus grant <name> <member>

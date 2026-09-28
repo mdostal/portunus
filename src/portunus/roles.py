@@ -1,17 +1,18 @@
-"""Role/policy schema -- STUB ONLY. Petitio's future access-level engine
-(portunus-vault-trust-and-access Slice 5), explicitly deferred by the user:
-"the roles part can be stubbed, but is part of petito and is deferred."
+"""Role/policy schema and evaluation for Petitio's per-agent access control
+(portunus-petitio-rbac, built on the portunus-vault-trust-and-access Slice 5
+schema that first shipped here as an inert stub).
 
-This module persists policy records genuinely (writes really land in
-PORTUNUS_HOME/roles.json, reads return exactly what was written) but is
-consumed by NOTHING today. `Broker.check_injectable()` and
-`Registry.retag()` are BYTE-IDENTICAL in behavior whether roles.json is
-absent, empty, or full of records -- confirmed directly by
-tests/test_roles.py's own stub-inertness test, not just asserted in a
-docstring. A present, visible, inert seam, exactly like `Identity.requester`
-(broker.py) already is for secret access -- extended here, in SHAPE only,
-to hierarchy-scoped (org/project/env) metadata/state actions a future
-policy engine will read.
+Policy records persist to PORTUNUS_HOME/roles.json (0600, locked, atomic
+replace). They are consumed by `Broker.check_injectable()` (broker.py):
+whenever a call carries a `requester` Identity, `evaluate()` decides
+allow/deny, a `would-allow:`/`would-deny:` audit line is written, and
+`NotAuthorized` is raised on a deny when enforcement is on
+(`portunus roles enforce on` -> PORTUNUS_HOME/roles-enforce.json, see
+`enforcement_is_on()`). Enforcement is off by default, and a scope with
+no matching policy always stays open, so enforcement only ever narrows
+access for a principal not named in a matching policy. Calls without a
+`requester` (and `Registry.retag()`) are unaffected by roles.json --
+tests/test_roles.py still proves that byte-identical behavior.
 
 Shape models the real example that motivated this (design-discussion.md
 §1): "give dev access across the entirety of Firefly Events, but admin of
