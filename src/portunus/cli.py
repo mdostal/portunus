@@ -1077,7 +1077,7 @@ def cmd_audit(args) -> int:
     audit = AuditChain()
     entries = audit.entries()
     if args.secret:
-        entries = [e for e in entries if e["secret"] == args.secret]
+        entries = [e for e in entries if e.get("secret") == args.secret]
     entries = entries[-args.n:]
     if args.json:
         import json
@@ -1085,16 +1085,21 @@ def cmd_audit(args) -> int:
         return 0
     print(f"{'seq':<4} {'actor':<14} {'action':<10} {'secret':<28} result")
     for e in entries:
-        print(f"{e['seq']:<4} {e['actor'][:14]:<14} {e['action']:<10} "
-              f"{e['secret'][:28]:<28} {e['result']}")
+        print(f"{str(e.get('seq', '?')):<4} {str(e.get('actor', ''))[:14]:<14} "
+              f"{str(e.get('action', '')):<10} {str(e.get('secret', ''))[:28]:<28} "
+              f"{e.get('result', '')}")
     return 0
 
 
 def cmd_verify(args) -> int:
     audit = AuditChain()
-    ok = audit.verify()
-    print(f"audit chain: {'INTACT' if ok else 'BROKEN'} ({len(audit.entries())} entries)")
-    return 0 if ok else 2
+    result = audit.check()
+    if result["ok"]:
+        print(f"audit chain: INTACT ({result['entries']} entries)")
+        return 0
+    print(f"audit chain: BROKEN at line {result['line']}: {result['reason']} "
+          f"({result['entries']} entries verified before it)")
+    return 2
 
 
 def cmd_health(args) -> int:

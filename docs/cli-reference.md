@@ -656,7 +656,8 @@ portunus audit 50 --secret dostal-stripe-live
 
 ### `verify`
 
-Verify the audit hash chain. Exits `2` if broken.
+Verify the audit hash chain. Exits `2` if broken, naming the first bad line of `audit.log`
+(a corrupt line is reported, never a crash).
 
 ```
 portunus verify
