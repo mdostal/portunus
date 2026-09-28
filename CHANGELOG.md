@@ -30,6 +30,14 @@ All notable changes to Portunus are documented in this file.
 - `manifest.json`'s `engine.install` was `pipx install portunus`, which would install an
   unrelated PyPI project. It's now the README's `install.sh` one-liner, and the same test
   checks that it still appears in the README.
+- **Audit log reliability (PANT-851).** A missing or corrupt `.clock` no longer restarts
+  `seq` at 0 (duplicating sequence numbers): the next `seq` is recovered from the highest
+  `seq` in `audit.log` and `.clock` is rewritten. The broker's approval clock uses the same
+  recovery, so deleting `.clock` no longer changes whether an approval is still valid.
+  `AuditChain.verify()` / `verify_entries()` return `False` on a corrupt or malformed line
+  instead of raising, `AuditChain.check()` reports the first bad line and why, and
+  `portunus verify` prints `BROKEN at line L: <reason>` and exits 2. `entries()` skips
+  unparseable lines instead of raising.
 
 ## [0.33.0] - 2026-09-14
 
