@@ -36,3 +36,5 @@ dist/
 .DS_Store
 .venv/
 .playwright-mcp/
+test-results/
+playwright-report/
