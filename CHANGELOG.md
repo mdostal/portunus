@@ -19,6 +19,20 @@ All notable changes to Portunus are documented in this file.
 - The Docker image gains `HEALTHCHECK CMD portunus health --json`, and creates its
   `PORTUNUS_HOME` volume 0700 so a fresh container reports healthy.
 
+### Fixed
+
+- **Concurrent writers can no longer lose rotation bindings or corrupt state files on crash
+  (PANT-852).** `rotation-bindings set` and `vault access import` now do their
+  read-modify-write under a new `rotation-bindings.lock` (`update_rotation_bindings()`), so
+  CLI, MCP and UI writers running at once no longer drop each other's providers.
+- Every JSON state file (registry, local vault, vault/rotation bindings, views, roles,
+  leak-scan state, sync state, update cache) is now written through one `atomic_write()`
+  helper: a unique temp file, fsynced before `os.replace()`, then a directory fsync after it.
+  A crash can no longer leave an empty registry or vault.
+- `Registry`, `AuditChain` and `LocalEncryptedBackend` now lock through the shared
+  `filelock.flock_path`. The three hand-copied flock loops are gone. Error types are
+  unchanged: `RegistryLocked`, and `TimeoutError` (via its `LockTimeout` subclass).
+
 ## [0.33.0] - 2026-09-14
 
 ### Added

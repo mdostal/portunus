@@ -48,6 +48,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from .backend import BackendError, SecretBackend
 from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
+from .atomicio import atomic_write
 from .filelock import flock_path
 from .paths import home
 from .registry import Registry
@@ -320,7 +321,6 @@ def _load_status_unlocked(path: Optional[Path] = None) -> Dict[str, LeakStatus]:
 
 def _save_status_unlocked(statuses: Dict[str, LeakStatus], path: Optional[Path] = None) -> None:
     status_path = _leak_status_path(path)
-    status_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
         ref_name: {
             "findings": [
@@ -339,11 +339,7 @@ def _save_status_unlocked(statuses: Dict[str, LeakStatus], path: Optional[Path] 
         }
         for ref_name, status in statuses.items()
     }
-    tmp = status_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(raw, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, status_path)
-    os.chmod(status_path, 0o600)
+    atomic_write(status_path, json.dumps(raw, indent=2))
 
 
 def load_leak_status(path: Optional[Path] = None) -> Dict[str, LeakStatus]:
@@ -517,12 +513,7 @@ def load_scan_paths(path: Optional[Path] = None) -> List[str]:
 
 def _save_scan_paths_unlocked(paths: List[str], path: Optional[Path] = None) -> None:
     config_path = _scan_config_path(path)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = config_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"paths": paths}, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, config_path)
-    os.chmod(config_path, 0o600)
+    atomic_write(config_path, json.dumps({"paths": paths}, indent=2))
 
 
 def add_scan_path(glob_pattern: str, path: Optional[Path] = None) -> List[str]:
@@ -568,12 +559,7 @@ def load_scan_repos(path: Optional[Path] = None) -> List[str]:
 
 def _save_scan_repos_unlocked(repos: List[str], path: Optional[Path] = None) -> None:
     repos_path = _repos_path(path)
-    repos_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = repos_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"repos": repos}, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, repos_path)
-    os.chmod(repos_path, 0o600)
+    atomic_write(repos_path, json.dumps({"repos": repos}, indent=2))
 
 
 def add_scan_repo(repo_path: str, path: Optional[Path] = None) -> List[str]:
@@ -719,16 +705,11 @@ def load_watermarks(path: Optional[Path] = None) -> Dict[str, Watermark]:
 
 def _save_watermarks_unlocked(watermarks: Dict[str, Watermark], path: Optional[Path] = None) -> None:
     watermarks_path = _watermarks_path(path)
-    watermarks_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
         key: {"offset": w.offset, "size": w.size, "mtime": w.mtime, "line_count": w.line_count}
         for key, w in watermarks.items()
     }
-    tmp = watermarks_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(raw, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, watermarks_path)
-    os.chmod(watermarks_path, 0o600)
+    atomic_write(watermarks_path, json.dumps(raw, indent=2))
 
 
 def save_watermarks(watermarks: Dict[str, Watermark], path: Optional[Path] = None) -> None:
