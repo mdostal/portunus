@@ -9,6 +9,10 @@ import pytest
 from portunus.backend import GcloudBackend, SyncingBackend, VaultBinding
 from portunus.localvault import LocalEncryptedBackend
 
+# Every GcloudBackend here runs through a stubbed runner; the which("gcloud")
+# guard must see a binary too, or these fail on hosts without the gcloud CLI.
+pytestmark = pytest.mark.usefixtures("gcloud_on_path")
+
 
 def _mock_gcloud_runner(responses):
     """responses: list of (returncode, stdout, stderr) consumed in call order."""

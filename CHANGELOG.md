@@ -18,6 +18,7 @@ All notable changes to Portunus are documented in this file.
 - The MCP `portunus_health` tool runs the same check (`shallow=True` for liveness only).
 - The Docker image gains `HEALTHCHECK CMD portunus health --json`, and creates its
   `PORTUNUS_HOME` volume 0700 so a fresh container reports healthy.
+- `python -m portunus` now runs the CLI (new `portunus/__main__.py`).
 
 ### Fixed
 
@@ -30,6 +31,23 @@ All notable changes to Portunus are documented in this file.
   command now listen on `127.0.0.1` by default, and only `PORTUNUS_UI_HOST` changes that.
   Previously only the desktop sidecar pinned it. New `npm run test:bind` checks each command's
   real listening address, and `e2e/api-guard.spec.ts` covers the guard against a stub CLI.
+- **Hermetic test suite (PANT-849).** `pytest` now passes with no `gcloud`, `gh` or `portunus`
+  on `PATH` and an empty `HOME`. Tests that stub gcloud request one shared `gcloud_on_path`
+  fixture for the `which("gcloud")` guard, subprocess tests run `sys.executable -m portunus`,
+  an autouse fixture isolates `PORTUNUS_HOME` for every test so none can touch `~/.portunus`,
+  and the leak-scan visibility test no longer calls the real `gh`.
+
+### Fixed
+
+- **One release version everywhere (PANT-850).** `__version__` (what `portunus --version` and
+  the self-update check report), `manifest.json` and the Tauri desktop shell (`Cargo.toml`,
+  `Cargo.lock`, `tauri.conf.json`) said 0.32.0 while `pyproject.toml` and this file said
+  0.33.0, so 0.33.0 installs reported 0.32.0 and compared the wrong version against the latest
+  release. All now say 0.33.0, and `tests/test_version_consistency.py` fails if any of them, or
+  `portunus --version`, drifts from `pyproject.toml`.
+- `manifest.json`'s `engine.install` was `pipx install portunus`, which would install an
+  unrelated PyPI project. It's now the README's `install.sh` one-liner, and the same test
+  checks that it still appears in the README.
 - **Audit log reliability (PANT-851).** A missing or corrupt `.clock` no longer restarts
   `seq` at 0 (duplicating sequence numbers): the next `seq` is recovered from the highest
   `seq` in `audit.log` and `.clock` is rewritten. The broker's approval clock uses the same

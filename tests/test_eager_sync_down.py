@@ -10,7 +10,6 @@ fully fail-closed, unaffected by whether the cache happens to be warm.
 import ast
 import inspect
 import json
-import shutil
 import subprocess
 import textwrap
 from types import SimpleNamespace
@@ -24,14 +23,14 @@ from portunus.cli import _eager_sync_down, main
 
 
 def _mock_gcloud(monkeypatch, list_secrets, backend_responses=None, fail_on_backend_call=False):
-    """discover.py and backend.py both `import subprocess`/`import shutil` --
-    the SAME module objects, so one patch covers both call sites. `list_secrets`
+    """discover.py and backend.py both `import subprocess` -- the SAME module
+    object, so one patch covers both call sites (callers also request
+    `gcloud_on_path` for the `which("gcloud")` guard). `list_secrets`
     answers every `gcloud secrets list` call; `backend_responses` (a list of
     (rc, out, err) tuples, consumed in order) answers every other gcloud
     invocation (describe/access), unless `fail_on_backend_call` is set, in
     which case any non-list call raises -- used to prove eager sync-down
     never touches the backend for a non-cached-mode project."""
-    monkeypatch.setattr(shutil, "which", lambda name: "/bin/gcloud")
     responses = list(backend_responses or [])
 
     def fake_run(cmd, capture_output, text, timeout):
@@ -45,7 +44,7 @@ def _mock_gcloud(monkeypatch, list_secrets, backend_responses=None, fail_on_back
     monkeypatch.setattr(subprocess, "run", fake_run)
 
 
-def test_discover_register_warms_cache_for_cached_mode_project(home, monkeypatch, capsys):
+def test_discover_register_warms_cache_for_cached_mode_project(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud(
         monkeypatch,
         [{"name": "projects/demo/secrets/API_KEY", "labels": {}, "createTime": "T0"}],
@@ -66,7 +65,7 @@ def test_discover_register_warms_cache_for_cached_mode_project(home, monkeypatch
     assert LocalEncryptedBackend().access("demo:API_KEY") == "SECRET-VALUE"
 
 
-def test_discover_register_no_eager_sync_for_direct_mode_project(home, monkeypatch, capsys):
+def test_discover_register_no_eager_sync_for_direct_mode_project(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud(
         monkeypatch,
         [{"name": "projects/demo/secrets/API_KEY", "labels": {}, "createTime": "T0"}],
@@ -81,7 +80,7 @@ def test_discover_register_no_eager_sync_for_direct_mode_project(home, monkeypat
     assert data["sync_results"] == {}
 
 
-def test_discover_register_no_eager_sync_without_any_binding(home, monkeypatch, capsys):
+def test_discover_register_no_eager_sync_without_any_binding(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud(
         monkeypatch,
         [{"name": "projects/demo/secrets/API_KEY", "labels": {}, "createTime": "T0"}],
@@ -95,7 +94,7 @@ def test_discover_register_no_eager_sync_without_any_binding(home, monkeypatch, 
     assert data["sync_results"] == {}
 
 
-def test_discover_register_sync_failure_is_per_reference_and_non_fatal(home, monkeypatch, capsys):
+def test_discover_register_sync_failure_is_per_reference_and_non_fatal(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud(
         monkeypatch,
         [
@@ -126,7 +125,7 @@ def test_discover_register_sync_failure_is_per_reference_and_non_fatal(home, mon
     assert reg.require("demo-b").state == "requested"
 
 
-def test_eager_sync_down_does_not_affect_injectability(home, monkeypatch, capsys):
+def test_eager_sync_down_does_not_affect_injectability(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud(
         monkeypatch,
         [{"name": "projects/demo/secrets/API_KEY", "labels": {}, "createTime": "T0"}],
@@ -172,7 +171,7 @@ def test_eager_sync_down_never_assigns_the_access_result_to_a_variable():
                 assert value.func.attr != "access", ast.dump(node)
 
 
-def test_mcp_portunus_discover_register_warms_cache_for_cached_mode_project(home, monkeypatch):
+def test_mcp_portunus_discover_register_warms_cache_for_cached_mode_project(home, monkeypatch, gcloud_on_path):
     from portunus import mcp_server
 
     _mock_gcloud(
@@ -190,7 +189,7 @@ def test_mcp_portunus_discover_register_warms_cache_for_cached_mode_project(home
     assert result["sync_results"] == {"demo-api_key": "synced"}
 
 
-def test_mcp_portunus_discover_register_no_eager_sync_for_direct_mode(home, monkeypatch):
+def test_mcp_portunus_discover_register_no_eager_sync_for_direct_mode(home, monkeypatch, gcloud_on_path):
     from portunus import mcp_server
 
     _mock_gcloud(
