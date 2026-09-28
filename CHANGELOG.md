@@ -22,6 +22,15 @@ All notable changes to Portunus are documented in this file.
 
 ### Fixed
 
+- **UI API rejects cross-origin and non-JSON writes, and binds to loopback (PANT-847).** The new
+  `ui/proxy.ts` (Next.js 16's name for middleware) covers `/api/*`. A non-GET request gets 403
+  if its `Origin` isn't the UI's own or its `Host` isn't a loopback name (DNS rebinding), and
+  415 if it isn't `application/json`, before any route reaches the `portunus` CLI. Before this,
+  a `text/plain` POST from any open web page, which needs no CORS preflight, could reach
+  mutating routes such as `/api/inject`. `npm run dev`, `npm start` and the README's standalone
+  command now listen on `127.0.0.1` by default, and only `PORTUNUS_UI_HOST` changes that.
+  Previously only the desktop sidecar pinned it. New `npm run test:bind` checks each command's
+  real listening address, and `e2e/api-guard.spec.ts` covers the guard against a stub CLI.
 - **Hermetic test suite (PANT-849).** `pytest` now passes with no `gcloud`, `gh` or `portunus`
   on `PATH` and an empty `HOME`. Tests that stub gcloud request one shared `gcloud_on_path`
   fixture for the `which("gcloud")` guard, subprocess tests run `sys.executable -m portunus`,

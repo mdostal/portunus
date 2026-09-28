@@ -4,3 +4,5 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 .env*.local
+.e2e-portunus-stub.log
+test-results/
