@@ -90,3 +90,26 @@ def test_file_adapter_inject_returns_nothing(tmp_path):
     target = tmp_path / "out.env"
     result = FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K")
     assert result is None
+
+
+def test_file_adapter_file_is_never_group_or_world_readable(tmp_path, monkeypatch):
+    # PANT-1003: the file must be 0600 from creation, not only after a later
+    # chmod. With chmod disabled and a permissive umask, the mode must still
+    # be 0600.
+    monkeypatch.setattr(os, "chmod", lambda *a, **k: None)
+    old_umask = os.umask(0)
+    try:
+        target = tmp_path / "out.env"
+        FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K")
+    finally:
+        os.umask(old_umask)
+    assert (target.stat().st_mode & 0o777) == 0o600
+
+
+def test_file_adapter_tightens_a_preexisting_file(tmp_path):
+    target = tmp_path / "out.env"
+    target.write_text("old")
+    os.chmod(target, 0o644)
+    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K")
+    assert (target.stat().st_mode & 0o777) == 0o600
+    assert target.read_text() == f"K={SENTINEL}\n"
