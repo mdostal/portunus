@@ -77,5 +77,10 @@ class FileAdapter:
 
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
-        os.chmod(target, 0o600)
+        # Create the file 0600 from the start. write_text-then-chmod left it
+        # readable under the default umask until the chmod ran (PANT-1003).
+        # fchmod covers a pre-existing file, whose mode O_CREAT doesn't touch.
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            os.fchmod(fh.fileno(), 0o600)
+            fh.write(content)

@@ -9,7 +9,10 @@ import { STUB_LOG } from "../playwright.config";
 // exactly as a hostile page or rebinding attack would send them.
 
 const PORT = 3100;
-const INJECT_BODY = JSON.stringify({ tags: { provider: "github" }, target: "file", path: "/tmp/x", format: "env", key: "K" });
+// Unique to this spec. Other specs (inject-abort.spec.ts) run in parallel
+// workers and write to the same stub log, so only lines with this path count.
+const GUARD_PATH = "/tmp/api-guard-spec-target";
+const INJECT_BODY = JSON.stringify({ tags: { provider: "github" }, target: "file", path: GUARD_PATH, format: "env", key: "K" });
 
 function post(headers: Record<string, string>, body = INJECT_BODY): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
@@ -28,7 +31,7 @@ function post(headers: Record<string, string>, body = INJECT_BODY): Promise<{ st
 
 function stubCalls(): string[] {
   try {
-    return fs.readFileSync(STUB_LOG, "utf8").split("\n").filter(Boolean);
+    return fs.readFileSync(STUB_LOG, "utf8").split("\n").filter((line) => line.includes(`--path ${GUARD_PATH}`));
   } catch {
     return [];
   }

@@ -53,9 +53,12 @@ export interface AuditEntry {
  * `stdin`'s content; only `args` (which never contains a value) appears in
  * any error this throws.
  */
-export function runPortunus(args: string[], stdin?: string): Promise<RunResult> {
+export function runPortunus(args: string[], stdin?: string, signal?: AbortSignal): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("portunus", args, {
+      // Kills the child when the caller has gone away (PANT-1003), so a
+      // request the client already gave up on doesn't keep running.
+      signal,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
       // Never inherit this process's own CWD -- when running inside the
@@ -81,6 +84,9 @@ export function runPortunus(args: string[], stdin?: string): Promise<RunResult> 
     });
 
     child.on("error", (err) => {
+      // Aborted via `signal`: the child was killed, and "close" still fires
+      // after it exits, so let that resolve.
+      if (err.name === "AbortError") return;
       // Process-spawn error only (e.g. ENOENT) -- never touches `stdin`.
       reject(new Error(`failed to spawn portunus ${args.join(" ")}: ${err.message}`));
     });

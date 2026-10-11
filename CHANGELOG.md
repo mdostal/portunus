@@ -4,6 +4,14 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **File-target inject no longer leaves files behind when the caller gives up (PANT-1003).**
+  `POST /api/inject` now kills the `portunus` CLI when the client disconnects and removes a
+  file that request created. Before, a caller that timed out deleted its file before the CLI
+  wrote it, and the file then stayed on disk. `FileAdapter` also creates the file `0600` from
+  the start instead of writing it and then chmod-ing it.
+
 ### Changed
 
 - **`requires-python` is now `>=3.10` (PANT-848).** The claimed `>=3.9` was never installable:
