@@ -1,0 +1,78 @@
+id: 02-macos-decrypt
+epic: portunus-chrome-credential-broker
+title: ChromeMacBackend -- Keychain "Chrome Safe Storage" key fetch, PBKDF2-HMAC-SHA1/AES-CBC decrypt of a Login Data password_value
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-profile-discovery]
+
+description: |
+  macOS-specific decrypt pipeline, confirmed against Talos's 2026 report (TALOS-2026-2444):
+  Chrome stores a random 16-byte value in the user's login keychain (service "Chrome Safe
+  Storage", account "Chrome"). That value runs through PBKDF2-HMAC-SHA1 (salt "saltysalt", 1003
+  iterations) to derive a 128-bit AES-CBC key, which decrypts `password_value` blobs (after
+  stripping Chromium's `v10`/`v11` version prefix and IV, per Chromium's own documented blob
+  format).
+
+  Keychain access is read-only, same service/account Chrome itself uses -- no privilege
+  escalation, same same-user trust boundary any process running as the logged-in user already
+  has. The key fetch is isolated behind one function (`macos_key()`) so it's mockable in tests
+  without needing a real keychain entry, and the crypto pipeline (`decrypt_blob()`) is tested
+  independently against known-plaintext fixtures so a wrong key fetch and a wrong decrypt
+  algorithm fail as two distinct, separately-diagnosable test failures.
+
+acceptance_criteria:
+  - "Given a real-shaped v10 Chrome-encrypted blob and the correct derived key, when decrypt_blob() runs, then it returns the exact original plaintext password (verified against a fixture built the same way Chrome itself would encrypt it -- PBKDF2/saltysalt/1003 iterations/AES-CBC -- not against an invented test-only format)"
+  - "Given the wrong key, when decrypt_blob() runs, then it raises a clear decrypt error -- never returns garbage bytes silently decoded as if they were a valid password"
+  - "Given macos_key() is called, when the keychain lookup succeeds, then it returns exactly the 16-byte secret from the 'Chrome Safe Storage'/'Chrome' keychain item -- verified via a stubbed keychain call in tests, not a real keychain write in CI"
+  - "Given macos_key() is called and no such keychain item exists (Chrome never ran on this machine, or isn't installed), when the lookup fails, then it raises a clear, specific error distinguishable from a wrong-key decrypt failure -- callers (ChromeBackend) need to tell 'Chrome not set up here' apart from 'something is actually broken'"
+  - "Given a successful decrypt, when any test or implementation code path is inspected, then the decrypted password never appears in a log call, print, exception message, or audit entry -- structurally checked the same way the OAuth broker's post-incident fix was (hash-compare in test assertions, never raw-compare-and-print)"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for correct decrypt against a real-shaped fixture, wrong-key failure, keychain-item-missing vs decrypt-failure error distinction, and the no-raw-value-in-logs structural check.
+    agent: tester
+  - id: implement
+    description: chrome_crypto.py -- macos_key() (shells out to the same read-only keychain lookup Chrome itself uses), decrypt_blob() (v10/v11 prefix dispatch, PBKDF2 derivation, AES-CBC decrypt).
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/localvault.py
+      purpose: "existing Fernet-based encrypt/decrypt pattern in this codebase -- not reused directly (different algorithm, Chrome controls the format), but the same discipline of isolating crypto behind a narrow, independently-testable function"
+    - path: .pHive/epics/portunus-chrome-credential-broker/docs/research-brief.md
+      purpose: "§1 macOS -- the exact key-derivation parameters (PBKDF2-HMAC-SHA1, salt 'saltysalt', 1003 iterations, 128-bit AES-CBC) and sources (Talos TALOS-2026-2444)"
+
+files_to_modify:
+  - file: src/portunus/chrome_crypto.py
+    change: "new module: macos_key(), decrypt_blob() with v10/v11 dispatch"
+  - file: tests/test_chrome_crypto_macos.py
+    change: "new test file with known-plaintext fixtures built via the same PBKDF2/AES-CBC parameters"
+
+design_decisions:
+  - decision: "isolate the keychain shell-out behind macos_key() rather than inlining it in decrypt_blob() or ChromeBackend"
+    rationale: "design-discussion.md §1 -- lets Story 04's ChromeBackend and this story's own tests mock the OS boundary cleanly; also means a future non-shell-out keychain binding (e.g. a C extension) is a one-function swap"
+  - decision: "distinguish 'keychain item missing' from 'decrypt failed with the wrong key' as two different exception types"
+    rationale: "design-discussion.md §1 -- 'no Chrome here' is a normal, expected state (CLI should say so plainly); 'decrypt failed with a key we did fetch' is a real bug or a Chrome-version format change worth investigating -- collapsing them into one generic error would make Story 04's CLI output misleading"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "the decrypted password is held only as a local variable inside decrypt_blob()'s caller chain, returned once, never logged/printed/audited -- tests assert this structurally (e.g. monkeypatching the logger/print and asserting zero calls contain the known fixture plaintext), mirroring the fix applied after the OAuth broker's live-proof incident (.pHive/epics/portunus-oauth-token-broker/docs/lessons-learned.md)"
+
+risks:
+  - severity: medium
+    description: "Chrome's exact blob format (v10 vs v11 prefix meaning, IV length/position) wasn't fully confirmed by this epic's web research -- Talos's report confirms the key derivation but not every byte-level detail of the blob layout"
+    mitigation: "test-spec step must build fixtures by actually running the real derivation/encryption steps in a short verification script against this researcher's own understanding of Chromium's documented format, then cross-check against a real Chrome-saved password on this machine (if one exists) before implement proceeds -- do not ship a decrypt path validated only against self-constructed fixtures with no live cross-check"
+
+references:
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/research-brief.md
+    relevant_excerpt: "§1 macOS (key derivation, source)"
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/design-discussion.md
+    relevant_excerpt: "§3 (security invariants), §4 (testing strategy)"

@@ -1,0 +1,78 @@
+id: 01-profile-discovery
+epic: portunus-chrome-credential-broker
+title: locate Chrome profiles + Login Data cross-platform (macOS, Linux), list (origin, username) pairs -- zero decryption, metadata only
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: []
+
+description: |
+  A new `chrome_discovery.py` module, architecturally incapable of returning a secret: it never
+  touches `password_value`. Finds Chrome's `User Data` root per platform (macOS:
+  `~/Library/Application Support/Google/Chrome`; Linux: `~/.config/google-chrome`), reads
+  `Local State` (JSON) for `profile.info_cache` to map profile directory names ("Profile 1") to
+  display names ("Work"), and for each profile copies `Login Data` to a temp file (never opens
+  the live file -- Chrome may hold it locked, and Portunus must never risk a write-mode open
+  against a file the real browser owns) before querying the `logins` table for
+  `(origin_url, username_value)` rows.
+
+  This story deliberately ships before any decryption code exists -- `portunus browser profiles`
+  and `portunus browser list` are useful and fully safe to ship standalone (list what's there
+  without ever being able to expose a password), and de-risks the cross-platform path-finding +
+  SQLite-copy-and-read mechanics before layering platform-specific crypto on top in Stories 02-03.
+
+acceptance_criteria:
+  - "Given a real or fixture Chrome User Data directory with 2 profiles, when discover_profiles() runs, then it returns both profiles' directory names and display names (from Local State's profile.info_cache), never raising just because a profile dir has no saved logins yet"
+  - "Given a profile's Login Data has 3 logins, when list_logins(profile) runs, then it returns exactly 3 (origin_url, username_value) tuples -- and the returned objects have no field, attribute, or repr that could contain password_value (structurally checked: assert the row-mapping code path never selects that column)"
+  - "Given Login Data does not exist for a profile (e.g. a brand-new profile that's never saved a login), when list_logins(profile) runs, then it returns an empty list, not an error"
+  - "Given User Data doesn't exist at all on this machine (no Chrome installed), when discover_profiles() runs, then it returns an empty list -- callers (CLI, ChromeBackend) must treat 'no Chrome' as a normal, non-fatal state"
+  - "Given list_logins(profile) is called, when it reads Login Data, then it operates on a COPY (verified via a test that locks/holds the original file open, e.g. via a second connection, during the call and asserts no exception and no write attempt against the original path)"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for multi-profile discovery, metadata-only listing (no password_value ever selected), empty-profile/no-Chrome/missing-Login-Data non-fatal cases, and the copy-before-read discipline.
+    agent: tester
+  - id: implement
+    description: chrome_discovery.py -- discover_profiles() (parses Local State), list_logins(profile) (copies Login Data, queries logins table for origin_url/username_value only).
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/localvault.py
+      purpose: "existing pattern for a file-backed store this codebase already trusts -- not directly reused (Chrome owns this file, Portunus doesn't), but the project's established discipline around never opening a sensitive file for write unexpectedly"
+    - path: .pHive/epics/portunus-chrome-credential-broker/docs/research-brief.md
+      purpose: "§2 profile layout (macOS/Linux paths, Local State format) -- confirm against a real local install during test-spec, don't assume the brief's paths are exactly right without a live check"
+
+files_to_modify:
+  - file: src/portunus/chrome_discovery.py
+    change: "new module: discover_profiles(), list_logins(profile) -- metadata only"
+  - file: tests/test_chrome_discovery.py
+    change: "new test file with synthetic Local State + Login Data fixtures"
+
+design_decisions:
+  - decision: "zero decryption in this module, enforced structurally not just by convention"
+    rationale: "design-discussion.md §1 -- chrome_discovery.py is 'architecturally incapable of returning a secret' specifically so the metadata-listing CLI commands (Story 04) can never leak one even if a future change to this file goes wrong; the test suite asserts the SQL query itself never selects password_value, not just that the current return value happens to omit it"
+  - decision: "copy Login Data before any read, always -- not conditionally based on whether Chrome is detected as running"
+    rationale: "research-brief.md §2 -- detecting 'is Chrome running' reliably is its own cross-platform problem with false negatives; copying unconditionally is cheap and removes the hazard entirely"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "this story's entire job is to prove the metadata path cannot touch password_value -- the acceptance criteria include a structural test (not just behavioral) asserting the SQL projection never includes that column"
+
+risks:
+  - severity: low
+    description: "Local State's profile.info_cache JSON shape could differ across Chrome versions in ways research-brief.md's paths don't anticipate"
+    mitigation: "test-spec step confirms against this machine's real Local State file if Chrome is installed locally; if the shape differs, adjust before implement rather than guessing from the brief alone"
+
+references:
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/research-brief.md
+    relevant_excerpt: "§1 (shared Login Data shape), §2 (profile layout)"
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/design-discussion.md
+    relevant_excerpt: "§1 (chrome_discovery.py), §4 (testing strategy)"

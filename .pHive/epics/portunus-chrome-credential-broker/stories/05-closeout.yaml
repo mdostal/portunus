@@ -1,0 +1,88 @@
+id: 05-closeout
+epic: portunus-chrome-credential-broker
+title: live smoke test (or documented skip), docs/backends.md + README, version bump, Windows follow-up issue filed, write-back/rotate backlog note
+status: pending
+complexity: low
+methodology: tdd
+depends_on: [04-backend-router-wiring]
+
+description: |
+  Closeout story, same shape as every prior epic's final story this session
+  (portunus-oauth-token-broker Story 04, portunus-session-access-gate's closeout): live-verify
+  what was built against the real thing (not just mocks), document it, bump the version, and
+  record the explicitly-deferred scope as real, trackable follow-ups rather than letting it
+  evaporate.
+
+  Live smoke test: if this machine has a real local Chrome install with at least one saved
+  login, run `portunus browser profiles` and `portunus browser list --profile <real profile>`
+  against it for real, and resolve one real reference end-to-end -- comparing a SHA-256 digest of
+  the resolved value against an independently-obtained expectation (never printing or comparing
+  the raw password directly, per the OAuth broker's own post-incident fix). If this machine has
+  no suitable local Chrome profile, document that plainly as a skipped live proof and why,
+  rather than fabricating one.
+
+acceptance_criteria:
+  - "Given this machine's actual Chrome install (if one with saved logins exists), when the live smoke test runs, then portunus browser profiles/list and a real resolve() all succeed, with the proof artifact containing only a SHA-256 digest of the resolved password, never the raw value"
+  - "Given no suitable local Chrome profile exists, when closeout runs, then docs/lessons-learned.md (or equivalent) states plainly that the live proof was skipped and why -- never a fabricated 'verified live' claim"
+  - "Given the epic ships, when docs/backends.md is inspected, then it documents ChromeBackend's platform scope (macOS + Linux only), the sm_name scheme, and the explicit Windows-deferred and write-back-deferred follow-ups"
+  - "Given the epic ships, when pyproject.toml/README's version references are inspected, then they reflect the minor version bump epic.yaml calls for, in lockstep (no stale version string left behind)"
+  - "Given Windows was explicitly deferred (epic.yaml description, research-brief.md §1), when closeout runs, then a real GitHub issue is filed tracking it as follow-up work, not just a line in a doc nobody will see again"
+
+methodology: tdd
+steps:
+  - id: live-proof
+    description: Run the live smoke test against this machine's real Chrome install (or document the skip), hash-compare only.
+    agent: developer
+  - id: docs
+    description: docs/backends.md ChromeBackend section, README update, lessons-learned note (incl. any blob-format surprises found during Story 02/03), Windows + write-back backlog notes.
+    agent: developer
+    depends_on: [live-proof]
+  - id: version-bump
+    description: Apply the minor version bump across all version sources (pyproject.toml, manifest.json, README badge) in lockstep; CHANGELOG.md entry.
+    agent: developer
+    depends_on: [docs]
+  - id: file-followups
+    description: Open a GitHub issue for Windows support (non-exploit path TBD) and note the write-back/rotate backlog item (research-brief.md §5) in the issue tracker or epic docs.
+    agent: developer
+    depends_on: [version-bump]
+  - id: integrate
+    description: Commit, push, PR into dev, merge once local verification (full suite green, UI build clean if touched, live proof or documented skip) is solid.
+    agent: developer
+    depends_on: [file-followups]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: .pHive/epics/portunus-oauth-token-broker/docs/lessons-learned.md
+      purpose: "precedent for this story's own lessons-learned note, including the exact never-print-the-raw-value discipline this epic's verification code must follow from the start (not retrofitted after an incident, this time)"
+    - path: docs/backends.md
+      purpose: "existing per-backend documentation structure -- ChromeBackend section follows the same shape as the existing MockBackend/LocalEncryptedBackend/GcloudBackend/OAuthBackend sections"
+
+files_to_modify:
+  - file: docs/backends.md
+    change: "new ChromeBackend section"
+  - file: README.md
+    change: "mention Chrome saved-login support, version badge bump"
+  - file: CHANGELOG.md
+    change: "new Unreleased entry for this epic"
+  - file: pyproject.toml
+    change: "minor version bump"
+
+design_decisions:
+  - decision: "file a real GitHub issue for Windows, not just a doc note"
+    rationale: "design-discussion.md self-grill -- 'tracked as a named follow-up... not silently dropped'; this session's own branch-cleanup audit (earlier work, see project memory on stale-branch cleanup) found that doc-only TODOs rot silently while a filed issue stays visible in the repo's own open-issue list"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "the live-proof script itself is reviewed against the OAuth broker's own incident (a boolean-comparison bug that printed a raw access token) before it runs -- hash-compare only, every comparison, no exceptions"
+
+risks:
+  - severity: low
+    description: "no local Chrome profile with saved logins might exist on the implementing machine, limiting the live proof to unit/fixture coverage only"
+    mitigation: "explicitly allowed by this story's own acceptance criteria -- a documented, honest skip beats a fabricated proof"
+
+references:
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/research-brief.md
+    relevant_excerpt: "§1 (Windows deferred), §5 (write-back backlog)"
+  - path: .pHive/epics/portunus-oauth-token-broker/docs/lessons-learned.md
+    relevant_excerpt: "the never-print-the-raw-value fix this epic's live-proof script must apply from the start"

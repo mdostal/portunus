@@ -1,0 +1,86 @@
+id: 04-backend-router-wiring
+epic: portunus-chrome-credential-broker
+title: ChromeBackend unifying macOS/Linux dispatch, sm_name scheme, _make_backend_router wiring, portunus browser profiles/list CLI
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [02-macos-decrypt, 03-linux-decrypt]
+
+description: |
+  `ChromeBackend` in backend.py, mirroring `OAuthBackend`'s existing shape (backend.py:449) and
+  wired into `_make_backend_router` (cli.py:86) the same duck-typed way. `sm_name` scheme:
+  `"chrome:<profile>:<origin>:<username>"` -- one reference per saved login a test scenario wants
+  to pull from. `.access()` dispatches to `chrome_crypto.macos_key()`/`linux_key()` by
+  `sys.platform`, locates the matching row via `chrome_discovery.list_logins()`, decrypts via
+  `chrome_crypto.decrypt_blob()`, returns the password. No access-token-style caching (unlike
+  OAuthBackend) -- re-reading is cheap, and not caching means a decrypted password lives in
+  memory for the shortest possible time.
+
+  CLI: `portunus browser profiles` (list discovered profiles, which store protects each) and
+  `portunus browser list --profile <name>` (list origin/username pairs for that profile) --
+  both call straight into `chrome_discovery` (Story 01), never into `ChromeBackend.access()` or
+  `chrome_crypto` at all, so these metadata commands are structurally incapable of printing a
+  password (same invariant Story 01 established, now proven end-to-end through the CLI surface).
+  Resolving an actual value happens through Portunus's EXISTING `portunus resolve` /
+  `resolve_exec` / `resolve_to_tempfile` once a reference with that `sm_name` is registered --
+  no new resolve command.
+
+acceptance_criteria:
+  - "Given a registered reference with sm_name 'chrome:Default:https://example.com:user@example.com', when portunus resolve runs against it, then it returns the matching decrypted password via ChromeBackend.access() -- platform dispatch (macOS vs Linux) chosen automatically from sys.platform, never requiring the caller to specify which"
+  - "Given no matching (origin, username) row exists in that profile's Login Data, when .access() runs, then it raises a clear, specific 'no such saved login' error -- never a generic KeyError or a silently-returned empty string"
+  - "Given portunus browser profiles runs, when the output is inspected, then it lists every discovered profile's display name and which store protects it (Keychain / Secret Service / KWallet / 'unprotected -- no keyring'), with zero password material anywhere in the output (structurally checked: this command's code path never imports or calls chrome_crypto at all)"
+  - "Given portunus browser list --profile Default runs, when the output is inspected, then it lists (origin, username) pairs only, same zero-password-material structural check"
+  - "Given _make_backend_router is asked for a reference whose sm_name starts with 'chrome:', when it resolves the backend, then it returns a ChromeBackend instance the same duck-typed way OAuthBackend is already selected by its own sm_name prefix (cli.py:86) -- no new special-casing pattern introduced"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for ChromeBackend.access() happy path, no-matching-row error, the two CLI commands' structural zero-password-material check, and _make_backend_router dispatch by sm_name prefix.
+    agent: tester
+  - id: implement
+    description: ChromeBackend in backend.py; _make_backend_router wiring in cli.py; cmd_browser_profiles/cmd_browser_list CLI subcommands.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/backend.py
+      purpose: "OAuthBackend (line 449) -- exact shape this story mirrors for ChromeBackend (constructor, .access(), duck-typed sm_name-prefix dispatch)"
+    - path: src/portunus/cli.py
+      purpose: "_make_backend_router (line 86) -- existing dispatch-by-sm_name-prefix pattern; cmd_oauth_store/list/remove (lines 622-675+) -- CLI subcommand shape to mirror for cmd_browser_profiles/list"
+
+files_to_modify:
+  - file: src/portunus/backend.py
+    change: "new ChromeBackend class"
+  - file: src/portunus/cli.py
+    change: "_make_backend_router gains chrome: prefix dispatch; new cmd_browser_profiles, cmd_browser_list"
+  - file: tests/test_backend_chrome.py
+    change: "new test file"
+
+design_decisions:
+  - decision: "no access-token-style in-memory cache on ChromeBackend, unlike OAuthBackend"
+    rationale: "design-discussion.md §1 -- re-decrypting is cheap (no network mint cost like OAuth's refresh grant); not caching minimizes how long a decrypted password lives in process memory"
+  - decision: "metadata CLI commands (profiles/list) call chrome_discovery directly, never through ChromeBackend or chrome_crypto"
+    rationale: "design-discussion.md §1, Story 01's design -- keeps the structural 'this code path cannot return a password' guarantee intact all the way to the CLI surface, not just at the module boundary"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "ChromeBackend.access()'s return value is the decrypted password -- it flows only through Portunus's existing resolve/resolve_exec/resolve_to_tempfile paths (already audited for this invariant by prior epics), never through a new print/log path this story introduces"
+  - concern: audit-chain-integrity
+    action: "a resolve against a chrome: reference produces the same audit entry shape every other backend's resolve already does (identity + reference name + result, never the value) -- no new audit code path, reusing the existing one"
+
+risks:
+  - severity: low
+    description: "sys.platform-based dispatch means this story can only be live-tested on whichever platform the implementing session actually runs on"
+    mitigation: "Story 05's live smoke test documents which platform(s) were actually exercised live vs. unit-tested-only; this is a real, disclosed limitation, not glossed over"
+
+references:
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/design-discussion.md
+    relevant_excerpt: "§1 (ChromeBackend, CLI surface)"
+  - path: .pHive/epics/portunus-oauth-token-broker/epic.yaml
+    relevant_excerpt: "story 03-oauth-backend-router-wiring -- the precedent this story mirrors"
