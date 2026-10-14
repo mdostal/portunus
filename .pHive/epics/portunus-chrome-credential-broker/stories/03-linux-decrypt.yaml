@@ -1,0 +1,75 @@
+id: 03-linux-decrypt
+epic: portunus-chrome-credential-broker
+title: ChromeLinuxBackend -- Secret Service (libsecret) + KWallet key fetch, same decrypt pipeline, explicit no-keyring/plaintext (v10) detection and warning
+status: pending
+complexity: medium
+methodology: tdd
+depends_on: [01-profile-discovery]
+
+description: |
+  Linux-specific key fetch, confirmed against Chromium's own docs
+  (docs/linux/password_storage.md): Chromium auto-selects GNOME Libsecret (Secret Service),
+  KWallet (4/5/6), or a plaintext fallback by desktop environment. Reuses Story 02's
+  `decrypt_blob()` (the v10/v11 blob-format dispatch and AES-CBC step are identical across
+  platforms -- only the key fetch differs), adding `linux_key(profile_dir) -> bytes | None`.
+
+  The `None` case (no keyring/wallet available, Chrome stored the password effectively
+  unprotected) is a first-class, explicitly-surfaced state -- not an error, not a silent
+  decrypt-as-plaintext. Chrome's own real-world behavior here is the caller's problem to report
+  honestly (research-brief.md §1), not Portunus's to launder into "looks encrypted."
+
+acceptance_criteria:
+  - "Given a Secret Service (libsecret) key is available, when linux_key(profile_dir) runs, then it returns the same key Chrome itself would have used to encrypt that profile's Login Data -- verified against a fixture built with a real libsecret lookup pattern, or a documented-equivalent stub if no Secret Service is available in CI"
+  - "Given a KWallet key is available instead (no Secret Service), when linux_key(profile_dir) runs, then it correctly falls back to the KWallet lookup path and returns the right key"
+  - "Given neither Secret Service nor KWallet is available (the no-keyring case), when linux_key(profile_dir) runs, then it returns None -- never raises, never fabricates a key"
+  - "Given linux_key() returned None, when decrypt_blob() is called with key=None on a v10-prefixed blob, then it returns the plaintext value AND the caller is required to have surfaced a warning (verified via a ChromeBackend-level or CLI-level test, not just this module's own return value) -- the no-keyring case must be loud, not quietly treated as a normal decrypt"
+  - "Given a decrypted password (keyring-backed or plaintext fallback), when any test or implementation code path is inspected, then it never appears in a log call, print, exception message, or audit entry -- same structural check as Story 02"
+
+methodology: tdd
+steps:
+  - id: test-spec
+    description: Failing tests for Secret Service key fetch, KWallet fallback, the no-keyring None case, the required-warning-surfaced behavior for the plaintext fallback, and the no-raw-value-in-logs structural check.
+    agent: tester
+  - id: implement
+    description: chrome_crypto.py -- linux_key(profile_dir) with Secret Service/KWallet/none dispatch, reusing decrypt_blob() from Story 02 unchanged.
+    agent: developer
+    depends_on: [test-spec]
+  - id: integrate
+    description: Commit and push.
+    agent: developer
+    depends_on: [implement]
+
+context:
+  codebase: /Users/mdostal/Documents/work/pantheon/portunus
+  key_files:
+    - path: src/portunus/chrome_crypto.py
+      purpose: "Story 02's decrypt_blob() -- reused as-is; this story adds only the Linux key-fetch side, confirming the format dispatch truly is platform-independent"
+    - path: .pHive/epics/portunus-chrome-credential-broker/docs/research-brief.md
+      purpose: "§1 Linux -- backend auto-selection by desktop environment, the v10 plaintext-fallback finding, sources (Chromium docs)"
+
+files_to_modify:
+  - file: src/portunus/chrome_crypto.py
+    change: "add linux_key(profile_dir) -- Secret Service / KWallet / None dispatch"
+  - file: tests/test_chrome_crypto_linux.py
+    change: "new test file: Secret Service fixture, KWallet fixture, no-keyring None case, warning-surfaced check"
+
+design_decisions:
+  - decision: "linux_key() returns Optional[bytes] (None = no keyring) rather than raising for the no-keyring case"
+    rationale: "design-discussion.md §3 -- 'no keyring' is a real, common Chrome state on minimal Linux setups, not an error condition; the warning obligation is pushed to the caller (ChromeBackend/CLI) precisely so it's visible to the user, not swallowed as an exception message nobody reads"
+  - decision: "reuse decrypt_blob() from Story 02 unchanged rather than a parallel Linux-specific decrypt function"
+    rationale: "research-brief.md confirms the v10/v11 blob format and AES-CBC step are Chromium-wide, not platform-specific -- only the key source differs; a second decrypt implementation would be exactly the kind of premature duplication this session avoids"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "same structural no-log/no-print/no-audit check as Story 02, extended to cover the plaintext-fallback path specifically -- a password that was never 'really' encrypted is still never allowed to appear in Portunus's own output"
+
+risks:
+  - severity: medium
+    description: "Secret Service / KWallet access in a CI container likely has no real dbus session or keyring daemon running at all"
+    mitigation: "test-spec step must use stubbed/mocked libsecret and KWallet calls for CI; the live smoke test (Story 05) is where a real local keyring gets exercised, same two-tier split as every other epic's testing strategy this session"
+
+references:
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/research-brief.md
+    relevant_excerpt: "§1 Linux (backend selection, plaintext fallback, sources)"
+  - path: .pHive/epics/portunus-chrome-credential-broker/docs/design-discussion.md
+    relevant_excerpt: "§3 (security invariants -- Linux no-keyring warning), §4 (testing strategy)"
