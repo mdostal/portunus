@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -96,3 +97,30 @@ def list_logins(profile: ChromeProfile) -> List[ChromeLogin]:
             conn.close()
 
     return [ChromeLogin(origin_url=row[0], username_value=row[1]) for row in rows]
+
+
+def _process_running(name: str) -> bool:
+    try:
+        result = subprocess.run(["pgrep", "-x", name], capture_output=True, text=True)
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
+def classify_store(profile: ChromeProfile) -> str:
+    """Best-effort, side-effect-free label for which OS secret store likely
+    protects this profile's saved logins -- display only, for `portunus
+    browser profiles`. Never touches chrome_crypto and never fetches any
+    key or secret material: on Linux this only checks for a running keyring
+    daemon process, the same desktop-environment signal Chromium itself
+    uses to auto-select a backend (research-brief.md Sec 1), not a probe of
+    stored data. ChromeBackend.access() is the real, authoritative decrypt
+    path -- this is a label, not a guarantee of which key it will use.
+    """
+    if sys.platform == "darwin":
+        return "Keychain"
+    if _process_running("kwalletd6") or _process_running("kwalletd5") or _process_running("kwalletd"):
+        return "KWallet"
+    if _process_running("gnome-keyring-daemon"):
+        return "Secret Service"
+    return "unprotected -- no keyring"
