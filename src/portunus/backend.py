@@ -607,7 +607,7 @@ class ChromeBackend:
 
         if sys.platform == "darwin":
             key = chrome_crypto.macos_key()
-        else:
+        elif sys.platform.startswith("linux"):
             key = chrome_crypto.linux_key(profile.user_data_dir / profile.dir_name)
             if key is None:
                 # Chrome's own no-keyring fallback: the password was never
@@ -618,6 +618,12 @@ class ChromeBackend:
                     "credential-access", sm_name,
                     "warn:no-keyring-found-chrome-stored-this-password-unprotected",
                 )
+        else:
+            raise BackendError(
+                f"chrome backend: {sys.platform!r} is not supported yet (macOS and Linux only) -- "
+                "Windows's App-Bound Encryption has no sanctioned same-user read path today; "
+                "see https://github.com/mdostal/portunus/issues/181"
+            )
 
         try:
             return chrome_crypto.decrypt_blob(key, blob)
