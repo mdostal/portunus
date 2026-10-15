@@ -1,7 +1,10 @@
 id: 01-profile-discovery
 epic: portunus-chrome-credential-broker
 title: locate Chrome profiles + Login Data cross-platform (macOS, Linux), list (origin, username) pairs -- zero decryption, metadata only
-status: pending
+status: shipped
+shipped_at: "2026-10-14T00:00:00Z"
+release_id: "v0.34.0"
+pr: https://github.com/mdostal/portunus/pull/177
 complexity: medium
 methodology: tdd
 depends_on: []

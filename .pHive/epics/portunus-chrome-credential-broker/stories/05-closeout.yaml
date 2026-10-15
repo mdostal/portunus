@@ -1,7 +1,10 @@
 id: 05-closeout
 epic: portunus-chrome-credential-broker
 title: live smoke test (or documented skip), docs/backends.md + README, version bump, Windows follow-up issue filed, write-back/rotate backlog note
-status: pending
+status: shipped
+shipped_at: "2026-10-14T00:00:00Z"
+release_id: "v0.34.0"
+pr: https://github.com/mdostal/portunus/pull/183
 complexity: low
 methodology: tdd
 depends_on: [04-backend-router-wiring]

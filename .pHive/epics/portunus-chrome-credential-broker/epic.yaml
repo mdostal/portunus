@@ -3,6 +3,9 @@ title: Chrome saved-login broker -- read Chrome's own saved logins (macOS + Linu
 target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
 methodology: tdd
 version_bump: minor
+status: shipped
+shipped_at: "2026-10-14T00:00:00Z"
+release_id: "v0.34.0"
 
 description: |
   User ask (2026-10-12, verbatim): "We need to be able to integrate the chrome browser logins as

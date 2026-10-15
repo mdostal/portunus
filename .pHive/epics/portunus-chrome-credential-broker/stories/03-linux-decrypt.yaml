@@ -1,7 +1,10 @@
 id: 03-linux-decrypt
 epic: portunus-chrome-credential-broker
 title: ChromeLinuxBackend -- Secret Service (libsecret) + KWallet key fetch, same decrypt pipeline, explicit no-keyring/plaintext (v10) detection and warning
-status: pending
+status: shipped
+shipped_at: "2026-10-14T00:00:00Z"
+release_id: "v0.34.0"
+pr: https://github.com/mdostal/portunus/pull/179
 complexity: medium
 methodology: tdd
 depends_on: [01-profile-discovery]
