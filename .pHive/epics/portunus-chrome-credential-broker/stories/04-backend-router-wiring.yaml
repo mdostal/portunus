@@ -1,7 +1,10 @@
 id: 04-backend-router-wiring
 epic: portunus-chrome-credential-broker
 title: ChromeBackend unifying macOS/Linux dispatch, sm_name scheme, _make_backend_router wiring, portunus browser profiles/list CLI
-status: pending
+status: shipped
+shipped_at: "2026-10-14T00:00:00Z"
+release_id: "v0.34.0"
+pr: https://github.com/mdostal/portunus/pull/180
 complexity: medium
 methodology: tdd
 depends_on: [02-macos-decrypt, 03-linux-decrypt]

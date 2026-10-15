@@ -1,7 +1,10 @@
 id: 02-macos-decrypt
 epic: portunus-chrome-credential-broker
 title: ChromeMacBackend -- Keychain "Chrome Safe Storage" key fetch, PBKDF2-HMAC-SHA1/AES-CBC decrypt of a Login Data password_value
-status: pending
+status: shipped
+shipped_at: "2026-10-14T00:00:00Z"
+release_id: "v0.34.0"
+pr: https://github.com/mdostal/portunus/pull/178
 complexity: medium
 methodology: tdd
 depends_on: [01-profile-discovery]
