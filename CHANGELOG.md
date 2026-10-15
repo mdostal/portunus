@@ -4,6 +4,8 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-14
+
 ### Fixed
 
 - **File-target inject no longer leaves files behind when the caller gives up (PANT-1003).**
@@ -22,6 +24,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Chrome saved-login backend (`portunus-chrome-credential-broker`), macOS + Linux, read-only.**
+  New `ChromeBackend` reads Chrome's own saved logins through Portunus's existing resolver
+  boundary — useful for test scenarios that need real, already-authenticated browser
+  credentials without a separate secret-management step. `sm_name` scheme:
+  `chrome:<profile>:<origin>:<username>`. macOS derives the AES key from the login Keychain's
+  `Chrome Safe Storage` item (PBKDF2-HMAC-SHA1); Linux tries Secret Service then KWallet,
+  surfacing an audit warning (never a silent decrypt) when neither is available and Chrome
+  stored the password unprotected. New CLI: `portunus browser profiles` and `portunus browser
+  list --profile <name>` — both metadata-only, structurally incapable of returning a password.
+  Windows is explicitly deferred (#181); write-back/rotate is explicit backlog (#182). See
+  `docs/backends.md`.
 - **`portunus health [--json]` deep self-check (PANT-854).** Read-only: checks that
   `PORTUNUS_HOME` exists with 0700/0600 permissions, the registry parses, the audit chain
   verifies, the audit clock matches the log's last `seq` (catching a truncated tail the chain
