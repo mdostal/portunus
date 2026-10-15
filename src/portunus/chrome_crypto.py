@@ -19,7 +19,10 @@ genuinely unencrypted-in-practice store; see ``linux_key()``).
 """
 from __future__ import annotations
 
+import shutil
+import sqlite3
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -137,3 +140,31 @@ def decrypt_blob(key: Optional[bytes], blob: bytes) -> str:
         return padded[:-pad_len].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ChromeCryptoError("decrypted blob is not valid UTF-8 -- wrong key or corrupted data") from exc
+
+
+def read_password_blob(login_data_path: Path, origin_url: str, username_value: str) -> Optional[bytes]:
+    """Copy Login Data (same discipline as chrome_discovery.list_logins --
+    never open the live file) and return the raw password_value blob for one
+    (origin_url, username_value) row, or None if no such row exists.
+
+    This is the only function in the whole Chrome backend allowed to select
+    password_value -- chrome_discovery.py never does, by design, so the
+    metadata-only CLI commands that only ever call chrome_discovery stay
+    structurally incapable of touching this.
+    """
+    if not login_data_path.is_file():
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="portunus-chrome-") as tmp_dir:
+        tmp_copy = Path(tmp_dir) / "Login Data"
+        shutil.copy2(login_data_path, tmp_copy)
+        conn = sqlite3.connect(str(tmp_copy))
+        try:
+            row = conn.execute(
+                "SELECT password_value FROM logins WHERE origin_url = ? AND username_value = ? LIMIT 1",
+                (origin_url, username_value),
+            ).fetchone()
+        finally:
+            conn.close()
+
+    return row[0] if row is not None else None

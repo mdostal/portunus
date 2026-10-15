@@ -28,8 +28,9 @@ from . import health as health_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
+from . import chrome_discovery
 from .backend import (
-    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, DopplerBackend,
+    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, ChromeBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
     VaultBinding, VaultServerBackend, load_vault_bindings, save_vault_bindings,
@@ -116,6 +117,8 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
             inst = AzureKeyVaultBackend()
         elif kind == "oauth":
             inst = OAuthBackend(local_backend=_for_kind("local"), audit=audit)
+        elif kind == "chrome":
+            inst = ChromeBackend(audit=audit)
         else:
             inst = fallback_backend
         instances[kind] = inst
@@ -685,6 +688,48 @@ def cmd_oauth_remove(args) -> int:
     key = backend.oauth_key(args.provider, args.account)
     broker.audit.append("oauth_remove", key, "removed")
     print(f"removed oauth credential for {args.provider} / {args.account}")
+    return 0
+
+
+def cmd_browser_profiles(args) -> int:
+    """List discovered Chrome profiles + which store protects each.
+    Metadata only -- calls chrome_discovery directly, never chrome_crypto,
+    so this command is structurally incapable of printing a password."""
+    rows = [
+        {
+            "dir_name": p.dir_name,
+            "display_name": p.display_name,
+            "store": chrome_discovery.classify_store(p),
+        }
+        for p in chrome_discovery.discover_profiles()
+    ]
+    if args.json:
+        print(json.dumps(rows))
+        return 0
+    if not rows:
+        print("(no Chrome profiles found)")
+        return 0
+    for r in rows:
+        print(f"  {r['dir_name']}  ({r['display_name']})  -- protected by: {r['store']}")
+    return 0
+
+
+def cmd_browser_list(args) -> int:
+    """List (origin, username) pairs for one Chrome profile's saved logins.
+    Same metadata-only guarantee as cmd_browser_profiles."""
+    profile = next((p for p in chrome_discovery.discover_profiles() if p.dir_name == args.profile), None)
+    if profile is None:
+        return _err(f"no such Chrome profile: {args.profile!r}")
+
+    logins = chrome_discovery.list_logins(profile)
+    if args.json:
+        print(json.dumps([{"origin_url": l.origin_url, "username_value": l.username_value} for l in logins]))
+        return 0
+    if not logins:
+        print(f"(no saved logins in profile {args.profile!r})")
+        return 0
+    for l in logins:
+        print(f"  {l.origin_url}  {l.username_value}")
     return 0
 
 
@@ -2543,6 +2588,25 @@ def build_parser() -> argparse.ArgumentParser:
     oa_remove.add_argument("account")
     oa_remove.set_defaults(func=cmd_oauth_remove)
 
+    br = sub.add_parser(
+        "browser",
+        help="Chrome saved-login discovery (metadata only -- see backend=chrome for resolving a value)",
+    )
+    br_sub = br.add_subparsers(dest="action", required=True)
+
+    br_profiles = br_sub.add_parser(
+        "profiles", help="list discovered Chrome profiles and which store protects each",
+    )
+    br_profiles.add_argument("--json", action="store_true")
+    br_profiles.set_defaults(func=cmd_browser_profiles)
+
+    br_list = br_sub.add_parser(
+        "list", help="list (origin, username) pairs for one Chrome profile's saved logins",
+    )
+    br_list.add_argument("--profile", required=True)
+    br_list.add_argument("--json", action="store_true")
+    br_list.set_defaults(func=cmd_browser_list)
+
     dr = sub.add_parser(
         "drop",
         help="put a secret INTO Arca (local-encrypted); lands state=dropped",
@@ -2567,7 +2631,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
-        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth"),
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome"),
         default="",
         help="override which backend this one reference uses (default: '' -- follow the "
              "project's VaultBinding/PORTUNUS_BACKEND as normal)",
