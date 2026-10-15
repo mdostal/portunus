@@ -15,10 +15,11 @@ releases. The result reflects one consistent instant -- never independent
 reads straddling a concurrent writer's mutation.
 
 gcp-bindings.json (legacy) and rotation-bindings.json are read WITHOUT a
-lock: neither has a dedicated writer-side lock today (this epic adds one for
-vault-bindings.json only, per its own confirmed scope -- see
-design-discussion.md §3), so there is no lock to acquire for either. Reading
-either unlocked is the same posture this codebase already accepts for every
+lock. gcp-bindings.json has no writer-side lock at all; rotation-bindings.json
+gained one (rotation-bindings.lock, PANT-852) to serialize its own
+read-modify-write, but it is optional provenance state, not part of the
+consistent critical-state instant this snapshot guarantees. Reading either
+unlocked is the same posture this codebase already accepts for every
 other unlocked read: os.replace()'s atomicity means a reader never observes
 a torn write, only possibly-stale content, which is what a legacy/optional
 file already tolerates.

@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Protocol, runtime_checkable
 
+from . import chrome_crypto, chrome_discovery
 from .auth import (
     AuditChain,
     AuthError,
@@ -31,6 +33,7 @@ from .auth import (
     OAuthAccessToken,
     OAuthRefreshTokenAuth,
 )
+from .atomicio import atomic_write
 from .filelock import flock_path
 from .paths import home
 
@@ -185,7 +188,6 @@ def save_vault_bindings(
     Registry._locked() already does, which is a bigger change than this
     story's scope (a dedicated lock file + the coordinated snapshot)."""
     bindings_path = _vault_bindings_path(path)
-    bindings_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
         proj: {
             "wif_audience": b.wif_audience, "account": b.account,
@@ -195,11 +197,7 @@ def save_vault_bindings(
         for proj, b in bindings.items()
     }
     with flock_path(_vault_bindings_lock_path(path)):
-        tmp = bindings_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(raw, indent=2))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, bindings_path)
-        os.chmod(bindings_path, 0o600)
+        atomic_write(bindings_path, json.dumps(raw, indent=2))
 
 
 class GcloudBackend:
@@ -557,6 +555,82 @@ class OAuthBackend:
         return minted.access_token
 
 
+class ChromeBackend:
+    """Reads Chrome's own saved logins through Portunus's existing resolver
+    boundary (portunus-chrome-credential-broker). `sm_name` encodes
+    `"chrome:<profile>:<origin>:<username>"` -- `<profile>` is Chrome's own
+    profile directory name (e.g. "Default", "Profile 1"); `<origin>` and
+    `<username>` identify one saved-login row.
+
+    No access-token-style in-memory cache, unlike OAuthBackend: re-reading
+    Login Data and re-decrypting is cheap (no network mint cost), and not
+    caching minimizes how long a decrypted password lives in process
+    memory.
+
+    Platform dispatch (macOS Keychain vs. Linux Secret Service/KWallet) is
+    chosen automatically from `sys.platform` -- callers never specify which.
+    `user_data_dir` overrides Chrome's default profile root; only meant for
+    tests, production callers leave it at the real default.
+    """
+
+    def __init__(self, audit: Optional[AuditChain] = None, user_data_dir: Optional[Path] = None):
+        self.audit = audit or AuditChain()
+        self.user_data_dir = user_data_dir
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        # Can't naively str.split(":") -- an origin URL contains its own
+        # colons ("https://", an optional port). Profile names never
+        # contain ":", so split that off first; the username never contains
+        # ":" either, so split the remainder at its LAST colon to recover
+        # "<origin>:<username>" even when the origin itself has a port.
+        malformed = BackendError(
+            f"chrome backend: sm_name must be 'chrome:<profile>:<origin>:<username>', got {sm_name!r}"
+        )
+        if not sm_name.startswith("chrome:"):
+            raise malformed
+        profile_dir_name, _, remainder = sm_name[len("chrome:"):].partition(":")
+        origin, _, username = remainder.rpartition(":")
+        if not profile_dir_name or not origin or not username:
+            raise malformed
+
+        profiles = chrome_discovery.discover_profiles(self.user_data_dir)
+        profile = next((p for p in profiles if p.dir_name == profile_dir_name), None)
+        if profile is None:
+            raise BackendError(f"chrome backend: no Chrome profile named {profile_dir_name!r} found")
+
+        login_data_path = profile.user_data_dir / profile.dir_name / "Login Data"
+        blob = chrome_crypto.read_password_blob(login_data_path, origin, username)
+        if blob is None:
+            raise BackendError(
+                f"chrome backend: no saved login for {username!r} at {origin!r} in profile {profile_dir_name!r}"
+            )
+
+        if sys.platform == "darwin":
+            key = chrome_crypto.macos_key()
+        elif sys.platform.startswith("linux"):
+            key = chrome_crypto.linux_key(profile.user_data_dir / profile.dir_name)
+            if key is None:
+                # Chrome's own no-keyring fallback: the password was never
+                # really encrypted. Loud, not a silently-accepted decrypt --
+                # see Story 03's design decision on why this is pushed to
+                # the caller rather than swallowed inside chrome_crypto.
+                self.audit.append(
+                    "credential-access", sm_name,
+                    "warn:no-keyring-found-chrome-stored-this-password-unprotected",
+                )
+        else:
+            raise BackendError(
+                f"chrome backend: {sys.platform!r} is not supported yet (macOS and Linux only) -- "
+                "Windows's App-Bound Encryption has no sanctioned same-user read path today; "
+                "see https://github.com/mdostal/portunus/issues/181"
+            )
+
+        try:
+            return chrome_crypto.decrypt_blob(key, blob)
+        except chrome_crypto.ChromeCryptoError as exc:
+            raise BackendError(f"chrome backend: {exc}") from exc
+
+
 class SyncingBackend:
     """Recency-aware, pull-only sync-down cache -- GCP -> local only, never
     the reverse (portunus-vault-routing). Wraps `remote` (the real backend,
@@ -590,12 +664,7 @@ class SyncingBackend:
         return {}
 
     def _save_state(self, state: Dict[str, str]) -> None:
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.state_path)
-        os.chmod(self.state_path, 0o600)
+        atomic_write(self.state_path, json.dumps(state, indent=2))
 
     def access(self, sm_name: str, project: str = "") -> str:
         cache_key = f"{project}:{sm_name}"

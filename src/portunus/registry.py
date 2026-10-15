@@ -8,16 +8,15 @@ the resolver.
 """
 from __future__ import annotations
 
-import fcntl
 import json
-import os
-import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
+from .atomicio import atomic_write
+from .filelock import LockTimeout, flock_path
 from .paths import home
 
 # Lifecycle states, mirroring bin/secrets. "enabled"/"locked" are injectable;
@@ -123,12 +122,7 @@ class Registry:
         self._data = {k: Reference(**v) for k, v in raw.items()}
 
     def _flush(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({k: v.to_dict() for k, v in self._data.items()}, indent=2))
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.path)
-        os.chmod(self.path, 0o600)
+        atomic_write(self.path, json.dumps({k: v.to_dict() for k, v in self._data.items()}, indent=2))
 
     @contextmanager
     def _locked(self):
@@ -139,30 +133,20 @@ class Registry:
         sibling writer's update with a stale in-memory copy, yields for the
         mutation, then flushes and releases.
         """
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(self.lock_path, "w")
-        deadline = time.monotonic() + self.lock_timeout
-        acquired = False
-        try:
-            while time.monotonic() < deadline:
-                try:
-                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    acquired = True
-                    break
-                except OSError:
-                    time.sleep(self._LOCK_POLL_INTERVAL)
-            if not acquired:
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(flock_path(
+                    self.lock_path, timeout=self.lock_timeout,
+                    poll_interval=self._LOCK_POLL_INTERVAL,
+                ))
+            except LockTimeout as exc:
                 raise RegistryLocked(
                     f"could not acquire registry lock within {self.lock_timeout}s "
                     f"({self.lock_path})"
-                )
+                ) from exc
             self._load()
             yield
             self._flush()
-        finally:
-            if acquired:
-                fcntl.flock(fh, fcntl.LOCK_UN)
-            fh.close()
 
     # --- mutation --------------------------------------------------------
     def add(

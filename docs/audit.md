@@ -64,9 +64,13 @@ portunus verify
 Output is one of:
 
 - `audit chain: INTACT (N entries)` — the hash chain is unbroken; exit code 0.
-- `audit chain: BROKEN (N entries)` — at least one entry's hash does not match; exit code 2.
+- `audit chain: BROKEN at line L: <reason> (N entries verified before it)` — line `L` of `audit.log` is unparseable, is missing chain fields, or its hash/`prev` does not match; exit code 2. A corrupt line is reported this way rather than crashing the command.
 
-Run this after a vault restore or whenever you suspect tampering. A broken chain does not tell you _which_ entry was modified — it signals that the chain cannot be trusted from that point forward.
+Run this after a vault restore or whenever you suspect tampering. The reported line is the first point at which the chain stops verifying — everything from there forward cannot be trusted.
+
+### The sequence counter
+
+`seq` comes from a counter file (`.clock`) in the state home. If `.clock` is missing, unparseable, or behind the log, the next `seq` is recovered from the highest `seq` already in `audit.log` and `.clock` is rewritten, so the sequence never restarts while the log has entries. Approval TTLs (measured in audit-clock ticks) use the same recovery, so deleting `.clock` does not change whether an approval is still valid.
 
 ---
 

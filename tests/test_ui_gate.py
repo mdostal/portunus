@@ -1,7 +1,7 @@
 """Backend-side proof that the UI's write route cannot bypass Broker.check_
 injectable (story 06). The UI never reimplements gating logic in TypeScript
--- its Next.js API routes shell out to the exact same `portunus` console
-script exercised here via subprocess, so this test IS the gate proof for the
+-- its Next.js API routes shell out to the exact same `portunus` CLI entry
+point exercised here via subprocess (`python -m portunus`), so this test IS the gate proof for the
 UI, not a UI-level trust assumption. Also proves the exact stdin-piping
 invocation shape the add-secret route uses never leaks the value via
 stdout/stderr/argv."""
@@ -25,7 +25,7 @@ def _run(args, home, env_extra=None, input_text=None):
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        ["portunus", *args], env=env, input=input_text,
+        [sys.executable, "-m", "portunus", *args], env=env, input=input_text,
         capture_output=True, text=True, timeout=10,
     )
 

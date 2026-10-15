@@ -123,7 +123,7 @@ The approval is scoped to the **reference name only** — not to the requesting 
 
 ## Grant
 
-`portunus grant` records an explicit, audited widening of access for a named member. This writes an audit entry regardless of whether GCP IAM changes are actually applied:
+`portunus grant` records an intended widening of access for a named member **in the audit log only**. It makes no IAM change: nothing is sent to GCP (no `add-iam-policy-binding`) or any other provider, and `roles.json` is not touched. Apply the real permission yourself:
 
 ```bash
 portunus grant my-ref some-member@example.com

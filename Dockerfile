@@ -52,11 +52,20 @@ RUN useradd --create-home --uid 10001 portunus
 # portunus user on first use instead of defaulting to root:root (a real
 # bug this Dockerfile's own live-proof pass caught before shipping).
 ENV PORTUNUS_HOME=/home/portunus/.portunus
-RUN mkdir -p "$PORTUNUS_HOME" && chown -R portunus:portunus /home/portunus
+# chmod 0700 up front: a fresh volume otherwise starts 0755 until the first
+# write-path command tightens it, and `portunus health` reports that.
+RUN mkdir -p "$PORTUNUS_HOME" && chmod 0700 "$PORTUNUS_HOME" \
+    && chown -R portunus:portunus /home/portunus
 VOLUME ["/home/portunus/.portunus"]
 
 USER portunus
 WORKDIR /home/portunus
+
+# Read-only deep self-check (home permissions, registry, audit chain and
+# clock, backend reachability); never resolves a value. Exit 0 = healthy,
+# anything else = unhealthy. The timeout covers the gcloud metadata probe.
+HEALTHCHECK --interval=60s --timeout=20s --start-period=10s --retries=3 \
+    CMD portunus health --json
 
 ENTRYPOINT ["portunus"]
 CMD ["--help"]

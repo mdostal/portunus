@@ -8,7 +8,7 @@ import json
 from portunus.cli import main
 
 
-def test_auth_login_invokes_gcloud_and_reports_success(home, monkeypatch, capsys):
+def test_auth_login_invokes_gcloud_and_reports_success(home, monkeypatch, capsys, gcloud_on_path):
     from types import SimpleNamespace
     seen = {}
 
@@ -17,7 +17,6 @@ def test_auth_login_invokes_gcloud_and_reports_success(home, monkeypatch, capsys
         return SimpleNamespace(returncode=0, stdout="You are now logged in.", stderr="")
 
     monkeypatch.setattr("portunus.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.cli.shutil.which", lambda name: "/bin/gcloud")
 
     rc = main(["auth", "login", "user@example.com"])
     out = capsys.readouterr().out
@@ -26,14 +25,13 @@ def test_auth_login_invokes_gcloud_and_reports_success(home, monkeypatch, capsys
     assert "user@example.com" in out
 
 
-def test_auth_login_reports_failure(home, monkeypatch, capsys):
+def test_auth_login_reports_failure(home, monkeypatch, capsys, gcloud_on_path):
     from types import SimpleNamespace
 
     def fake_run(cmd, capture_output, text, timeout):
         return SimpleNamespace(returncode=1, stdout="", stderr="login denied")
 
     monkeypatch.setattr("portunus.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.cli.shutil.which", lambda name: "/bin/gcloud")
 
     rc = main(["auth", "login", "user@example.com"])
     err = capsys.readouterr().err
@@ -49,7 +47,7 @@ def test_auth_login_no_gcloud_on_path(home, monkeypatch, capsys):
     assert "gcloud" in err
 
 
-def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, capsys):
+def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, capsys, gcloud_on_path):
     from types import SimpleNamespace
     from portunus.backend import VaultBinding, save_vault_bindings
 
@@ -67,7 +65,6 @@ def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, 
         )
 
     monkeypatch.setattr("portunus.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.cli.shutil.which", lambda name: "/bin/gcloud")
 
     rc = main(["auth", "status"])
     out = capsys.readouterr().out
@@ -76,7 +73,7 @@ def test_auth_status_reports_per_binding_authenticated_state(home, monkeypatch, 
     assert "demo-cicd" in out and "MISSING" in out
 
 
-def test_auth_status_json_shape(home, monkeypatch, capsys):
+def test_auth_status_json_shape(home, monkeypatch, capsys, gcloud_on_path):
     from types import SimpleNamespace
     from portunus.backend import VaultBinding, save_vault_bindings
 
@@ -91,7 +88,6 @@ def test_auth_status_json_shape(home, monkeypatch, capsys):
         )
 
     monkeypatch.setattr("portunus.cli.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.cli.shutil.which", lambda name: "/bin/gcloud")
 
     rc = main(["auth", "status", "--json"])
     out = json.loads(capsys.readouterr().out)

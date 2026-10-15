@@ -153,6 +153,8 @@ def test_gh_repo_view_called_once_per_repo_not_per_finding(stack, tmp_path):
     def counting_run(cmd, **kwargs):
         if cmd and cmd[0] == "gh":
             call_count["gh"] += 1
+            # Never reach the real gh CLI / network; "private" is arbitrary.
+            return subprocess.CompletedProcess(cmd, 0, stdout="PRIVATE\n", stderr="")
         return real_run(cmd, **kwargs)
 
     with patch("subprocess.run", side_effect=counting_run):

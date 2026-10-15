@@ -152,6 +152,59 @@ portunus auth status
 
 ---
 
+## Chrome saved logins
+
+Reads Chrome's own saved logins (the browser's `Login Data` store) through Portunus's existing resolver boundary — useful for test scenarios that need to exercise real, already-authenticated browser credentials without a separate secret-management step. **Read-only.** Portunus never writes to, rotates, or otherwise touches Chrome's own storage.
+
+**Platform support: macOS and Linux only.** Windows is explicitly not supported — see [#181](https://github.com/mdostal/portunus/issues/181).
+
+### How it works
+
+- **macOS**: Chrome's AES key is derived from a random password stored in the login Keychain (service `Chrome Safe Storage`, account `Chrome`) via PBKDF2-HMAC-SHA1. This is a same-user, no-privilege-escalation read — the same trust tier as Portunus's own local vault.
+- **Linux**: the key comes from whichever keyring Chrome itself picked at save time — GNOME Secret Service (`libsecret`) or KWallet, mirroring Chromium's own desktop-environment auto-selection. If neither keyring is available, Chrome stores the password **effectively unprotected** (a real, disclosed Chrome behavior on minimal Linux setups, not a Portunus shortcut) — Portunus surfaces this with an audit warning rather than quietly decrypting it as if it were normal.
+
+### sm_name scheme
+
+```
+chrome:<profile>:<origin>:<username>
+```
+
+`<profile>` is Chrome's own profile directory name (e.g. `Default`, `Profile 1` — use `portunus browser profiles` to see what's actually there, mapped to the display name you'd recognize in Chrome's own UI). `<origin>` and `<username>` identify one saved login row exactly as Chrome stored it.
+
+### Discovering what's available (metadata only)
+
+```bash
+# List every discovered Chrome profile and which store protects it
+portunus browser profiles
+
+# List (origin, username) pairs for one profile's saved logins
+portunus browser list --profile Default
+```
+
+Both commands are structurally incapable of returning a password — they only ever read profile/login *metadata*, never the encrypted value, let alone a decrypted one.
+
+### Registering and resolving a reference
+
+```bash
+# Register a reference against a real saved login (the dummy value below is
+# never actually used for resolution -- backend=chrome always wins over
+# whatever's in local storage, same as backend=oauth)
+echo "unused" | portunus drop my-test-login \
+  "chrome:Default:https://example.com:alice@example.com" \
+  --backend chrome --stdin
+
+# Resolve it through the normal boundary-only path, like any other reference
+portunus resolve my-test-login
+```
+
+### Known limitations
+
+- **No in-memory cache.** Unlike `OAuthBackend`, every resolve re-reads and re-decrypts — re-decrypting is cheap, and this minimizes how long a decrypted password lives in process memory.
+- **Write-back / rotation is explicit backlog, not implemented.** See [#182](https://github.com/mdostal/portunus/issues/182) — the long-term plan is an API-level roll/change rather than mutating Chrome's own SQLite store directly next to a running browser.
+- **The Linux key-fetch path was not live-tested** against a real Secret Service/KWallet install during this epic (implemented on macOS) — fixture/mock-only. The macOS path was live-verified against this machine's real Chrome install (1020 real saved logins decrypted with zero failures).
+
+---
+
 ## Stub backends
 
 The following backends are recognized by Portunus but not yet implemented. Each fails closed with a clear error rather than silently mis-routing to a different backend:
@@ -177,6 +230,7 @@ To request an adapter, use the [adapter-request template](https://github.com/mdo
 | Testing or offline work | `local` |
 | Production with GCP, Workload Identity Federation available | `gcp` |
 | Production with GCP, also need offline resilience or deploy-time snapshot | `gcp` + `sync_mode: cached` |
+| Testing against real, already-authenticated browser credentials (macOS/Linux) | `chrome` |
 | Any other cloud provider | Wait for the stub to be implemented |
 
 A single vault can mix backends per-reference using VaultBindings — a development reference on `local` and a production reference on `gcp` coexist without conflict.

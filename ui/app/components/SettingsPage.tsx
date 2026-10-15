@@ -292,7 +292,11 @@ export default function SettingsPage({ refs }: { refs: PortunusReference[] }) {
     setLeakBusy(true);
     setLeakError(null);
     try {
-      const res = await fetch("/api/leak-scan", { method: "POST" });
+      const res = await fetch("/api/leak-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
       const data = await res.json();
       if (!res.ok) {
         setLeakError(data.error || "leak-scan failed");

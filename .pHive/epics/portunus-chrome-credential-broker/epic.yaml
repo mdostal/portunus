@@ -1,0 +1,63 @@
+name: portunus-chrome-credential-broker
+title: Chrome saved-login broker -- read Chrome's own saved logins (macOS + Linux), expose them through Portunus's existing boundary-only resolver, scoped per Chrome profile
+target_codebase: /Users/mdostal/Documents/work/pantheon/portunus
+methodology: tdd
+version_bump: minor
+status: shipped
+shipped_at: "2026-10-14T00:00:00Z"
+release_id: "v0.34.0"
+
+description: |
+  User ask (2026-10-12, verbatim): "We need to be able to integrate the chrome browser logins as
+  well and nail that across, make an integration to allow us to connect and use it as another
+  secret broker when we are doing testing and stuff so we can inject, pull, change, etc so we
+  have profiles and can easily run through test scenarios."
+
+  Scoped down after a clarifying round with the user (see docs/research-brief.md §1, §5 and
+  docs/design-discussion.md): macOS + Linux only this epic (Windows deferred -- the only known
+  bypass of Chrome's current Windows App-Bound Encryption is CVE-2025-34091, an active exploit
+  technique, not a sanctioned read path). Read-through only this epic -- "inject" means exposing
+  a Chrome-saved login through Portunus's EXISTING boundary-only resolver
+  (resolve/resolve_exec/resolve_to_tempfile), never mutating Chrome's own Login Data file.
+  Write-back/rotate-into-Chrome ("change") is explicit future scope, not decomposed here.
+
+  Architecturally mirrors portunus-oauth-token-broker: a new SecretBackend-shaped adapter
+  (ChromeBackend), duck-typed into _make_backend_router, with its own sm_name scheme
+  ("chrome:<profile>:<origin>:<username>"). Unlike every prior backend, the secret material
+  already exists on disk (Chrome put it there) -- Portunus only discovers (metadata: profiles,
+  origins, usernames -- never passwords) and resolves (decrypts one specific value, boundary-only).
+
+  "Profiles" maps 1:1 onto Chrome's own profile concept (Local State's profile.info_cache),
+  letting a test scenario pick which saved-login set to pull from, the same way a human would
+  pick a profile in Chrome's own profile switcher.
+
+stories:
+  - id: 01-profile-discovery
+    title: locate Chrome profiles + Login Data cross-platform (macOS, Linux), list (origin, username) pairs -- zero decryption, metadata only
+    complexity: medium
+    depends_on: []
+    status: pending
+
+  - id: 02-macos-decrypt
+    title: ChromeMacBackend -- Keychain "Chrome Safe Storage" key fetch, PBKDF2-HMAC-SHA1/AES-CBC decrypt of a Login Data password_value
+    complexity: medium
+    depends_on: [01-profile-discovery]
+    status: pending
+
+  - id: 03-linux-decrypt
+    title: ChromeLinuxBackend -- Secret Service (libsecret) + KWallet key fetch, same decrypt pipeline, explicit no-keyring/plaintext (v10) detection and warning
+    complexity: medium
+    depends_on: [01-profile-discovery]
+    status: pending
+
+  - id: 04-backend-router-wiring
+    title: ChromeBackend unifying macOS/Linux dispatch, sm_name scheme, _make_backend_router wiring, portunus browser profiles/list CLI
+    complexity: medium
+    depends_on: [02-macos-decrypt, 03-linux-decrypt]
+    status: pending
+
+  - id: 05-closeout
+    title: live smoke test (or documented skip), docs/backends.md + README, version bump, Windows follow-up issue filed, write-back/rotate backlog note
+    complexity: low
+    depends_on: [04-backend-router-wiring]
+    status: pending

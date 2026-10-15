@@ -18,11 +18,11 @@ one instead of needing a second pass later.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .atomicio import atomic_write
 from .filelock import flock_path
 from .paths import home
 
@@ -65,16 +65,11 @@ def _load_unlocked(path: Optional[Path] = None) -> Dict[str, View]:
 
 def _save_unlocked(views: Dict[str, View], path: Optional[Path] = None) -> None:
     views_path = _views_path(path)
-    views_path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
         name: {"description": v.description, "ref_names": v.ref_names}
         for name, v in views.items()
     }
-    tmp = views_path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(raw, indent=2))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, views_path)
-    os.chmod(views_path, 0o600)
+    atomic_write(views_path, json.dumps(raw, indent=2))
 
 
 def load_views(path: Optional[Path] = None) -> Dict[str, View]:

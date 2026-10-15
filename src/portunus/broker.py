@@ -204,18 +204,18 @@ class Broker:
         return False
 
     def _clock_now(self) -> int:
-        try:
-            return int(self.audit.clock_path.read_text().strip() or "0")
-        except (OSError, ValueError):
-            return 0
+        # Same recovery as AuditChain._tick(): a missing/corrupt .clock falls
+        # back to the log's highest seq, so approval expiry doesn't shift.
+        return self.audit.current_seq()
 
     # --- grant -----------------------------------------------------------
     def grant(self, name: str, member: str) -> Reference:
-        """Record an explicit, audited widening of access.
+        """Record an intended widening of access in the audit log -- ONLY.
 
-        In production this shells to ``gcloud secrets add-iam-policy-binding``;
-        here we always write the audit record so the chain reflects the intent
-        even in environments without GCP.
+        This makes no IAM change anywhere: it does not call ``gcloud secrets
+        add-iam-policy-binding`` or any other provider API, and it does not
+        touch roles.json. The ``grant`` audit line records intent; applying
+        the actual permission is up to the caller.
         """
         ref = self.registry.require(name)
         self.audit.append("grant", ref.sm_name, f"granted:{member}")

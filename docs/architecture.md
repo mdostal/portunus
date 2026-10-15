@@ -184,37 +184,42 @@ sequenceDiagram
 
 A second, genuinely different kind of "real vs. stub" split from ARCA's own (§2, §1's `Stub`
 node): ARCA answers *where a value lives*, `RotationBinding`/`RotationAdapter` (`rotation.py`)
-answer *who would rotate it, and whether Portunus can yet*. **Zero real adapters exist today —
-every provider is `status="stub"`.** This section documents the shape now so the docs don't
-overstate what's built; treat every "would" below as aspirational, not shipped.
+answer *who would rotate it, and whether Portunus can yet*. **Two adapters are real today and
+report `capability() == "auto"`:** `OAuthRefreshRotationAdapter` (OAuth refresh tokens, wrapping
+`OAuthBackend`) and `GCPServiceAccountKeyRotationAdapter` (GCP service-account keys:
+create → verify → store, with opt-in `--retire-old` that disables, never deletes, the superseded
+key). Both run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
+that raise `RotationAdapterError` and report `capability() == "unknown"`. The per-provider
+capability matrix lives in [`docs/rotation.md`](rotation.md), and
+`tests/test_rotation_docs_drift.py` fails if an `auto` adapter isn't listed as auto there.
 
 ```mermaid
 graph TD
-    accTitle: Rotation provenance -- config today, real integration later
-    accDescr: RotationBinding records which provider and what account context; RotationAdapter is a stub registry today. A future real adapter fetches its own admin credential via Portunus's own resolver, never a special-cased credential path.
+    accTitle: Rotation provenance -- two real adapters, three stubs
+    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth and gcp to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
 
-    RB["RotationBinding<br/>(provider, status: real|stub, account)<br/>PORTUNUS_HOME/rotation-bindings.json"]
-    Registry["RotationAdapter registry<br/>Vercel (priority target) · GitHub · Stripe"]
-    Button["DetailDrawer 'Auto-rotate…' button<br/>enabled only if status==real"]
+    RB["RotationBinding<br/>(provider, status: real|stub|manual, account)<br/>PORTUNUS_HOME/rotation-bindings.json"]
+    Registry["RotationAdapter registry<br/>(rotation_adapter_for)"]
+    Run["portunus rotation run REF"]
 
-    RB -->|drives| Button
-    Registry -->|every adapter today| Stub["raises RotationAdapterError<br/>(no real API call, ever)"]
+    Run --> Registry
+    Registry -->|oauth| OAuth["OAuthRefreshRotationAdapter<br/>capability: auto"]
+    Registry -->|gcp| GCP["GCPServiceAccountKeyRotationAdapter<br/>capability: auto"]
+    Registry -->|vercel · github · stripe| Stub["stub: raises RotationAdapterError<br/>capability: unknown"]
+    RB -.->|provider context| Registry
 
-    subgraph Future["Once a real adapter ships (none do yet)"]
-        Real["VercelRotationAdapter.rotate(ref)"] -->|resolves its OWN admin token via| SelfResolve["resolver.resolve_call(<br/>'{{secret:portunus-admin-vercel-token}}', boundary=...)"]
-        SelfResolve -->|same boundary-only sink<br/>every other value uses| ProviderAPI["Provider's rotate API"]
-    end
-
-    Registry -.->|becomes, once real| Real
+    GCP -->|optional admin_credential_ref resolved via| SelfResolve["resolver.resolve_call(<br/>'{{secret:...}}', boundary=...)"]
+    SelfResolve -->|same boundary-only sink<br/>every other value uses| ProviderAPI["gcloud iam service-accounts keys ..."]
+    OAuth -->|OAuthBackend.access()| TokenEndpoint["provider token endpoint<br/>(rotated refresh_token persisted back)"]
 ```
 
-The recursive property worth naming explicitly: a real rotation adapter authenticates to its
-provider using a credential that is **itself just another Portunus-managed `Reference`** —
-resolved through the same `Resolver.resolve_call()` boundary sink every other value in this
-codebase already uses, never hardcoded into the adapter and never handled outside the normal
-resolve path. Portunus would rotate *other* secrets by using *its own* vaulted admin secret — no
-second credential-handling mechanism, ever. This is a design decision recorded ahead of the
-build, not a description of running code.
+The recursive property worth naming explicitly: a rotation adapter that needs an admin credential
+authenticates to its provider using a credential that is **itself just another Portunus-managed
+`Reference`** — resolved through the same `Resolver.resolve_call()` boundary sink every other
+value in this codebase already uses, never hardcoded into the adapter and never handled outside
+the normal resolve path. `GCPServiceAccountKeyRotationAdapter` already does this when given an
+`admin_credential_ref`; the stub adapters (Vercel is the confirmed priority target for the next
+real one) are meant to follow the same pattern once built.
 
 ## 6. The desktop app is packaging, not a new component
 

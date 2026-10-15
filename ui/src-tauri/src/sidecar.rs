@@ -1,7 +1,7 @@
 //! Spawns the Next.js `standalone` server as a plain OS process (no bundled
 //! Node runtime -- see design-discussion.md §2: this app targets one
 //! already-provisioned machine, not portable distribution) and waits for it
-//! to answer /api/health before the window is allowed to point at it.
+//! to answer /api/health?shallow=1 before the window is allowed to point at it.
 //!
 //! Two real risks this module exists to handle explicitly (research-brief.md
 //! §3): a GUI-launched process on macOS gets a near-empty PATH, so the
@@ -129,10 +129,13 @@ pub fn spawn_sidecar(app: &AppHandle) -> SidecarHandle {
     SidecarHandle { child, port }
 }
 
-/// Polls http://127.0.0.1:<port>/api/health until it returns 200, or gives
-/// up after HEALTH_POLL_TIMEOUT. Returns true if the sidecar became healthy.
+/// Polls http://127.0.0.1:<port>/api/health?shallow=1 until it returns 200,
+/// or gives up after HEALTH_POLL_TIMEOUT. Returns true if the sidecar became
+/// healthy. Shallow on purpose: readiness means "the Next.js server answers",
+/// and the deep check spawns the CLI and can legitimately report down (e.g. a
+/// corrupt registry) while the UI still needs to open to show that.
 pub fn wait_until_healthy(port: u16) -> bool {
-    let url = format!("http://127.0.0.1:{port}/api/health");
+    let url = format!("http://127.0.0.1:{port}/api/health?shallow=1");
     let deadline = std::time::Instant::now() + HEALTH_POLL_TIMEOUT;
     while std::time::Instant::now() < deadline {
         if let Ok(resp) = ureq::get(&url).timeout(Duration::from_secs(2)).call() {

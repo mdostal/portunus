@@ -15,10 +15,16 @@ import os
 from pathlib import Path
 
 
+def home_path() -> Path:
+    """Return where the Portunus state home lives, without creating or
+    chmodding it. For read-only callers such as `portunus health`."""
+    raw = os.environ.get("PORTUNUS_HOME") or os.environ.get("DOSTAL_SECRETS_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".portunus"
+
+
 def home() -> Path:
     """Return the Portunus state home, creating it 0700 if needed."""
-    raw = os.environ.get("PORTUNUS_HOME") or os.environ.get("DOSTAL_SECRETS_HOME")
-    path = Path(raw).expanduser() if raw else Path.home() / ".portunus"
+    path = home_path()
     is_new = not path.exists()
     path.mkdir(parents=True, exist_ok=True)
     try:

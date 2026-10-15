@@ -26,7 +26,7 @@ cd portunus
 pip install -e ".[test]"
 ```
 
-Requires Python ≥ 3.9. The default vault backend is local-encrypted — no cloud account needed to start.
+Requires Python ≥ 3.10. The default vault backend is local-encrypted — no cloud account needed to start.
 
 ---
 

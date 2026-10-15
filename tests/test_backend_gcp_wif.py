@@ -82,8 +82,7 @@ def test_vault_bindings_file_is_0600(home):
     assert mode == 0o600
 
 
-def test_backend_uses_project_scoped_binding_over_default(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_backend_uses_project_scoped_binding_over_default(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -110,8 +109,7 @@ def test_backend_uses_project_scoped_binding_over_default(home, monkeypatch):
     assert any(arg.startswith("--access-token-file=") for arg in cmd)
 
 
-def test_two_different_projects_in_same_process_use_own_bindings(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_two_different_projects_in_same_process_use_own_bindings(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -135,8 +133,7 @@ def test_two_different_projects_in_same_process_use_own_bindings(home, monkeypat
     assert "--project=firefly-events-inc" in observed[1]
 
 
-def test_access_token_file_is_0600_and_deleted_even_on_failure(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_access_token_file_is_0600_and_deleted_even_on_failure(home, monkeypatch, gcloud_on_path):
     observed = {}
 
     def runner(cmd, capture_output, text, timeout):
@@ -163,8 +160,7 @@ def test_access_token_file_is_0600_and_deleted_even_on_failure(home, monkeypatch
     assert not observed["path"].exists()
 
 
-def test_access_passes_account_flag_when_binding_has_no_wif_audience(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_access_passes_account_flag_when_binding_has_no_wif_audience(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -178,8 +174,7 @@ def test_access_passes_account_flag_when_binding_has_no_wif_audience(home, monke
     assert "--account=user@example.com" in observed[0]
 
 
-def test_access_wif_and_account_are_mutually_exclusive(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_access_wif_and_account_are_mutually_exclusive(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -205,8 +200,7 @@ def test_access_wif_and_account_are_mutually_exclusive(home, monkeypatch):
     assert not any(arg.startswith("--account=") for arg in cmd)
 
 
-def test_access_no_binding_means_no_account_flag_unchanged_behavior(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_access_no_binding_means_no_account_flag_unchanged_behavior(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -219,8 +213,7 @@ def test_access_no_binding_means_no_account_flag_unchanged_behavior(home, monkey
     assert not any(arg.startswith("--account=") for arg in observed[0])
 
 
-def test_access_passes_impersonate_service_account_flag_alongside_account(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_access_passes_impersonate_service_account_flag_alongside_account(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -242,8 +235,7 @@ def test_access_passes_impersonate_service_account_flag_alongside_account(home, 
     assert "--impersonate-service-account=deployer@demo.iam.gserviceaccount.com" in cmd
 
 
-def test_access_no_impersonate_flag_when_binding_omits_it(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_access_no_impersonate_flag_when_binding_omits_it(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -257,8 +249,7 @@ def test_access_no_impersonate_flag_when_binding_omits_it(home, monkeypatch):
     assert not any(arg.startswith("--impersonate-service-account=") for arg in observed[0])
 
 
-def test_latest_version_also_passes_impersonate_service_account_flag(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_latest_version_also_passes_impersonate_service_account_flag(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -297,8 +288,7 @@ def test_legacy_bindings_file_without_impersonate_key_defaults_empty(home):
     assert bindings["p"].impersonate_service_account == ""
 
 
-def test_two_accounts_in_same_process_each_use_own_account(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_two_accounts_in_same_process_each_use_own_account(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):
@@ -328,8 +318,7 @@ def test_build_wires_bindings_into_gcloud_backend(home, monkeypatch):
     assert "demo-project-483920" in resolver.backend._binding_providers
 
 
-def test_no_binding_and_no_credential_provider_falls_back_to_ambient_gcloud(home, monkeypatch):
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+def test_no_binding_and_no_credential_provider_falls_back_to_ambient_gcloud(home, monkeypatch, gcloud_on_path):
     observed = []
 
     def runner(cmd, capture_output, text, timeout):

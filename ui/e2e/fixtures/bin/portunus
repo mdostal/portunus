@@ -1,0 +1,17 @@
+#!/bin/sh
+# Stand-in for the real `portunus` CLI during e2e runs (playwright.config.ts
+# puts this directory first on the UI server's PATH). Records every
+# invocation so a spec can assert whether a route reached the CLI at all.
+[ -n "$PORTUNUS_STUB_LOG" ] && echo "$*" >> "$PORTUNUS_STUB_LOG"
+# A file-target inject whose path contains "slow-" behaves like a slow vault
+# backend: it waits, then writes the file (see e2e/inject-abort.spec.ts).
+path=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "--path" ] && path="$2"
+  shift
+done
+case "$path" in
+  *slow-*) sleep 2; echo "VALUE=stub" > "$path" ;;
+esac
+echo "stub ok"
+exit 0

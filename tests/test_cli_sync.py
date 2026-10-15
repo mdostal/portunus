@@ -16,11 +16,10 @@ def _mock_gcloud(monkeypatch, responses):
         return SimpleNamespace(returncode=rc, stdout=out, stderr=err)
 
     monkeypatch.setattr("portunus.backend.subprocess.run", fake_run)
-    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
     return calls
 
 
-def test_sync_reports_synced_and_fresh(home, monkeypatch, capsys):
+def test_sync_reports_synced_and_fresh(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud(monkeypatch, [
         (0, json.dumps({"name": "v1", "createTime": "T1"}), ""),  # x: describe
         (0, "VALUE-X", ""),                                        # x: fetch
@@ -41,7 +40,7 @@ def test_sync_reports_synced_and_fresh(home, monkeypatch, capsys):
     assert data["failed"] == []
 
 
-def test_sync_second_run_reports_already_fresh(home, monkeypatch, capsys):
+def test_sync_second_run_reports_already_fresh(home, monkeypatch, capsys, gcloud_on_path):
     _mock_gcloud(monkeypatch, [
         (0, json.dumps({"name": "v1", "createTime": "T1"}), ""),
         (0, "VALUE-X", ""),
@@ -70,7 +69,7 @@ def test_sync_no_cached_references_reports_cleanly(home, capsys):
     assert "no cached-mode references" in out.lower()
 
 
-def test_sync_partial_failure_does_not_abort_the_batch(home, monkeypatch, capsys):
+def test_sync_partial_failure_does_not_abort_the_batch(home, monkeypatch, capsys, gcloud_on_path):
     responses = [
         (0, json.dumps({"name": "v1", "createTime": "T1"}), ""),  # x: describe ok
         (1, "", "gcloud: permission denied"),                      # x: fetch fails
