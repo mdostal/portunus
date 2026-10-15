@@ -89,6 +89,32 @@ def test_chrome_backend_rejects_malformed_sm_name(user_data_dir):
         backend.access("chrome:not-enough-parts")
 
 
+def test_chrome_backend_rejects_windows_with_a_clear_error_not_a_fallthrough_to_linux(
+    user_data_dir, monkeypatch
+):
+    """Grill finding: sys.platform=="darwin" / else was a 2-way branch, so
+    Windows silently fell through to the Linux (Secret Service/KWallet)
+    path and would have hit a confusing 'unrecognized blob prefix' error
+    instead of a clear, honest 'not supported yet' one. Windows must never
+    reach linux_key() at all."""
+    blob = b"v10" + b"fixture-plaintext-123"
+    _write_login_data(
+        user_data_dir / "Default" / "Login Data",
+        [("https://example.com", "alice@example.com", blob)],
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def _must_not_be_called(*_args, **_kwargs):
+        raise AssertionError("Windows must never reach linux_key()")
+
+    monkeypatch.setattr(chrome_crypto, "linux_key", _must_not_be_called)
+
+    backend = ChromeBackend(audit=AuditChain(), user_data_dir=user_data_dir)
+
+    with pytest.raises(BackendError, match="(?i)windows"):
+        backend.access("chrome:Default:https://example.com:alice@example.com")
+
+
 def test_chrome_backend_warns_in_audit_when_linux_key_is_none(user_data_dir, monkeypatch):
     """Story 03's deferred acceptance criterion: the no-keyring fallback must
     be loud. ChromeBackend is the real caller that must surface it."""
