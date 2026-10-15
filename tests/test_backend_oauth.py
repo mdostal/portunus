@@ -93,6 +93,70 @@ def test_oauth_backend_malformed_sm_name_raises_backend_error(home):
         backend.access("no-colon-here")
 
 
+def test_oauth_backend_persists_a_rotated_refresh_token(home):
+    # Some providers (confirmed live for Codex CLI's refresh grant against
+    # auth.openai.com/oauth/token, 2026-09-14) return a NEW refresh_token on
+    # every refresh -- the one just spent is dead for future refreshes. The
+    # backend must persist the rotated value immediately so the next
+    # access() (once the in-memory cache expires) doesn't mint against an
+    # already-consumed token.
+    _seed_credential(home)
+
+    def transport(url, data, headers, timeout):
+        return {"access_token": "ACCESS.1", "expires_in": 60, "refresh_token": "ROTATED-REFRESH-TOKEN"}
+
+    backend = OAuthBackend(audit=AuditChain(), transport=transport)
+    backend.access("google:user@example.com")
+
+    local = LocalEncryptedBackend()
+    record = local.load_oauth_credential("google", "user@example.com")
+    assert record["credential"]["refresh_token"] == "ROTATED-REFRESH-TOKEN"
+    # Everything else about the stored bundle is untouched.
+    assert record["credential"]["client_id"] == CREDENTIAL["client_id"]
+    assert record["credential"]["client_secret"] == CREDENTIAL["client_secret"]
+
+
+def test_oauth_backend_no_rotation_in_response_leaves_stored_credential_untouched(home):
+    _seed_credential(home)
+
+    def transport(url, data, headers, timeout):
+        return {"access_token": "ACCESS.1", "expires_in": 60}  # no refresh_token key at all
+
+    backend = OAuthBackend(audit=AuditChain(), transport=transport)
+    backend.access("google:user@example.com")
+
+    local = LocalEncryptedBackend()
+    record = local.load_oauth_credential("google", "user@example.com")
+    assert record["credential"]["refresh_token"] == CREDENTIAL["refresh_token"]
+
+
+def test_oauth_backend_mints_for_a_public_client_credential_with_no_secret(home):
+    # A genuinely secret-less public OAuth client -- e.g. Codex CLI's real
+    # refresh grant against auth.openai.com/oauth/token, confirmed live
+    # 2026-09-14 against codex-rs's own source (codex-rs/login/src/auth/
+    # manager.rs: CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann", no
+    # client_secret field in the request at all). A stored bundle that
+    # simply never had a client_secret key must still mint cleanly instead
+    # of KeyError-ing before ever reaching the token endpoint.
+    local = LocalEncryptedBackend()
+    local.store_oauth_credential(
+        "codex",
+        "dostal",
+        {
+            "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+            "refresh_token": "REFRESH-TOKEN-do-not-leak",
+            "token_endpoint": "https://auth.openai.com/oauth/token",
+            "request_format": "json",
+        },
+    )
+    transport, calls = _counting_transport()
+    backend = OAuthBackend(audit=AuditChain(), transport=transport)
+    token = backend.access("codex:dostal")
+    assert token == "ACCESS.TOKEN"
+    assert "client_secret" not in calls[0]
+    assert calls[0]["client_id"] == "app_EMoamEEZ73f0CkXaXp7hrann"
+
+
 def test_oauth_backend_flows_through_the_real_resolve_boundary(home):
     """Zero Resolver-side changes needed -- proving this by actually
     resolving a reference through the normal Registry/Broker/Resolver

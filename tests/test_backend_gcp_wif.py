@@ -219,6 +219,84 @@ def test_access_no_binding_means_no_account_flag_unchanged_behavior(home, monkey
     assert not any(arg.startswith("--account=") for arg in observed[0])
 
 
+def test_access_passes_impersonate_service_account_flag_alongside_account(home, monkeypatch):
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    observed = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    bindings = {
+        "demo": VaultBinding(
+            "demo",
+            account="user@example.com",
+            impersonate_service_account="deployer@demo.iam.gserviceaccount.com",
+        ),
+    }
+    backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
+    backend.access("sm-x", project="demo")
+
+    cmd = observed[0]
+    assert "--account=user@example.com" in cmd
+    assert "--impersonate-service-account=deployer@demo.iam.gserviceaccount.com" in cmd
+
+
+def test_access_no_impersonate_flag_when_binding_omits_it(home, monkeypatch):
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    observed = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    bindings = {"demo": VaultBinding("demo", account="user@example.com")}
+    backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
+    backend.access("sm-x", project="demo")
+
+    assert not any(arg.startswith("--impersonate-service-account=") for arg in observed[0])
+
+
+def test_latest_version_also_passes_impersonate_service_account_flag(home, monkeypatch):
+    monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
+    observed = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    bindings = {
+        "demo": VaultBinding(
+            "demo",
+            account="user@example.com",
+            impersonate_service_account="deployer@demo.iam.gserviceaccount.com",
+        ),
+    }
+    backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
+    backend.latest_version("sm-x", project="demo")
+
+    cmd = observed[0]
+    assert "--impersonate-service-account=deployer@demo.iam.gserviceaccount.com" in cmd
+
+
+def test_save_and_load_vault_bindings_round_trips_impersonate_service_account(home):
+    save_vault_bindings({
+        "p": VaultBinding("p", account="user@example.com", impersonate_service_account="deployer@demo.iam.gserviceaccount.com"),
+    })
+    bindings = load_vault_bindings()
+    assert bindings["p"].impersonate_service_account == "deployer@demo.iam.gserviceaccount.com"
+
+
+def test_legacy_bindings_file_without_impersonate_key_defaults_empty(home):
+    path = home / "gcp-bindings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"p": {"wif_audience": "aud", "account": "user@example.com"}}')
+    import os
+    os.chmod(path, 0o600)
+    bindings = load_vault_bindings()
+    assert bindings["p"].impersonate_service_account == ""
+
+
 def test_two_accounts_in_same_process_each_use_own_account(home, monkeypatch):
     monkeypatch.setattr("portunus.backend.shutil.which", lambda name: "/bin/gcloud")
     observed = []

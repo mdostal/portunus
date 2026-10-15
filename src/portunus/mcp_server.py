@@ -33,7 +33,7 @@ from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, re
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
-from .rotation import load_rotation_bindings, rotation_audit_data
+from .rotation import load_rotation_bindings
 
 mcp = FastMCP("portunus")
 
@@ -153,8 +153,9 @@ def portunus_rotation_status(provider: str = "") -> dict:
     one provider or all. Metadata only, never a credential -- rotation
     adapters resolve their own admin token via the normal boundary-only
     resolver, never a value this tool could see. Same values as
-    `portunus rotation-bindings show --json`. Every provider is a stub
-    today (status="stub") -- no real rotation has ever fired."""
+    `portunus rotation-bindings show --json`. Real adapters: `oauth`
+    (wraps OAuthBackend -- drives every stored OAuth refresh credential
+    through a single job). Stub adapters: vercel, github, stripe."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
@@ -162,31 +163,6 @@ def portunus_rotation_status(provider: str = "") -> dict:
             return {}
         bindings = {provider: binding}
     return {p: {"status": b.status, "account": b.account} for p, b in bindings.items()}
-
-
-@mcp.tool()
-def portunus_rotation_audit() -> dict:
-    """Inventory what is stored vs. what can actually be rotated: group all
-    registry references and OAuth credentials by provider, join each to its
-    rotation capability (auto/manual/unknown), and report counts per
-    capability with the specific reference names and any un-retired
-    superseded key IDs. Metadata only -- never a credential value.
-
-    Returns:
-      providers: {provider: {capability, refs, oauth_accounts,
-                              superseded_key_ids}}
-      totals:    {auto, manual, unknown}
-      unreadable_oauth_count: int
-    """
-    registry = Registry()
-    rotation_bindings = load_rotation_bindings()
-    local_backend = None
-    try:
-        from .localvault import LocalEncryptedBackend
-        local_backend = LocalEncryptedBackend()
-    except Exception:
-        pass
-    return rotation_audit_data(registry, rotation_bindings, local_backend)
 
 
 @mcp.tool()
@@ -200,8 +176,16 @@ def portunus_discover(project: str, register: bool = False) -> dict:
     project. Mirrors `portunus discover [--register] --json` exactly -- one
     safety-reviewed implementation, three entry points (CLI, UI, MCP)."""
     registry, _audit, _broker, resolver = _build()
+    account = ""
+    impersonate_service_account = ""
+    binding = load_vault_bindings().get(project)
+    if binding:
+        account = binding.account
+        impersonate_service_account = binding.impersonate_service_account
     try:
-        discovered = list_gcp_secrets(project)
+        discovered = list_gcp_secrets(
+            project, account=account, impersonate_service_account=impersonate_service_account
+        )
     except DiscoverError as exc:
         return {"error": str(exc)}
 

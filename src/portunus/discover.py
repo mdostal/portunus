@@ -44,7 +44,11 @@ def _default_runner(cmd, capture_output, text, timeout):
 
 
 def list_gcp_secrets(
-    project: str, account: str = "", runner: Optional[Runner] = None, timeout: float = 30.0
+    project: str,
+    account: str = "",
+    impersonate_service_account: str = "",
+    runner: Optional[Runner] = None,
+    timeout: float = 30.0,
 ) -> List[DiscoveredSecret]:
     """List secret names + labels + create-time for `project`. Never a value.
 
@@ -53,6 +57,13 @@ def list_gcp_secrets(
     account" -- lets discovery work correctly across multiple GCP accounts
     in the same process. Empty means "use whatever gcloud considers active"
     (unchanged ambient behavior).
+
+    `impersonate_service_account`, when set alongside `account`, mints a
+    short-lived token for that service account instead (requires `account`
+    to hold roles/iam.serviceAccountTokenCreator on it) -- same rationale as
+    VaultBinding.impersonate_service_account in backend.py: a stable,
+    non-reauth-walled identity standing in for a human account whose
+    session can expire.
     """
     if shutil.which("gcloud") is None:
         raise DiscoverError("gcloud CLI not found on PATH")
@@ -60,6 +71,8 @@ def list_gcp_secrets(
     cmd = ["gcloud"]
     if account:
         cmd.append(f"--account={account}")
+        if impersonate_service_account:
+            cmd.append(f"--impersonate-service-account={impersonate_service_account}")
     cmd.extend(["secrets", "list", f"--project={project}", "--format=json"])
     try:
         proc = run(cmd, capture_output=True, text=True, timeout=timeout)

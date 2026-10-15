@@ -4,6 +4,50 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-09-14
+
+### Added
+
+- **OAuth refresh rotation adapter + general rotation framework (PANT-161 / portunus-key-rotation-framework).**
+  `OAuthRefreshRotationAdapter` wraps the existing `OAuthBackend`/`OAuthRefreshTokenAuth`
+  path — no second implementation of the refresh grant, no drift. One adapter drives every
+  stored OAuth credential through a single `run_periodic_oauth_refresh()` job;
+  adding a new refresh-token credential requires no new per-provider launchd job (supersedes
+  PANT-146/147/149's per-credential approach). Provider-rotated refresh tokens are persisted
+  immediately via `store_oauth_credential` (confirmed live against Codex CLI's subscription
+  login through `auth.openai.com/oauth/token`). `--retire-old` is rejected with a clear error
+  on OAuth refresh rotation — the provider replaces the spent token as part of the grant; there
+  is no superseded credential to retire. `RotationResult` is a frozen dataclass structurally
+  incapable of carrying credential material: key identifiers, phase, booleans, and timestamps only.
+  `rotation_adapter_for("oauth")` resolves the new adapter.
+
+- **`OAuthRefreshTokenAuth`: optional `client_secret` + JSON request body support.**
+  `client_secret` is now `Optional[str]` (a genuinely public/PKCE client has none to supply;
+  sending an explicit empty secret is rejected by some token endpoints). New `request_format`
+  param (`"form"` default, unchanged; `"json"` for Codex-shaped endpoints) picks the
+  Content-Type and wire serialization. `OAuthBackend.access()` reads `client_secret` via
+  `credential.get()` and threads `request_format` from the stored bundle.
+
+- **GCP service-account impersonation for vault bindings.**
+  `VaultBinding.impersonate_service_account` lets a stable, non-reauth-walled identity
+  (e.g. a personal Google account) mint short-lived tokens for a project-scoped service account
+  via `--impersonate-service-account=` alongside `--account=`. Requires
+  `roles/iam.serviceAccountTokenCreator` on the target. Persisted in vault-bindings.json,
+  backward-compatible with existing bundles.
+
+- **`docs/rotation.md`** — the single human-facing answer to "what rotates, what doesn't, and
+  what do I have to do by hand." Covers the non-destructive default and its rationale, the
+  provider capability matrix (auto / manual / stub), the OAuth refresh flow, and an explicit
+  section for `manual` providers (Linear personal API keys, GCP service-account keys) stating
+  that no auto-rotation is possible and human re-issue is permanently required.
+
+### Fixed
+
+- Corrected stale claims in `rotation.py`'s module docstring ("No real provider API is ever
+  called from this module") and `mcp_server.py`'s `portunus_rotation_status` docstring
+  ("Every provider is a stub today -- no real rotation has ever fired") -- both were false
+  once `OAuthRefreshRotationAdapter` landed.
+
 ## [0.32.0] - 2026-09-02
 
 ### Added
