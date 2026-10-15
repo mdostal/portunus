@@ -581,6 +581,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#chrome-saved-logins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chrome saved logins
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chrome saved logins">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sm_name-scheme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sm_name scheme
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discovering-whats-available-metadata-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discovering what's available (metadata only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registering-and-resolving-a-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registering and resolving a reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stub-backends" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1074,6 +1146,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#chrome-saved-logins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chrome saved logins
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chrome saved logins">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sm_name-scheme" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sm_name scheme
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discovering-whats-available-metadata-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discovering what's available (metadata only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#registering-and-resolving-a-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registering and resolving a reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Known limitations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stub-backends" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1266,6 +1410,44 @@ portunus<span class="w"> </span>auth<span class="w"> </span>login<span class="w"
 portunus<span class="w"> </span>auth<span class="w"> </span>status
 </code></pre></div>
 <hr />
+<h2 id="chrome-saved-logins">Chrome saved logins<a class="headerlink" href="#chrome-saved-logins" title="Permanent link">&para;</a></h2>
+<p>Reads Chrome's own saved logins (the browser's <code>Login Data</code> store) through Portunus's existing resolver boundary — useful for test scenarios that need to exercise real, already-authenticated browser credentials without a separate secret-management step. <strong>Read-only.</strong> Portunus never writes to, rotates, or otherwise touches Chrome's own storage.</p>
+<p><strong>Platform support: macOS and Linux only.</strong> Windows is explicitly not supported — see <a href="https://github.com/mdostal/portunus/issues/181">#181</a>.</p>
+<h3 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>macOS</strong>: Chrome's AES key is derived from a random password stored in the login Keychain (service <code>Chrome Safe Storage</code>, account <code>Chrome</code>) via PBKDF2-HMAC-SHA1. This is a same-user, no-privilege-escalation read — the same trust tier as Portunus's own local vault.</li>
+<li><strong>Linux</strong>: the key comes from whichever keyring Chrome itself picked at save time — GNOME Secret Service (<code>libsecret</code>) or KWallet, mirroring Chromium's own desktop-environment auto-selection. If neither keyring is available, Chrome stores the password <strong>effectively unprotected</strong> (a real, disclosed Chrome behavior on minimal Linux setups, not a Portunus shortcut) — Portunus surfaces this with an audit warning rather than quietly decrypting it as if it were normal.</li>
+</ul>
+<h3 id="sm_name-scheme">sm_name scheme<a class="headerlink" href="#sm_name-scheme" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>chrome:&lt;profile&gt;:&lt;origin&gt;:&lt;username&gt;
+</code></pre></div>
+<p><code>&lt;profile&gt;</code> is Chrome's own profile directory name (e.g. <code>Default</code>, <code>Profile 1</code> — use <code>portunus browser profiles</code> to see what's actually there, mapped to the display name you'd recognize in Chrome's own UI). <code>&lt;origin&gt;</code> and <code>&lt;username&gt;</code> identify one saved login row exactly as Chrome stored it.</p>
+<h3 id="discovering-whats-available-metadata-only">Discovering what's available (metadata only)<a class="headerlink" href="#discovering-whats-available-metadata-only" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># List every discovered Chrome profile and which store protects it</span>
+portunus<span class="w"> </span>browser<span class="w"> </span>profiles
+
+<span class="c1"># List (origin, username) pairs for one profile's saved logins</span>
+portunus<span class="w"> </span>browser<span class="w"> </span>list<span class="w"> </span>--profile<span class="w"> </span>Default
+</code></pre></div>
+<p>Both commands are structurally incapable of returning a password — they only ever read profile/login <em>metadata</em>, never the encrypted value, let alone a decrypted one.</p>
+<h3 id="registering-and-resolving-a-reference">Registering and resolving a reference<a class="headerlink" href="#registering-and-resolving-a-reference" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Register a reference against a real saved login (the dummy value below is</span>
+<span class="c1"># never actually used for resolution -- backend=chrome always wins over</span>
+<span class="c1"># whatever's in local storage, same as backend=oauth)</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">"unused"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>portunus<span class="w"> </span>drop<span class="w"> </span>my-test-login<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"chrome:Default:https://example.com:alice@example.com"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--backend<span class="w"> </span>chrome<span class="w"> </span>--stdin
+
+<span class="c1"># Resolve it through the normal boundary-only path, like any other reference</span>
+portunus<span class="w"> </span>resolve<span class="w"> </span>my-test-login
+</code></pre></div>
+<h3 id="known-limitations">Known limitations<a class="headerlink" href="#known-limitations" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>No in-memory cache.</strong> Unlike <code>OAuthBackend</code>, every resolve re-reads and re-decrypts — re-decrypting is cheap, and this minimizes how long a decrypted password lives in process memory.</li>
+<li><strong>Write-back / rotation is explicit backlog, not implemented.</strong> See <a href="https://github.com/mdostal/portunus/issues/182">#182</a> — the long-term plan is an API-level roll/change rather than mutating Chrome's own SQLite store directly next to a running browser.</li>
+<li><strong>The Linux key-fetch path was not live-tested</strong> against a real Secret Service/KWallet install during this epic (implemented on macOS) — fixture/mock-only. The macOS path was live-verified against this machine's real Chrome install (1020 real saved logins decrypted with zero failures).</li>
+</ul>
+<hr />
 <h2 id="stub-backends">Stub backends<a class="headerlink" href="#stub-backends" title="Permanent link">&para;</a></h2>
 <p>The following backends are recognized by Portunus but not yet implemented. Each fails closed with a clear error rather than silently mis-routing to a different backend:</p>
 <table>
@@ -1328,6 +1510,10 @@ portunus<span class="w"> </span>auth<span class="w"> </span>status
 <tr>
 <td>Production with GCP, also need offline resilience or deploy-time snapshot</td>
 <td><code>gcp</code> + <code>sync_mode: cached</code></td>
+</tr>
+<tr>
+<td>Testing against real, already-authenticated browser credentials (macOS/Linux)</td>
+<td><code>chrome</code></td>
 </tr>
 <tr>
 <td>Any other cloud provider</td>

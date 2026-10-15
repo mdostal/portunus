@@ -1368,6 +1368,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        health
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2219,6 +2230,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        health
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#status" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2626,7 +2648,7 @@ portunus<span class="w"> </span>bindings<span class="w"> </span>show
 <p><code>--ttl</code> is the number of accesses to allow (default: 3).</p>
 <hr />
 <h3 id="grant"><code>grant</code><a class="headerlink" href="#grant" title="Permanent link">&para;</a></h3>
-<p>Record an audited access widening to a named member.</p>
+<p>Record an access widening to a named member in the audit log only. No IAM change is made; apply the real permission at the provider yourself.</p>
 <div class="highlight"><pre><span></span><code>portunus grant &lt;name&gt; &lt;member&gt;
 </code></pre></div>
 <hr />
@@ -2773,9 +2795,66 @@ portunus<span class="w"> </span>discover<span class="w"> </span>--provider<span 
 </code></pre></div></p>
 <hr />
 <h3 id="verify"><code>verify</code><a class="headerlink" href="#verify" title="Permanent link">&para;</a></h3>
-<p>Verify the audit hash chain. Exits <code>2</code> if broken.</p>
+<p>Verify the audit hash chain. Exits <code>2</code> if broken, naming the first bad line of <code>audit.log</code>
+(a corrupt line is reported, never a crash).</p>
 <div class="highlight"><pre><span></span><code>portunus verify
 </code></pre></div>
+<hr />
+<h3 id="health"><code>health</code><a class="headerlink" href="#health" title="Permanent link">&para;</a></h3>
+<p>Read-only deep self-check. Never resolves a secret value, never writes to <code>PORTUNUS_HOME</code>
+or the audit log.</p>
+<div class="highlight"><pre><span></span><code>portunus health [--json]
+</code></pre></div>
+<p><code>--json</code> prints <code>{"status": "ok"|"degraded"|"down", "checks": [{"name", "ok", "detail"}]}</code>.
+Exit code: <code>0</code> ok, <code>1</code> degraded, <code>2</code> down.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Fails as</th>
+<th>What it proves</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>home</code></td>
+<td>down</td>
+<td><code>PORTUNUS_HOME</code> exists and is a directory</td>
+</tr>
+<tr>
+<td><code>permissions</code></td>
+<td>degraded</td>
+<td>home is <code>0700</code> and state files are <code>0600</code></td>
+</tr>
+<tr>
+<td><code>registry</code></td>
+<td>down</td>
+<td><code>registry.json</code> parses and every entry is a valid reference</td>
+</tr>
+<tr>
+<td><code>audit_chain</code></td>
+<td>degraded</td>
+<td>the audit hash chain verifies (same as <code>portunus verify</code>)</td>
+</tr>
+<tr>
+<td><code>audit_clock</code></td>
+<td>degraded</td>
+<td><code>.clock</code> equals the last audit <code>seq</code>, which catches a truncated log tail the chain alone can't see</td>
+</tr>
+<tr>
+<td><code>bindings</code></td>
+<td>degraded</td>
+<td><code>vault-bindings.json</code> parses (only when present)</td>
+</tr>
+<tr>
+<td><code>backend:&lt;kind&gt;</code></td>
+<td>degraded</td>
+<td>each backend in use: local vault parses and its master key is present and valid; gcloud is on <code>PATH</code> and a <code>versions describe latest</code> metadata probe on one reference succeeds (WIF-bound references are skipped, since minting writes an audit entry); stub backends fail</td>
+</tr>
+</tbody>
+</table>
+<p>The Docker image runs it as its <code>HEALTHCHECK</code>; the UI serves it at <code>GET /api/health</code>; the MCP
+server exposes it as <code>portunus_health</code>.</p>
 <hr />
 <h3 id="status"><code>status</code><a class="headerlink" href="#status" title="Permanent link">&para;</a></h3>
 <p>Show a reference's current state and approval gate.</p>

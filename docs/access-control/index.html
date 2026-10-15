@@ -1121,7 +1121,7 @@ portunus<span class="w"> </span>gate<span class="w"> </span>my-ref<span class="w
 <p>The approval is scoped to the <strong>reference name only</strong> — not to the requesting identity. Any caller can resolve an approved reference until the approval expires. This is a known gap: future work will scope approvals to a specific principal.</p>
 <hr />
 <h2 id="grant">Grant<a class="headerlink" href="#grant" title="Permanent link">&para;</a></h2>
-<p><code>portunus grant</code> records an explicit, audited widening of access for a named member. This writes an audit entry regardless of whether GCP IAM changes are actually applied:</p>
+<p><code>portunus grant</code> records an intended widening of access for a named member <strong>in the audit log only</strong>. It makes no IAM change: nothing is sent to GCP (no <code>add-iam-policy-binding</code>) or any other provider, and <code>roles.json</code> is not touched. Apply the real permission yourself:</p>
 <div class="highlight"><pre><span></span><code>portunus<span class="w"> </span>grant<span class="w"> </span>my-ref<span class="w"> </span>some-member@example.com
 </code></pre></div>
 

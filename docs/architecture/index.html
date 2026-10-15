@@ -1413,34 +1413,39 @@ itself.</p>
 <h2 id="5-rotation-provenance">5. Rotation provenance<a class="headerlink" href="#5-rotation-provenance" title="Permanent link">&para;</a></h2>
 <p>A second, genuinely different kind of "real vs. stub" split from ARCA's own (§2, §1's <code>Stub</code>
 node): ARCA answers <em>where a value lives</em>, <code>RotationBinding</code>/<code>RotationAdapter</code> (<code>rotation.py</code>)
-answer <em>who would rotate it, and whether Portunus can yet</em>. <strong>Zero real adapters exist today —
-every provider is <code>status="stub"</code>.</strong> This section documents the shape now so the docs don't
-overstate what's built; treat every "would" below as aspirational, not shipped.</p>
+answer <em>who would rotate it, and whether Portunus can yet</em>. <strong>Two adapters are real today and
+report <code>capability() == "auto"</code>:</strong> <code>OAuthRefreshRotationAdapter</code> (OAuth refresh tokens, wrapping
+<code>OAuthBackend</code>) and <code>GCPServiceAccountKeyRotationAdapter</code> (GCP service-account keys:
+create → verify → store, with opt-in <code>--retire-old</code> that disables, never deletes, the superseded
+key). Both run via <code>portunus rotation run &lt;ref&gt;</code>. <strong>Vercel, GitHub and Stripe are still stubs</strong>
+that raise <code>RotationAdapterError</code> and report <code>capability() == "unknown"</code>. The per-provider
+capability matrix lives in <a href="../rotation/"><code>docs/rotation.md</code></a>, and
+<code>tests/test_rotation_docs_drift.py</code> fails if an <code>auto</code> adapter isn't listed as auto there.</p>
 <div class="highlight"><pre><span></span><code>graph TD
-    accTitle: Rotation provenance -- config today, real integration later
-    accDescr: RotationBinding records which provider and what account context; RotationAdapter is a stub registry today. A future real adapter fetches its own admin credential via Portunus's own resolver, never a special-cased credential path.
+    accTitle: Rotation provenance -- two real adapters, three stubs
+    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth and gcp to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
 
-    RB["RotationBinding&lt;br/&gt;(provider, status: real|stub, account)&lt;br/&gt;PORTUNUS_HOME/rotation-bindings.json"]
-    Registry["RotationAdapter registry&lt;br/&gt;Vercel (priority target) · GitHub · Stripe"]
-    Button["DetailDrawer 'Auto-rotate…' button&lt;br/&gt;enabled only if status==real"]
+    RB["RotationBinding&lt;br/&gt;(provider, status: real|stub|manual, account)&lt;br/&gt;PORTUNUS_HOME/rotation-bindings.json"]
+    Registry["RotationAdapter registry&lt;br/&gt;(rotation_adapter_for)"]
+    Run["portunus rotation run REF"]
 
-    RB --&gt;|drives| Button
-    Registry --&gt;|every adapter today| Stub["raises RotationAdapterError&lt;br/&gt;(no real API call, ever)"]
+    Run --&gt; Registry
+    Registry --&gt;|oauth| OAuth["OAuthRefreshRotationAdapter&lt;br/&gt;capability: auto"]
+    Registry --&gt;|gcp| GCP["GCPServiceAccountKeyRotationAdapter&lt;br/&gt;capability: auto"]
+    Registry --&gt;|vercel · github · stripe| Stub["stub: raises RotationAdapterError&lt;br/&gt;capability: unknown"]
+    RB -.-&gt;|provider context| Registry
 
-    subgraph Future["Once a real adapter ships (none do yet)"]
-        Real["VercelRotationAdapter.rotate(ref)"] --&gt;|resolves its OWN admin token via| SelfResolve["resolver.resolve_call(&lt;br/&gt;'{{secret:portunus-admin-vercel-token}}', boundary=...)"]
-        SelfResolve --&gt;|same boundary-only sink&lt;br/&gt;every other value uses| ProviderAPI["Provider's rotate API"]
-    end
-
-    Registry -.-&gt;|becomes, once real| Real
+    GCP --&gt;|optional admin_credential_ref resolved via| SelfResolve["resolver.resolve_call(&lt;br/&gt;'{{secret:...}}', boundary=...)"]
+    SelfResolve --&gt;|same boundary-only sink&lt;br/&gt;every other value uses| ProviderAPI["gcloud iam service-accounts keys ..."]
+    OAuth --&gt;|OAuthBackend.access()| TokenEndpoint["provider token endpoint&lt;br/&gt;(rotated refresh_token persisted back)"]
 </code></pre></div>
-<p>The recursive property worth naming explicitly: a real rotation adapter authenticates to its
-provider using a credential that is <strong>itself just another Portunus-managed <code>Reference</code></strong> —
-resolved through the same <code>Resolver.resolve_call()</code> boundary sink every other value in this
-codebase already uses, never hardcoded into the adapter and never handled outside the normal
-resolve path. Portunus would rotate <em>other</em> secrets by using <em>its own</em> vaulted admin secret — no
-second credential-handling mechanism, ever. This is a design decision recorded ahead of the
-build, not a description of running code.</p>
+<p>The recursive property worth naming explicitly: a rotation adapter that needs an admin credential
+authenticates to its provider using a credential that is <strong>itself just another Portunus-managed
+<code>Reference</code></strong> — resolved through the same <code>Resolver.resolve_call()</code> boundary sink every other
+value in this codebase already uses, never hardcoded into the adapter and never handled outside
+the normal resolve path. <code>GCPServiceAccountKeyRotationAdapter</code> already does this when given an
+<code>admin_credential_ref</code>; the stub adapters (Vercel is the confirmed priority target for the next
+real one) are meant to follow the same pattern once built.</p>
 <h2 id="6-the-desktop-app-is-packaging-not-a-new-component">6. The desktop app is packaging, not a new component<a class="headerlink" href="#6-the-desktop-app-is-packaging-not-a-new-component" title="Permanent link">&para;</a></h2>
 <p>Worth stating plainly: the Tauri desktop app (<code>ui/src-tauri/</code>) is <strong>not</strong> a fifth architecture
 component alongside OSTIARIUS/ARCA/Petitio/audit. It's a native wrapper around the existing UI

@@ -1170,8 +1170,8 @@ portunus<span class="w"> </span>agent<span class="w"> </span>init<span class="w"
 </thead>
 <tbody>
 <tr>
-<td><code>portunus_health</code></td>
-<td>Liveness check. Returns <code>"ok"</code>. Does not touch the registry or vault.</td>
+<td><code>portunus_health(shallow=False)</code></td>
+<td>Same read-only deep self-check as <code>portunus health --json</code>: <code>{status: ok\|degraded\|down, checks: [{name, ok, detail}]}</code>. Never resolves a value. <code>shallow=True</code> returns <code>{"status": "ok", "checks": []}</code> without touching anything.</td>
 </tr>
 </tbody>
 </table>
