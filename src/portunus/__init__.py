@@ -52,7 +52,7 @@ from .auth import (
 # tests/test_version_consistency.py fails the build if they drift. A literal rather than
 # importlib.metadata: an editable install's metadata is frozen at install time, so a
 # `git pull` that bumps pyproject would otherwise keep reporting the old version.
-__version__ = "0.33.0"
+__version__ = "0.34.0"
 
 __all__ = [
     "Registry",
