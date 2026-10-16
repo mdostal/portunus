@@ -33,6 +33,7 @@ new one).
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
 | `grafana-cloud` (org access policy token) | Grafana Cloud access policy token (`glc_...`) | **auto** | `GrafanaCloudRotationAdapter`: create a sibling token under the same access policy → verify (read-only GET with the new token) → store. `--retire-old` **deletes** the old token — the API has no disable. Needs `grafana_access_policy_id` + `grafana_region` tags; see [Grafana Cloud access policy tokens](#grafana-cloud-access-policy-tokens). **Not** a self-hosted Grafana admin password (manual) or a stack data-source credential (unknown). |
 | `resend` | API key (`re_...`) | **auto** | `ResendRotationAdapter`: create → verify (read-only `GET /api-keys`, sends no email) → store. `--retire-old` **deletes** the old key — Resend has no disable. Needs `tags["resend_api_key_id"]` for `--retire-old`; see [Resend API keys](#resend-api-keys) below. |
+| `youtrack` (JetBrains Hub permanent token) | `perm:...` token for the YouTrack REST API | **auto** | `YouTrackRotationAdapter` drives `create → verify → store` against the Hub REST API. `--retire-old` **deletes** the old token (Hub has no disable). Needs a Hub URL tag and `hub_token_id`; see below. |
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 | `sentry` | User / org / internal-integration auth token | **manual** | Sentry's token endpoints accept session auth only and reject any bearer token, so no admin credential can mint or revoke a token. `SentryRotationAdapter` is registered so `rotation run` prints the human re-issue steps. See `provider-rotation-matrix.md`. |
 
@@ -154,6 +155,34 @@ Phases:
    Resend has no disable, so pass `--retire-old` only after every consumer has the new key.
    Without it, the old key id is added to the `resend` binding's `superseded_key_ids`, and
    `portunus rotation audit` lists it until it is retired.
+
+---
+
+## YouTrack (Hub permanent tokens)
+
+`YouTrackRotationAdapter` rotates the JetBrains Hub permanent token (`perm:...`) that a
+YouTrack REST client authenticates with, via `portunus rotation run <ref-name> [--retire-old]`.
+The current token authenticates its own replacement -- no separate admin credential.
+
+1. `GET <hub>/api/rest/users/me` with the current token gives the owner's user id.
+2. A new token is created under that user with the **same scope** as the current one.
+3. `GET users/me` with the new token must return the same user, or the new token is deleted
+   and nothing is stored.
+4. The new token is stored; with `--retire-old` the old one is **deleted**. Hub has no way to
+   disable a permanent token, so this is irreversible; leave it off until consumers have the
+   new token.
+
+The reference needs `provider=youtrack` and these tags:
+
+| Tag | Purpose |
+|---|---|
+| `hub_url` | Hub service URL, e.g. `https://yt.example.com/hub`. Optional if one of the next two is set. |
+| `youtrack_url` | YouTrack URL; Hub is taken as its built-in `/hub` (`…/youtrack` → `…/hub`). |
+| `youtrack_url_ref` | Name of a reference that stores the YouTrack URL (e.g. `ffe-orchestration-dev-youtrack-base-url`); resolved through the normal resolver. |
+| `hub_token_id` | Hub id of the token currently stored. Required for `--retire-old` and to copy its scope. List ids with `GET <hub>/api/rest/users/{userId}/permanenttokens?fields=id,name` (`{userId}` from `GET <hub>/api/rest/users/me?fields=id`). The adapter sets it to the new token's id after each rotation; without `--retire-old` the old id is listed under the `youtrack` binding's `superseded_key_ids`. |
+| `hub_scope` | Comma-separated Hub service ids, used only when `hub_token_id` is not set. |
+
+The Hub URL is per install, so the adapter never assumes one.
 
 ---
 

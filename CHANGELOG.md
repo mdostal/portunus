@@ -29,6 +29,14 @@ All notable changes to Portunus are documented in this file.
   `--retire-old` deletes the old key, because Resend has no disable. Without it, the old id is
   listed under the `resend` binding's `superseded_key_ids`. `portunus rotation run` now also
   prints `key_id=` when the adapter reports one.
+- **YouTrack token rotation (PANT-1138, #191).** `YouTrackRotationAdapter` (`provider=youtrack`)
+  rotates a JetBrains Hub permanent token through the Hub REST API. It creates a new token with the
+  current token's scope, checks that the new token authenticates as the same user, stores it, and
+  deletes the old token only with `--retire-old`. The Hub URL comes from a `hub_url`, `youtrack_url`
+  or `youtrack_url_ref` tag. Nothing is hardcoded. The current token's id lives in `hub_token_id`.
+  The adapter updates it after each rotation, and lists the old id under `superseded_key_ids` until
+  it is retired, the same as Resend. `docs/provider-rotation-matrix.md` had
+  the wrong endpoint (`users/me/tokens`). It now shows the documented `users/{id}/permanenttokens`.
 
 ### Fixed
 
