@@ -524,7 +524,7 @@ portunus rotation-bindings show [<provider>] [--json]
 
 **Example:**
 ```sh
-portunus rotation-bindings set vercel --status stub
+portunus rotation-bindings set vercel --status real --account my-team-slug
 portunus rotation-bindings show
 ```
 

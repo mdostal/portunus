@@ -18,6 +18,14 @@ All notable changes to Portunus are documented in this file.
   `apikeys.googleapis.com` enabled and `roles/serviceusage.apiKeysAdmin` (or the same
   permissions) on the calling identity.
 
+- **Vercel access token rotation (PANT-1135, #194).** `VercelRotationAdapter` (provider `vercel`)
+  is no longer a stub: it creates a replacement token (`POST /v3/user/tokens`), verifies it with
+  a read-only `GET /v5/user/tokens/current` that must return the new id, stores it, and with
+  `--retire-old` deletes the old token (`DELETE /v3/user/tokens/{id}`). The old token's id comes
+  from `tags["vercel_token_id"]` or is looked up with the stored token. Optional tags set a team,
+  a project scope and an `expiresAt` TTL. This is proactive rotation only: a token that is already
+  dead can't authenticate the create call, which is the liveness problem (#144). Vercel AI API
+  keys are a different product and stay out of scope. See `docs/rotation.md`.
 - **Grafana Cloud access policy token rotation (PANT-1137, #192).** `GrafanaCloudRotationAdapter`
   (provider `grafana-cloud`) creates a new token under the same access policy, verifies it with a
   read-only GET, stores it, and with `--retire-old` deletes the old token. It needs the
