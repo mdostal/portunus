@@ -163,32 +163,6 @@ Authorization: Bearer <admin-token>
 
 ---
 
-### Sentry user auth token
-
-**Vault examples**: `orchestration-dev-sentry-auth-token`, `monitoring-dev-sentry-org-token`, `shindig-prod-sentry-auth-token`
-
-**Credential type**: Sentry user auth token, generated at https://sentry.io/settings/account/api/auth-tokens/ — distinct from Sentry internal integration tokens.
-
-**Source**: https://docs.sentry.io/api/auth/
-
-**Concrete call sequence**:
-
-```bash
-# 1. Create a replacement token (requires an existing token with `org:admin` scope)
-POST https://sentry.io/api/0/api-tokens/
-Authorization: Bearer <admin-token>
-
-# 2. Store new token in ARCA
-
-# 3. Verify
-
-# 4. Delete old token
-DELETE https://sentry.io/api/0/api-tokens/{tokenId}/
-Authorization: Bearer <admin-token>
-```
-
----
-
 ### YouTrack personal permanent token (JetBrains Hub)
 
 **Vault examples**: `ffe-orchestration-dev-youtrack-api-key`
@@ -243,6 +217,36 @@ DELETE https://grafana.com/api/v1/orgs/{orgSlug}/access-policies/{policyId}/toke
 ---
 
 ## `manual` — positively confirmed absence of any programmatic rotation path for this credential type
+
+---
+
+### Sentry auth tokens (user, organization, internal integration)
+
+**Vault examples**: `orchestration-dev-sentry-auth-token`, `monitoring-dev-sentry-org-token`, `shindig-prod-sentry-auth-token`, `ffe-cicd-sentry-admin-token`
+
+**Credential type**: any Sentry API token. Sentry has three families: **user auth tokens** (`sntryu_...`, Settings > Account > User Auth Tokens), **organization auth tokens** (`sntrys_...`, Settings > Organization > Auth Tokens, CI-only scopes), and **internal integration tokens** (Settings > Custom Integrations). Tokens created before 2024 have no prefix (64 hex chars).
+
+**Source**: Sentry's own server code, `getsentry/sentry` `master` (checked 2026-10-16):
+- `src/sentry/api/endpoints/api_tokens.py` and `api_token_details.py`: user auth tokens
+- `src/sentry/api/endpoints/organization_auth_tokens.py` and `organization_auth_token_details.py`: org auth tokens
+- `src/sentry/sentry_apps/api/endpoints/sentry_internal_app_tokens.py` and `sentry_internal_app_token_details.py`: internal integration tokens
+
+Every one of these endpoints sets `authentication_classes = (SessionNoAuthTokenAuthentication,)`, which returns unauthenticated for any request that carries an `Authorization` header (Bearer, Basic or otherwise), and marks every method `ApiPublishStatus.PRIVATE`. The user-token endpoint has been session-only since 2023-07-31 (getsentry/sentry#53850); before that it used plain `SessionAuthentication`, so it never accepted token auth. Since 2026-03-17 these endpoints also refuse impersonated sessions (#110654).
+
+**Correction (PANT-1139)**: this section used to list Sentry user auth tokens as `auto`, with `POST /api/0/api-tokens/` authenticated by an `org:admin` bearer token. That call is rejected whatever the token's scopes are. No admin token can mint or revoke another Sentry token, so no unattended create, verify, retire cycle exists. Scripting a browser session (cookie + CSRF + SSO/2FA) against a private API is not a rotation path Portunus will build.
+
+**Which token is which**: the names don't settle the type, but it doesn't change the result. All three families are manual. `*-sentry-org-token` is probably an org auth token. `*-sentry-auth-token` and `ffe-cicd-sentry-admin-token` could be either a user or an org token. `ffe-cicd-sentry-admin-token` (`state: requested`) was presumably meant to be the admin credential for the old `auto` flow, and since that flow doesn't exist it has no rotation role. A one-time prefix check (`sntryu_` vs `sntrys_`) tells you the type if it matters for scope review.
+
+**Human re-issue**:
+
+```text
+1. Create the replacement token in the Sentry UI (same page the old one lives on), same scopes.
+2. Store it in ARCA under the same reference.
+3. Verify with a cheap read the token's scopes allow (e.g. `GET https://sentry.io/api/0/organizations/` for a user token with `org:read`).
+4. Revoke the old token from the same UI page.
+```
+
+`portunus rotation run` on a `sentry` reference prints these instructions (`SentryRotationAdapter`, capability `manual`).
 
 ---
 

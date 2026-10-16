@@ -6,6 +6,15 @@ All notable changes to Portunus are documented in this file.
 
 ### Fixed
 
+- **Sentry tokens are `manual`, not `auto` (PANT-1139, #190).** `provider-rotation-matrix.md`
+  listed Sentry user auth tokens as auto-rotatable via `POST /api/0/api-tokens/` with an
+  `org:admin` bearer token. That call is always rejected: Sentry's user, org and
+  internal-integration token endpoints use `SessionNoAuthTokenAuthentication`, which refuses any
+  `Authorization` header, and they have done so since 2023. A new `SentryRotationAdapter`
+  (`_ADAPTERS["sentry"]`) reports `manual`, and `portunus rotation run` on a Sentry reference
+  now prints the human re-issue steps rather than "no adapter registered". The matrix and
+  `docs/rotation.md` are corrected.
+
 - **`GET /api/health` no longer reports healthy while every write is rejected (PANT-1143,
   #186).** `ui/proxy.ts` 403s mutating requests whose `Host` isn't a loopback name unless
   `PORTUNUS_UI_HOST` is set, but GET/HEAD skip that guard, so a UI reached container-to-container
