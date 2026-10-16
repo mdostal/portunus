@@ -4,6 +4,20 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A file-target inject can now be read by a caller running as another uid (PANT-1142).**
+  `inject`/`ask` take `--mode 0600|0640|0660` and `--group <name|gid>`, and `POST /api/inject`
+  takes `mode`/`group`. Both are applied before the value is written; if Portunus can't apply
+  them, the inject fails and leaves no file. Before, every file was `0600` as Portunus's own uid
+  and a non-root caller got `ok: true` for a file it could neither read nor delete.
+  `POST /api/inject` now also returns `file: {path, uid, gid, mode, readable_by}`, so `ok` can be
+  checked against the file actually written. Default stays `0600`.
+- **`inject --tags scope=...` matches an open `scope` tag when the structured `scope` is empty
+  (PANT-1142).** The same fallback applies to every structured key. `flayr-mdostal-account`
+  carries `scope=account-wide` only in its open tags, so `ask` showed the tag but `inject` with it
+  found no reference.
+
 ## [0.34.0] - 2026-10-14
 
 ### Fixed

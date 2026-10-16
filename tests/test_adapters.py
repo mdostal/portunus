@@ -113,3 +113,73 @@ def test_file_adapter_tightens_a_preexisting_file(tmp_path):
     FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K")
     assert (target.stat().st_mode & 0o777) == 0o600
     assert target.read_text() == f"K={SENTINEL}\n"
+
+
+# --- FileAdapter mode/group (PANT-1142) ---------------------------------
+
+def test_file_adapter_group_readable_mode_and_group(tmp_path):
+    target = tmp_path / "out.env"
+    gid = os.getgid()
+    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", mode="0640", group=str(gid))
+    st = os.stat(target)
+    assert stat.S_IMODE(st.st_mode) == 0o640
+    assert st.st_gid == gid
+    assert target.read_text() == f"K={SENTINEL}\n"
+
+
+def test_file_adapter_accepts_group_name(tmp_path):
+    import grp
+    name = grp.getgrgid(os.getgid()).gr_name
+    target = tmp_path / "out.env"
+    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", mode="0660", group=name)
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o660
+
+
+@pytest.mark.parametrize("mode", ["0644", "0666", "0700", "0755", "abc"])
+def test_file_adapter_rejects_world_or_exec_modes(tmp_path, mode):
+    target = tmp_path / "out.env"
+    with pytest.raises(AdapterError) as exc_info:
+        FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", mode=mode)
+    assert SENTINEL not in str(exc_info.value)
+    assert not target.exists()
+
+
+def test_file_adapter_unknown_group_fails_before_writing(tmp_path):
+    target = tmp_path / "out.env"
+    with pytest.raises(AdapterError):
+        FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", group="no-such-group-xyz")
+    assert not target.exists()
+
+
+def test_file_adapter_group_it_cannot_set_removes_the_file_and_never_writes_value(tmp_path, monkeypatch):
+    def deny(*a, **k):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(os, "fchown", deny)
+    other_gid = os.getgid() + 12345
+    target = tmp_path / "out.env"
+    with pytest.raises(AdapterError) as exc_info:
+        FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", mode="0640", group=str(other_gid))
+    assert SENTINEL not in str(exc_info.value)
+    assert not target.exists()
+
+
+def test_file_adapter_skips_chown_when_file_already_has_the_group(tmp_path, monkeypatch):
+    # A setgid shared directory already hands new files its group; the owner
+    # can't chown to a group it isn't in, so the adapter mustn't try.
+    def deny(*a, **k):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(os, "fchown", deny)
+    target = tmp_path / "out.env"
+    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", mode="0640", group=str(os.getgid()))
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o640
+
+
+def test_describe_file_reports_owner_group_mode(tmp_path):
+    from portunus.adapters import describe_file
+    target = tmp_path / "out.env"
+    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K")
+    info = describe_file(str(target))
+    assert info["mode"] == "0600"
+    assert info["uid"] == os.getuid()
+    assert "only" in info["readable_by"]
+    assert SENTINEL not in json.dumps(info)

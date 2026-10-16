@@ -70,7 +70,7 @@ test.describe("API guard (proxy.ts)", () => {
       "Content-Type": "application/json; charset=utf-8",
     });
     expect(res.status).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ ok: true, message: "stub ok" });
+    expect(JSON.parse(res.body)).toEqual({ ok: true, message: "stub ok", file: null });
     const calls = stubCalls();
     expect(calls.length).toBe(before + 1);
     expect(calls[calls.length - 1]).toContain("inject --tags");
