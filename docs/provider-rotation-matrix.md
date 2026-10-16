@@ -102,9 +102,11 @@ gcloud services api-keys delete <OLD_KEY_UID>
 # REST: DELETE https://apikeys.googleapis.com/v2/projects/{project}/locations/global/keys/{keyId}
 ```
 
-Note: requires `apikeys.googleapis.com` enabled on the project and an identity with `apikeys.keys.create` + `apikeys.keys.delete` permissions.
+Note: requires `apikeys.googleapis.com` enabled on the project and an identity with `apikeys.keys.create`, `apikeys.keys.get`, `apikeys.keys.getKeyString`, `apikeys.keys.lookup`, `apikeys.keys.delete` and `serviceusage.operations.get` (all in `roles/serviceusage.apiKeysAdmin`).
 
-Note on Vertex AI keys (`flayr-vertex-ai-*-key`): if these are Cloud API keys (`AIza...`), this `auto` finding applies. If they are service account keys JSON, the SA key row above applies instead. The naming convention does not confirm which; a one-time inspection of the key format will resolve this.
+**Built (PANT-1136):** `GoogleCloudAPIKeyRotationAdapter`, provider `google-api-key` (separate from `gcp`). It copies the old key's restrictions to the new one. See [rotation.md](rotation.md#google-cloud-api-keys).
+
+Note on Vertex AI keys (`flayr-vertex-ai-*-key`): the name does not say which credential type these are. Checked 2026-10-16 against flayr `development` (`1a28fa9`): no code or secrets script reads `flayr-vertex-ai-*-key`. Flayr authenticates to Vertex AI with the service-account JSON in `social-engine-{env}-google-service-account-json` (`GOOGLE_SERVICE_ACCOUNT_JSON`), and to the Gemini API with the `AIza...` key in `social-engine-{env}-google-generative-ai-key`. The stored values of `flayr-vertex-ai-*-key` were not inspected (that needs vault access). Instead the adapter checks the format at rotation time: tagged `google-api-key`, it rotates an `AIza...` value and refuses a service-account JSON value, which points to `gcp`. `portunus.rotation.classify_google_credential()` gives the same answer for a single value.
 
 ---
 

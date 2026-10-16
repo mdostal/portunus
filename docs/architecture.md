@@ -184,20 +184,22 @@ sequenceDiagram
 
 A second, genuinely different kind of "real vs. stub" split from ARCA's own (§2, §1's `Stub`
 node): ARCA answers *where a value lives*, `RotationBinding`/`RotationAdapter` (`rotation.py`)
-answer *who would rotate it, and whether Portunus can yet*. **Three adapters are real today and
+answer *who would rotate it, and whether Portunus can yet*. **Four adapters are real today and
 report `capability() == "auto"`:** `OAuthRefreshRotationAdapter` (OAuth refresh tokens, wrapping
 `OAuthBackend`), `GCPServiceAccountKeyRotationAdapter` (GCP service-account keys:
 create → verify → store, with opt-in `--retire-old` that disables, never deletes, the superseded
-key) and `ResendRotationAdapter` (Resend API keys: same cycle, but `--retire-old` deletes because
-Resend has no disable). All run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
+key), `GoogleCloudAPIKeyRotationAdapter` (Google Cloud `AIza...` API keys, provider
+`google-api-key`: copies the old key's restrictions, and `--retire-old` deletes, which Google can
+undo for 30 days) and `ResendRotationAdapter` (Resend API keys: same cycle, but `--retire-old`
+deletes because Resend has no disable). All run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
 that raise `RotationAdapterError` and report `capability() == "unknown"`. The per-provider
 capability matrix lives in [`docs/rotation.md`](rotation.md), and
 `tests/test_rotation_docs_drift.py` fails if an `auto` adapter isn't listed as auto there.
 
 ```mermaid
 graph TD
-    accTitle: Rotation provenance -- three real adapters, three stubs
-    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp and resend to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
+    accTitle: Rotation provenance -- four real adapters, three stubs
+    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp, google-api-key and resend to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
 
     RB["RotationBinding<br/>(provider, status: real|stub|manual, account)<br/>PORTUNUS_HOME/rotation-bindings.json"]
     Registry["RotationAdapter registry<br/>(rotation_adapter_for)"]
@@ -206,6 +208,7 @@ graph TD
     Run --> Registry
     Registry -->|oauth| OAuth["OAuthRefreshRotationAdapter<br/>capability: auto"]
     Registry -->|gcp| GCP["GCPServiceAccountKeyRotationAdapter<br/>capability: auto"]
+    Registry -->|google-api-key| GKey["GoogleCloudAPIKeyRotationAdapter<br/>capability: auto"]
     Registry -->|resend| Resend["ResendRotationAdapter<br/>capability: auto"]
     Registry -->|vercel · github · stripe| Stub["stub: raises RotationAdapterError<br/>capability: unknown"]
     RB -.->|provider context| Registry
@@ -214,6 +217,8 @@ graph TD
     SelfResolve -->|same boundary-only sink<br/>every other value uses| ProviderAPI["gcloud iam service-accounts keys ..."]
     Resend -->|admin key ref resolved via| SelfResolve
     SelfResolve --> ResendAPI["api.resend.com /api-keys"]
+    GKey -->|admin token ref resolved via| SelfResolve
+    SelfResolve --> GKeyAPI["apikeys.googleapis.com v2"]
     OAuth -->|OAuthBackend.access()| TokenEndpoint["provider token endpoint<br/>(rotated refresh_token persisted back)"]
 ```
 
@@ -223,7 +228,8 @@ authenticates to its provider using a credential that is **itself just another P
 value in this codebase already uses, never hardcoded into the adapter and never handled outside
 the normal resolve path. `GCPServiceAccountKeyRotationAdapter` already does this when given an
 `admin_credential_ref`, and `ResendRotationAdapter` always does (its admin key is the
-`resend_admin_ref` reference, or the rotated reference itself); the stub adapters (Vercel is the confirmed priority target for the next
+`resend_admin_ref` reference, or the rotated reference itself), and so does
+`GoogleCloudAPIKeyRotationAdapter` when `google_api_key_admin_ref` is set; the stub adapters (Vercel is the confirmed priority target for the next
 real one) are meant to follow the same pattern once built.
 
 ## 6. The desktop app is packaging, not a new component

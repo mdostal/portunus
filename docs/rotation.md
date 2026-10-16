@@ -33,6 +33,7 @@ new one).
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
 | `resend` | API key (`re_...`) | **auto** | `ResendRotationAdapter`: create → verify (read-only `GET /api-keys`, sends no email) → store. `--retire-old` **deletes** the old key — Resend has no disable. Needs `tags["resend_api_key_id"]` for `--retire-old`; see [Resend API keys](#resend-api-keys) below. |
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
+| `google-api-key` | Google Cloud API key (`AIza...`) | **auto** | `GoogleCloudAPIKeyRotationAdapter`: copies the old key's restrictions → create → verify (`keys:lookupKey`, plus an optional live probe) → store. `--retire-old` **deletes** the old key, which Google can undelete for 30 days. Refuses a stored value that is a service-account JSON key. Needs `apikeys.googleapis.com` enabled; see [Google Cloud API keys](#google-cloud-api-keys) below. |
 | `sentry` | User / org / internal-integration auth token | **manual** | Sentry's token endpoints accept session auth only and reject any bearer token, so no admin credential can mint or revoke a token. `SentryRotationAdapter` is registered so `rotation run` prints the human re-issue steps. See `provider-rotation-matrix.md`. |
 
 > **Capability vocabulary:**
@@ -117,6 +118,49 @@ Phases:
    Resend has no disable, so pass `--retire-old` only after every consumer has the new key.
    Without it, the old key id is added to the `resend` binding's `superseded_key_ids`, and
    `portunus rotation audit` lists it until it is retired.
+
+---
+
+## Google Cloud API keys
+
+`GoogleCloudAPIKeyRotationAdapter` rotates a Google Cloud API key (`AIza...`, managed by
+`apikeys.googleapis.com`) via `portunus rotation run <ref-name> [--retire-old]`
+(API: https://cloud.google.com/api-keys/docs/reference/rest). The reference needs
+`provider=google-api-key`. This is **not** the `gcp` provider: an API key has no private key and
+does not act as a service account, so it has its own adapter.
+
+The adapter checks the stored value's format before any API call. A service-account JSON key is
+refused with a pointer to provider `gcp`. Any value that is not an `AIza...` key string is refused
+too. So a reference whose name doesn't say which kind it is (for example `flayr-vertex-ai-*-key`)
+can be tagged `google-api-key`, and the adapter stops rather than rotating the wrong kind.
+
+**Prerequisites:** `apikeys.googleapis.com` must be enabled on the key's project. The calling
+identity needs `apikeys.keys.create`, `apikeys.keys.get`, `apikeys.keys.getKeyString`,
+`apikeys.keys.lookup`, `apikeys.keys.delete`, and `serviceusage.operations.get` to poll the create operation. The predefined role `roles/serviceusage.apiKeysAdmin`
+grants them. If the old key is bound to a service account (`serviceAccountEmail`), the new key is
+bound to the same one, which may also need `iam.serviceAccounts.actAs` on it.
+
+| Tag | Meaning |
+|---|---|
+| `google_api_key_admin_ref` | Name of a reference whose value is a Google OAuth2 access token (`cloud-platform` scope) for the identity above. Resolved through `Resolver.resolve_call()`. If unset, the adapter uses `gcloud auth print-access-token` (the ambient gcloud login). |
+| `google_api_key_name` | Resource name of the key currently stored (`projects/<number>/locations/global/keys/<id>`). Optional: without it the adapter finds the key with `keys:lookupKey` on the stored value. The adapter rewrites it to the new key's name after every successful store. |
+| `google_api_key_verify_url` | Optional. A read-only URL the key is allowed to call, such as `https://generativelanguage.googleapis.com/v1beta/models` for a Gemini key. The new key must get a 200 from it, sent in `x-goog-api-key`, before it is stored. The call is retried for about a minute while the new key propagates. |
+
+Phases:
+
+1. **find old**: get the old key (`GET .../keys/<id>`). Its `restrictions` (API targets and
+   referrer, IP or app limits) and `serviceAccountEmail` are copied to the new key, so a rotation
+   never widens what the key can call.
+2. **create**: `POST projects/<number>/locations/global/keys`. This is a long-running operation,
+   which the adapter polls until done. Then `GET .../keys/<new-id>/keyString`.
+3. **verify**: `keys:lookupKey` on the **new** string must return the new key's name. The
+   `google_api_key_verify_url` probe runs as well if that tag is set. On failure nothing is
+   stored, and the adapter tries to delete the new, unused key.
+4. **store**: the new key string goes to the local backend.
+5. **retire** (`--retire-old` only): `DELETE .../keys/<old-id>`. Google keeps a deleted key for
+   30 days, and `gcloud services api-keys undelete <id>` restores it in that window. Without
+   `--retire-old`, the old key name is added to the `google-api-key` binding's
+   `superseded_key_ids`, and `portunus rotation audit` lists it until it is retired.
 
 ---
 

@@ -85,8 +85,8 @@ That's portunus.
 - [ ] Native HTTP-client injection adapter *(today it's `portunus resolve --exec curl ...`, or a
       caller-supplied boundary callable via the library's `resolve_call` — works, but there's no
       built-in `HttpHeaderAdapter`/`HttpBodyAdapter` class yet, only `EnvVarAdapter`/`FileAdapter`)*
-- [ ] More secret-rotation adapters *(three real adapters ship today — OAuth refresh tokens, GCP
-      service-account keys and Resend API keys, all `auto` via `portunus rotation run`; Vercel, GitHub and Stripe are
+- [ ] More secret-rotation adapters *(four real adapters ship today — OAuth refresh tokens, GCP
+      service-account keys, Google Cloud API keys and Resend API keys, all `auto` via `portunus rotation run`; Vercel, GitHub and Stripe are
       still stubs that raise. See [docs/rotation.md](docs/rotation.md) for the capability matrix)*
 - [ ] Scope-aware `list`/`tree` — these two MCP tools still return full-vault metadata regardless
       of the caller's own access scope; only the actual `resolve`/inject path is gated today
