@@ -200,7 +200,8 @@ def portunus_rotation_status(provider: str = "") -> dict:
     `portunus rotation-bindings show --json`. Real adapters: `oauth`
     (wraps OAuthBackend -- drives every stored OAuth refresh credential
     through a single job) and `gcp` (service-account key create/verify/
-    store). Stub adapters: vercel, github, stripe."""
+    store). Stub adapters: vercel, github, stripe. Manual (no
+    programmatic path exists): sentry."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)

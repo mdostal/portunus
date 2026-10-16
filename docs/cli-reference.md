@@ -171,11 +171,31 @@ Resolve a reference by tags and inject its value at a boundary target.
 
 ```
 portunus inject --tags <k=v,...> --target env|file [--var <name>] [--path <path>] [--format env|json|yaml] [--key <key>]
+                [--mode 0600|0640|0660] [--group <name|gid>] [--json]
 ```
 
-**Example:**
+A `file` target is written `0600`, owned by the uid Portunus runs as. A caller running as a
+different uid can't read that file, and can't delete it unless the directory is writable for
+it. To share it, pass `--mode 0640` (or `0660`) and `--group` for a group the caller belongs
+to. Portunus can only set a group it is a member of, or the group the file already has from
+a setgid directory, so the usual setup is a shared directory with mode `2770` owned by that
+group. Mode and group are applied before the value is written. If they can't be applied, the
+inject fails and no file is left behind. World-readable and executable modes are rejected.
+
+`--json` prints `{"message": ..., "file": {"path", "uid", "gid", "mode", "readable_by"}}`.
+`POST /api/inject` takes `mode` and `group` in the body and returns the same `file` object
+next to `ok`. `ok: true` means Portunus wrote the file; check `file` to see who can read it.
+
+A structured key (`scope`, `kind`, `env`, ...) given in `--tags` matches the reference's
+structured field. When that field is empty, it matches the same key in the reference's open
+`tags` instead.
+
+**Examples:**
 ```sh
 portunus inject --tags provider=vercel,project=mdostal.com --target env --var VERCEL_TOKEN
+portunus inject --tags provider=flayr,account=mdostal --target file \
+  --path /pantheon-secrets/flayr.env --format env --key FLAYR_API_KEY \
+  --mode 0640 --group pantheon-secrets --json
 ```
 
 ---
@@ -453,7 +473,7 @@ Run a real rotation for a single reference: create → verify → store cycle. O
 portunus rotation run <ref_name> [--retire-old]
 ```
 
-`--retire-old` disables the superseded credential after storing the new one (never deletes in the same call).
+`--retire-old` retires the superseded credential after storing the new one. GCP keys are disabled, never deleted in the same call. Resend keys are deleted, because Resend has no disable (see [rotation.md](rotation.md#resend-api-keys)).
 
 **Example:**
 ```sh

@@ -12,12 +12,18 @@ fi
 # A file-target inject whose path contains "slow-" behaves like a slow vault
 # backend: it waits, then writes the file (see e2e/inject-abort.spec.ts).
 path=""
+json=""
 while [ $# -gt 0 ]; do
   [ "$1" = "--path" ] && path="$2"
+  [ "$1" = "--json" ] && json=1
   shift
 done
 case "$path" in
   *slow-*) sleep 2; echo "VALUE=stub" > "$path" ;;
 esac
-echo "stub ok"
+if [ -n "$json" ]; then
+  echo '{"message": "stub ok", "file": null}'
+else
+  echo "stub ok"
+fi
 exit 0
