@@ -6,6 +6,14 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Grafana Cloud access policy token rotation (PANT-1137, #192).** `GrafanaCloudRotationAdapter`
+  (provider `grafana-cloud`) creates a new token under the same access policy, verifies it with a
+  read-only GET, stores it, and with `--retire-old` deletes the old token. It needs the
+  `grafana_access_policy_id` and `grafana_region` tags; see `docs/rotation.md`. Only org-level
+  access policy tokens are covered: self-hosted admin passwords and stack data-source credentials
+  are not. `docs/provider-rotation-matrix.md` had the wrong endpoints
+  (`/orgs/{slug}/access-policies/{id}/tokens`); it now lists the documented ones
+  (`/api/v1/tokens?region=`).
 - **Credential liveness checks and a parity primitive (PANT-1152, GH #141).** `portunus liveness
   check <name>|--all` probes a stored credential against its provider's own API and reports
   `live` / `dead` / `unknown`; `portunus liveness status --failing` lists dead keys oldest first.
