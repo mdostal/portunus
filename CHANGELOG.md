@@ -14,8 +14,32 @@ All notable changes to Portunus are documented in this file.
   are not. `docs/provider-rotation-matrix.md` had the wrong endpoints
   (`/orgs/{slug}/access-policies/{id}/tokens`); it now lists the documented ones
   (`/api/v1/tokens?region=`).
+- **Credential liveness checks and a parity primitive (PANT-1152, GH #141).** `portunus liveness
+  check <name>|--all` probes a stored credential against its provider's own API and reports
+  `live` / `dead` / `unknown`; `portunus liveness status --failing` lists dead keys oldest first.
+  The value only reaches the outbound request header and the response body is never read.
+  Results are audited and kept in `liveness-status.json` until a live check clears them. MCP:
+  `portunus_liveness_check`, `portunus_liveness_status`. `parity_check()` compares one value
+  across targets (GCP, Convex, ...) without exposing a value. Provider probes come with the
+  Vercel, Autumn, Clerk and Convex sub-issues. See `docs/liveness.md`.
+- **Resend API key rotation (PANT-1140).** New `ResendRotationAdapter`, registered as `resend`,
+  runs via `portunus rotation run <ref> [--retire-old]`. It creates a new key with an admin key,
+  checks it with a read-only `GET /api-keys` (no test email; a `sending_access` key passes on 401
+  `restricted_api_key`), stores it, and writes the new key id to `tags["resend_api_key_id"]`.
+  `--retire-old` deletes the old key, because Resend has no disable. Without it, the old id is
+  listed under the `resend` binding's `superseded_key_ids`. `portunus rotation run` now also
+  prints `key_id=` when the adapter reports one.
 
 ### Fixed
+
+- **Sentry tokens are `manual`, not `auto` (PANT-1139, #190).** `provider-rotation-matrix.md`
+  listed Sentry user auth tokens as auto-rotatable via `POST /api/0/api-tokens/` with an
+  `org:admin` bearer token. That call is always rejected: Sentry's user, org and
+  internal-integration token endpoints use `SessionNoAuthTokenAuthentication`, which refuses any
+  `Authorization` header, and they have done so since 2023. A new `SentryRotationAdapter`
+  (`_ADAPTERS["sentry"]`) reports `manual`, and `portunus rotation run` on a Sentry reference
+  now prints the human re-issue steps rather than "no adapter registered". The matrix and
+  `docs/rotation.md` are corrected.
 
 - **A file-target inject can now be read by a caller running as another uid (PANT-1142).**
   `inject`/`ask` take `--mode 0600|0640|0660` and `--group <name|gid>`, and `POST /api/inject`

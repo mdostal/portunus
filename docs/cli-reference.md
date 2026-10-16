@@ -473,7 +473,7 @@ Run a real rotation for a single reference: create → verify → store cycle. O
 portunus rotation run <ref_name> [--retire-old]
 ```
 
-`--retire-old` disables the superseded credential after storing the new one (never deletes in the same call).
+`--retire-old` retires the superseded credential after storing the new one. GCP keys are disabled, never deleted in the same call. Resend keys are deleted, because Resend has no disable (see [rotation.md](rotation.md#resend-api-keys)).
 
 **Example:**
 ```sh
@@ -488,6 +488,27 @@ Inventory what is stored vs. what can actually be rotated: group by provider, re
 
 ```
 portunus rotation audit [--json]
+```
+
+---
+
+### `liveness check`
+
+Probe stored credentials against their provider's own API with one cheap, read-only call. Exits `0` when all are live, `2` if any is dead, `1` if any check could not reach a verdict. Never prints a value or a response body. See [Liveness & Parity](liveness.md).
+
+```
+portunus liveness check <name> [<name> ...] [--json]
+portunus liveness check --all [--json]
+```
+
+---
+
+### `liveness status`
+
+Show the last recorded verdict per reference. `--failing` lists only non-live references, oldest failure first.
+
+```
+portunus liveness status [--failing] [--json]
 ```
 
 ---

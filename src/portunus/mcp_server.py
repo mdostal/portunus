@@ -200,7 +200,8 @@ def portunus_rotation_status(provider: str = "") -> dict:
     `portunus rotation-bindings show --json`. Real adapters: `oauth`
     (wraps OAuthBackend -- drives every stored OAuth refresh credential
     through a single job) and `gcp` (service-account key create/verify/
-    store). Stub adapters: vercel, github, stripe."""
+    store). Stub adapters: vercel, github, stripe. Manual (no
+    programmatic path exists): sentry."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
@@ -238,6 +239,53 @@ def portunus_rotation_audit() -> dict:
     except Exception:
         pass
     return rotation_audit_data(registry, rotation_bindings, local_backend)
+
+
+@mcp.tool()
+def portunus_liveness_check(names: Optional[List[str]] = None, all: bool = False) -> dict:
+    """Probe stored credentials against their provider's own API with one
+    cheap, read-only authenticated call -- the same as `portunus liveness
+    check --json`. Each result is live / dead (provider rejected the key) /
+    unknown (no adapter, not resolvable, network error, unexpected status).
+    The value is resolved only into the outbound request header; the
+    response body is never read. Results are recorded to the persisted
+    liveness status (see portunus_liveness_status) and the audit log.
+    Pass `names`, or `all=True` for every reference whose provider has a
+    liveness adapter."""
+    from . import liveness
+
+    registry, audit, broker, resolver = _build()
+    if all:
+        refs = liveness.checkable_references(registry)
+    else:
+        refs = []
+        for name in names or []:
+            ref = registry.get(name)
+            if ref is None:
+                return {"error": f"unknown reference: {name}"}
+            refs.append(ref)
+    results = []
+    for ref in refs:
+        result = liveness.check_reference(ref, resolver)
+        liveness.audit_liveness(audit, ref, result)
+        results.append(result)
+    liveness.record_results(results)
+    return {"results": [r.to_dict() for r in results]}
+
+
+@mcp.tool()
+def portunus_liveness_status(failing: bool = False) -> dict:
+    """Last recorded liveness verdict per reference (`portunus liveness
+    status --json`). A non-live reference keeps `first_failed_at` until a
+    live check clears it, so the age of a dead key is visible. Metadata
+    only -- never touches a backend or a value. `failing=True` lists only
+    non-live references, oldest failure first."""
+    from . import liveness
+
+    statuses = liveness.load_liveness_status()
+    rows = liveness.failing(statuses) if failing else sorted(
+        statuses.values(), key=lambda st: st.ref_name)
+    return {"statuses": [st.to_dict() for st in rows]}
 
 
 @mcp.tool()

@@ -56,6 +56,7 @@ nav:
     - Audit Log: audit.md
   - Rotation: rotation.md
   - Provider Rotation Matrix: provider-rotation-matrix.md
+  - Liveness & Parity: liveness.md
   - Reference:
     - CLI Reference: cli-reference.md
     - MCP Server & Agent Integration: mcp-server.md
