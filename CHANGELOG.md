@@ -4,6 +4,16 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Resend API key rotation (PANT-1140).** New `ResendRotationAdapter`, registered as `resend`,
+  runs via `portunus rotation run <ref> [--retire-old]`. It creates a new key with an admin key,
+  checks it with a read-only `GET /api-keys` (no test email; a `sending_access` key passes on 401
+  `restricted_api_key`), stores it, and writes the new key id to `tags["resend_api_key_id"]`.
+  `--retire-old` deletes the old key, because Resend has no disable. Without it, the old id is
+  listed under the `resend` binding's `superseded_key_ids`. `portunus rotation run` now also
+  prints `key_id=` when the adapter reports one.
+
 ## [0.34.0] - 2026-10-14
 
 ### Fixed

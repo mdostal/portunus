@@ -116,6 +116,8 @@ Note on Vertex AI keys (`flayr-vertex-ai-*-key`): if these are Cloud API keys (`
 
 **Source**: https://resend.com/docs/api-reference/api-keys/create-api-key
 
+**Implemented**: `ResendRotationAdapter` (PANT-1140). The API shape was re-checked against Resend's docs on 2026-10-16: create returns `{id, object, token}`, `permission` is `full_access` | `sending_access`. Verify uses a read-only `GET /api-keys` instead of sending a test email. See [rotation.md](rotation.md#resend-api-keys).
+
 **Concrete call sequence**:
 
 ```bash
