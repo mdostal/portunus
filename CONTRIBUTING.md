@@ -30,3 +30,18 @@ Feel free to submit issues and enhancement requests.
 See `docs/architecture.md` for how Portunus's components (OSTIARIUS, ARCA, Petitio) fit
 together, and `README.md`'s "Architecture, vision & design decisions" section for the reasoning
 behind them.
+
+## Docs site
+
+The docs site (<https://mdostal.github.io/portunus/docs/>) is built with MkDocs Material from
+`docs/` plus a **Process & Design** section generated from `.pHive/` at build time
+(`scripts/process_docs.py` holds the curation rules). Preview it locally with:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve        # or: mkdocs build --strict
+```
+
+PRs run a `--strict` build. Every push to `main` republishes the site into the `docs/`
+subdirectory of `gh-pages`. The landing page at the root of that branch is hand-built and is
+never touched by the docs workflow.

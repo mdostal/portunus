@@ -1,0 +1,52 @@
+@import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&display=swap");
+
+/* Portunus brand: the warm bronze-on-parchment / bronze-on-ink palette and
+   type of the hand-built landing page (gh-pages index.html), so the docs read
+   as the same site. Keep these values in sync with that page's :root vars. */
+:root {
+  --portunus-display: "Cinzel", "Cormorant Garamond", Georgia, serif;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #7c5f22;
+  --md-primary-fg-color--light: #9c7a2e;
+  --md-primary-fg-color--dark: #5e4718;
+  --md-primary-bg-color: #f4eee0;
+  --md-accent-fg-color: #9c7a2e;
+  --md-accent-fg-color--transparent: #9c7a2e1a;
+  --md-default-bg-color: #f4eee0;
+  --md-default-fg-color: #241f1a;
+  --md-default-fg-color--light: #6b6156;
+  --md-code-bg-color: #ece3cf;
+  --md-typeset-a-color: #7c5f22;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #1c1916;
+  --md-primary-fg-color--light: #2e2a24;
+  --md-primary-fg-color--dark: #14120f;
+  --md-primary-bg-color: #e6bd6c;
+  --md-accent-fg-color: #e6bd6c;
+  --md-accent-fg-color--transparent: #cb9b4c1a;
+  --md-default-bg-color: #14120f;
+  --md-default-fg-color: #ede8e0;
+  --md-default-fg-color--light: #9c9284;
+  --md-code-bg-color: #100e0c;
+  --md-typeset-a-color: #e6bd6c;
+  --md-footer-bg-color: #1c1916;
+}
+
+.md-header__title,
+.md-typeset h1,
+.md-typeset h2 {
+  font-family: var(--portunus-display);
+  letter-spacing: 0.04em;
+}
+
+.md-typeset h1 {
+  color: var(--md-primary-fg-color);
+}
+
+[data-md-color-scheme="slate"] .md-typeset h1 {
+  color: var(--md-accent-fg-color);
+}

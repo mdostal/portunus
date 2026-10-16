@@ -127,3 +127,22 @@ def test_concurrent_writers_do_not_lose_updates(home):
     assert not errors
     final = Registry()
     assert len(final) == 20
+
+
+def test_resolve_by_tags_structured_key_falls_back_to_open_tag_when_field_empty(home):
+    # PANT-1142: flayr-mdostal-account carries scope=account-wide in tags{}
+    # with an empty structured scope; `inject --tags ...,scope=account-wide`
+    # found nothing while `ask` showed the tag.
+    reg = Registry()
+    reg.add("flayr-mdostal-account", "sm-flayr", provider="flayr", project="flayr",
+            tags={"account": "mdostal", "scope": "account-wide"})
+    ref = reg.resolve_by_tags(provider="flayr", account="mdostal", scope="account-wide")
+    assert ref.name == "flayr-mdostal-account"
+
+
+def test_resolve_by_tags_structured_field_wins_over_open_tag(home):
+    reg = Registry()
+    reg.add("a", "sm-a", scope="shared", tags={"scope": "account-wide"})
+    with pytest.raises(NoMatch):
+        reg.resolve_by_tags(scope="account-wide")
+    assert reg.resolve_by_tags(scope="shared").name == "a"

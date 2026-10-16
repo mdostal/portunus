@@ -41,6 +41,10 @@ throttled to once a day, never installs anything by itself — opt out any time 
 **[portunus site →](https://mdostal.github.io/portunus/)** — landing page, install snippets, and
 the component-model pitch in one place.
 
+**[Documentation →](https://mdostal.github.io/portunus/docs/)** — quickstart, concepts,
+architecture, CLI/MCP reference, and [Process & Design](https://mdostal.github.io/portunus/docs/process/),
+the design record behind every feature, published from `.pHive/` and rebuilt on every push to `main`.
+
 ## The problem
 
 AI agents need real secrets to do real work — deploy tokens, API keys, DB creds. But the moment a
@@ -81,11 +85,11 @@ That's portunus.
 - [ ] Native HTTP-client injection adapter *(today it's `portunus resolve --exec curl ...`, or a
       caller-supplied boundary callable via the library's `resolve_call` — works, but there's no
       built-in `HttpHeaderAdapter`/`HttpBodyAdapter` class yet, only `EnvVarAdapter`/`FileAdapter`)*
-- [ ] More secret-rotation adapters *(three real adapters ship today, all run via
-      `portunus rotation run`: OAuth refresh tokens, GCP service-account keys, and GitHub OAuth App
-      tokens from an App you own. GitHub PATs are `manual` because GitHub has no reissue API.
-      Vercel and Stripe are still stubs that raise. `portunus rotation liveness` flags dead GitHub
-      tokens. See [docs/rotation.md](docs/rotation.md) for the per-subtype capability matrix)*
+- [ ] More secret-rotation adapters *(four real adapters ship today, all run via
+      `portunus rotation run`: OAuth refresh tokens, GCP service-account keys, Resend API keys, and
+      GitHub OAuth App tokens from an App you own. GitHub PATs are `manual` because GitHub has no
+      reissue API. Vercel and Stripe are still stubs that raise. `portunus rotation liveness` flags
+      dead GitHub tokens. See [docs/rotation.md](docs/rotation.md) for the per-subtype capability matrix)*
 - [ ] Scope-aware `list`/`tree` — these two MCP tools still return full-vault metadata regardless
       of the caller's own access scope; only the actual `resolve`/inject path is gated today
       *(a real, named gap — not started; portunus-petitio-rbac design-discussion.md's self-grill)*
@@ -157,7 +161,7 @@ their own (Latin, theme-consistent) names:
 |---|---|---|
 | **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project". **Three entry points, one implementation**: the `portunus` CLI, the standalone UI's API routes, and an MCP stdio server for other agents/harnesses | `resolver.py` + the `portunus` CLI (`cli.py`) + `mcp_server.py` (`portunus mcp`) |
 | **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice. **Real today:** local-encrypted (default), GCP Secret Manager (keyless via WIF, optionally with a recency-aware pull-only sync-down cache that survives a real network outage by serving the last-known-good cached value), OAuth refresh-token broker, and Chrome's own saved logins (macOS Keychain / Linux Secret Service-KWallet, read-only, Windows deferred — `docs/backends.md`). **Honest stubs, not yet real:** AWS Secrets Manager, HashiCorp Vault, Infisical, Doppler, 1Password, Azure Key Vault — each fails closed with a clear error and a link to [request it](.github/ISSUE_TEMPLATE/adapter-request.yaml), never silently mis-routes. See `docs/architecture.md` for the full picture. | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `VaultBinding`, and the six stub classes); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
-| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **Per-agent access control is real and opt-in**: every call threads an `Identity` (`requester`) through `check_injectable()`, which evaluates it against `roles.py`'s `PolicyRecord`s (`org`/`project`/`env`/`repo` scope + `principal`) via `roles.evaluate()` — every resolve gets a `would-allow`/`would-deny` audit line regardless, but only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been explicitly run for that vault (default: off; a scope with zero configured policies always stays open). Not yet scope-aware: the `list`/`tree` MCP tools, and `approve()`'s token (scoped to a reference name, not the requesting identity) — see Roadmap. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter for it. Three adapters are real (`auto`), all run via `portunus rotation run`: OAuth refresh tokens (`OAuthRefreshRotationAdapter`), GCP service-account keys (`GCPServiceAccountKeyRotationAdapter`), and GitHub OAuth App tokens from an App you own (`GitHubRotationAdapter`; GitHub PATs are `manual`, since GitHub has no reissue API). Vercel and Stripe are still stubs that raise. See `docs/rotation.md`. See `docs/architecture.md` §3/§17. | `broker.py`, `roles.py`, `rotation.py` |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **Per-agent access control is real and opt-in**: every call threads an `Identity` (`requester`) through `check_injectable()`, which evaluates it against `roles.py`'s `PolicyRecord`s (`org`/`project`/`env`/`repo` scope + `principal`) via `roles.evaluate()` — every resolve gets a `would-allow`/`would-deny` audit line regardless, but only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been explicitly run for that vault (default: off; a scope with zero configured policies always stays open). Not yet scope-aware: the `list`/`tree` MCP tools, and `approve()`'s token (scoped to a reference name, not the requesting identity) — see Roadmap. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter for it. Four adapters are real (`auto`), all run via `portunus rotation run`: OAuth refresh tokens (`OAuthRefreshRotationAdapter`), GCP service-account keys (`GCPServiceAccountKeyRotationAdapter`), Resend API keys (`ResendRotationAdapter`), and GitHub OAuth App tokens from an App you own (`GitHubRotationAdapter`; GitHub PATs are `manual`, since GitHub has no reissue API). Vercel and Stripe are still stubs that raise. See `docs/rotation.md`. See `docs/architecture.md` §3/§17. | `broker.py`, `roles.py`, `rotation.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
 So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
@@ -1145,11 +1149,21 @@ rejected with **403** if it carries an `Origin` other than the UI's own, or if i
 through the UI's API. A client with no `Origin` header, such as `curl`, still works as long as it
 sends JSON.
 
+**Deploying behind a non-loopback name (containers, reverse proxies).** If anything reaches the
+UI by a name other than `localhost` / `127.0.0.1` / `[::1]`, for example another container
+calling `http://portunus-ui:7802` by its compose service name, set `PORTUNUS_UI_HOST` up front.
+Without it every write from that caller is rejected with `403 {"error":"non-loopback Host
+rejected"}` while reads keep working. The deep `GET /api/health` runs the same Host check on its
+own request, so that caller sees `status: "down"` (HTTP 503) with a failed `ui-write-host`
+check instead of a green result. `?shallow=1` skips that check. Note that a container health
+probe which curls `localhost` from inside the container sends a loopback `Host` and will still
+pass; probe health over the same name your real callers use.
+
 ### Running as a supervised service (L2 plugin lifecycle)
 
 The UI also builds as a self-contained, host-supervisable service — `GET /api/health` returns
 the result of `portunus health --json` (`{status: ok|degraded|down, checks}`; HTTP 503 when
-down), `GET /api/health?shallow=1` returns `{"status":"ok"}` without touching the CLI (the
+down) plus the `ui-write-host` check described above, `GET /api/health?shallow=1` returns `{"status":"ok"}` without touching the CLI (the
 desktop app's readiness poll uses this), and
 `next.config.mjs` sets `output: "standalone"` so a single fixed entrypoint can be supervised
 directly:

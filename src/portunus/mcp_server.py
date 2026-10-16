@@ -202,7 +202,7 @@ def portunus_rotation_status(provider: str = "") -> dict:
     through a single job), `gcp` (service-account key create/verify/
     store) and `github` (OAuth App token reset; other GitHub token types
     are refused per reference as manual/not-applicable). Stub adapters:
-    vercel, stripe."""
+    vercel, stripe. Manual (no programmatic path exists): sentry."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)

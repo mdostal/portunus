@@ -16,11 +16,44 @@ All notable changes to Portunus are documented in this file.
   provider. GitHub is the first check, using `GET /rate_limit`. Each result is recorded in the
   audit chain, and the command exits 2 if anything is dead. It's a shared runner that the
   Autumn/Vercel/Clerk liveness checks (#143–#145) can plug into.
+- **Resend API key rotation (PANT-1140).** New `ResendRotationAdapter`, registered as `resend`,
+  runs via `portunus rotation run <ref> [--retire-old]`. It creates a new key with an admin key,
+  checks it with a read-only `GET /api-keys` (no test email; a `sending_access` key passes on 401
+  `restricted_api_key`), stores it, and writes the new key id to `tags["resend_api_key_id"]`.
+  `--retire-old` deletes the old key, because Resend has no disable. Without it, the old id is
+  listed under the `resend` binding's `superseded_key_ids`. `portunus rotation run` now also
+  prints `key_id=` when the adapter reports one.
 
 ### Fixed
 
 - **OAuth refresh now sends `Accept: application/json`.** GitHub's token endpoint returns
   form-urlencoded unless asked for JSON, so refreshing a GitHub App user token failed to parse.
+- **Sentry tokens are `manual`, not `auto` (PANT-1139, #190).** `provider-rotation-matrix.md`
+  listed Sentry user auth tokens as auto-rotatable via `POST /api/0/api-tokens/` with an
+  `org:admin` bearer token. That call is always rejected: Sentry's user, org and
+  internal-integration token endpoints use `SessionNoAuthTokenAuthentication`, which refuses any
+  `Authorization` header, and they have done so since 2023. A new `SentryRotationAdapter`
+  (`_ADAPTERS["sentry"]`) reports `manual`, and `portunus rotation run` on a Sentry reference
+  now prints the human re-issue steps rather than "no adapter registered". The matrix and
+  `docs/rotation.md` are corrected.
+
+- **A file-target inject can now be read by a caller running as another uid (PANT-1142).**
+  `inject`/`ask` take `--mode 0600|0640|0660` and `--group <name|gid>`, and `POST /api/inject`
+  takes `mode`/`group`. Both are applied before the value is written; if Portunus can't apply
+  them, the inject fails and leaves no file. Before, every file was `0600` as Portunus's own uid
+  and a non-root caller got `ok: true` for a file it could neither read nor delete.
+  `POST /api/inject` now also returns `file: {path, uid, gid, mode, readable_by}`, so `ok` can be
+  checked against the file actually written. Default stays `0600`.
+- **`inject --tags scope=...` matches an open `scope` tag when the structured `scope` is empty
+  (PANT-1142).** The same fallback applies to every structured key. `flayr-mdostal-account`
+  carries `scope=account-wide` only in its open tags, so `ask` showed the tag but `inject` with it
+  found no reference.
+- **`GET /api/health` no longer reports healthy while every write is rejected (PANT-1143,
+  #186).** `ui/proxy.ts` 403s mutating requests whose `Host` isn't a loopback name unless
+  `PORTUNUS_UI_HOST` is set, but GET/HEAD skip that guard, so a UI reached container-to-container
+  by service name stayed green with every write failing. The deep health check now runs the same
+  Host check on its own request and adds a `ui-write-host` check; when it fails the result is
+  `down` (HTTP 503) and the detail says to set `PORTUNUS_UI_HOST`. `?shallow=1` is unchanged.
 
 ## [0.34.0] - 2026-10-14
 

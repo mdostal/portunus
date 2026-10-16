@@ -92,9 +92,17 @@ class Reference:
         return asdict(self)
 
     def matches_tag(self, key: str, value: str) -> bool:
-        """Exact-value match only -- never substring/fuzzy. See resolve_by_tags()."""
+        """Exact-value match only -- never substring/fuzzy. See resolve_by_tags().
+
+        A structured key (scope, kind, ...) left empty on the reference
+        falls back to the same key in tags{}: a reference tagged
+        scope=account-wide but never given a structured scope otherwise
+        resolves through `ask` (whose output shows that tag) and not through
+        `inject --tags scope=account-wide` (PANT-1142)."""
         if key in _STRUCTURED_TAG_FIELDS:
-            return getattr(self, key) == value
+            structured = getattr(self, key)
+            if structured:
+                return structured == value
         return self.tags.get(key) == value
 
 
