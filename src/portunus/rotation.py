@@ -35,9 +35,13 @@ Real adapters:
   App issued; every other GitHub credential type is manual or not
   applicable, decided per reference (see the GitHub table below).
 
-Stub adapters (`VercelRotationAdapter`, `StripeRotationAdapter`) still
-raise unconditionally. A future real adapter
-(Vercel is the confirmed priority target) would authenticate using its OWN
+- `VercelRotationAdapter` creates a new Vercel access token, verifies it
+  read-only (`GET /v5/user/tokens/current` must return the new id), stores
+  it, and (with --retire-old) DELETES the old token -- Vercel has no
+  disable. All HTTP goes through the injected `transport` seam.
+
+Stub adapters (`StripeRotationAdapter`) still raise unconditionally. A
+future real adapter would authenticate using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
 docs/architecture.md for the worked example.
 
@@ -58,6 +62,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 from .atomicio import atomic_write
 from .filelock import flock_path
@@ -1387,24 +1392,274 @@ class YouTrackRotationAdapter:
         registry.retag(ref_name, tags={**tags, "hub_token_id": token_id})
 
 
-class VercelRotationAdapter:
-    """Vercel -- STUB. No real calls.
+_VERCEL_API = "https://api.vercel.com"
+# Vercel documents no limit on token names; keep them comfortably short.
+_VERCEL_TOKEN_NAME_MAX = 100
 
-    Confirmed by the user as the priority target for the first REAL
-    rotation adapter, but not built real this epic ("not going to care too
-    much for first version"). Once real, `.rotate()` would resolve its own
-    admin token via `resolver.resolve_call("{{secret:portunus-admin-vercel-
-    token}}", ...)` -- never hardcoded here, never handled outside the
-    normal boundary-only sinks.
+# (method, url, headers, json_body_or_None, timeout) -> (status, parsed_json_or_{})
+VercelTransport = Callable[[str, str, Dict[str, str], Optional[dict], float], Tuple[int, dict]]
+
+
+def _default_vercel_transport(
+    method: str, url: str, headers: Dict[str, str], body: Optional[dict], timeout: float
+) -> Tuple[int, dict]:
+    return _json_http(method, url, headers, body, timeout, "Vercel API")
+
+
+class VercelRotationAdapter:
+    """Real Vercel access token rotation (https://vercel.com/docs/rest-api,
+    "Authentication" endpoints).
+
+    Phases (in order):
+    1. create  -- ``POST /v3/user/tokens`` with the admin token; returns
+                  ``{token: {id, ...}, bearerToken}``. ``bearerToken`` is only
+                  ever returned this once.
+    2. verify  -- ``GET /v5/user/tokens/current`` with the NEW token,
+                  read-only. Must answer 200 with ``token.id`` equal to the id
+                  create returned; anything else fails.
+    3. store   -- write the new token to the local backend, then record the
+                  new token id in the reference's ``tags["vercel_token_id"]``
+    4. retire  -- OPT-IN ONLY via ``retire_old=True``: ``DELETE
+                  /v3/user/tokens/{old_id}``. Vercel has no disable, so this
+                  is a real, irreversible delete -- only pass --retire-old
+                  once every consumer has picked up the new token.
+
+    Same verify-before-store contract as the Resend adapter: a failed verify
+    stores nothing, retires nothing, records ``warn:verify-failed``, and
+    makes a best-effort delete of the just-created (never-stored) token.
+    Without --retire-old the old token id is appended to the ``vercel``
+    RotationBinding's ``superseded_key_ids``.
+
+    This is proactive rotation of a still-valid token. Recovering a token
+    that is already dead (GH #144, liveness) is a different problem: a dead
+    token can't authenticate the create call, so it needs a separate valid
+    ``vercel_admin_ref`` or a human re-issue.
+
+    The ref's tags drive the adapter:
+    - ``vercel_token_id`` -- id of the currently stored token. When absent,
+      the adapter looks it up with ``GET /v5/user/tokens/current`` using
+      the stored token itself, before creating anything.
+    - ``vercel_admin_ref`` -- name of another reference holding a token
+      allowed to create/delete tokens. Defaults to the ref itself.
+    - ``vercel_team_id`` / ``vercel_team_slug`` -- optional; create the new
+      token on behalf of that team (``?teamId=`` wins over ``?slug=``)
+    - ``vercel_project_id`` -- optional; scopes the new token to a project
+    - ``vercel_token_ttl_days`` -- optional; sets ``expiresAt`` on the new
+      token. Without it the new token never expires.
+
+    The admin token is only ever handled inside a ``Resolver.resolve_call()``
+    boundary; every HTTP call goes through the injected ``transport`` seam,
+    so tests never contact the real API. No token is ever returned, logged,
+    or put in an error message.
     """
 
-    def capability(self) -> str:
-        return "unknown"
+    def __init__(
+        self,
+        transport: Optional[VercelTransport] = None,
+        local_backend=None,
+        audit=None,
+        registry=None,
+        admin_credential_ref: Optional[str] = None,
+        timeout: float = 30.0,
+    ):
+        self._transport = transport or _default_vercel_transport
+        self._local_backend = local_backend
+        self._audit = audit
+        # Falls back to resolver.registry when not injected.
+        self._registry = registry
+        # A "{{secret:NAME}}" template; overrides tags["vercel_admin_ref"].
+        self._admin_credential_ref = admin_credential_ref
+        self._timeout = timeout
 
-    def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
-        raise RotationAdapterError(
-            f"Vercel rotation is not yet implemented -- request it: {_ADAPTER_REQUEST_URL}"
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(
+        self,
+        ref,
+        resolver=None,
+        retire_old: bool = False,
+    ) -> RotationResult:
+        if hasattr(ref, "sm_name"):
+            sm_name = ref.sm_name
+            ref_name = getattr(ref, "name", sm_name)
+            tags = dict(getattr(ref, "tags", None) or {})
+        else:
+            sm_name = str(ref)
+            ref_name = sm_name
+            tags = {}
+
+        if resolver is None:
+            raise RotationAdapterError(
+                f"VercelRotationAdapter: rotating {ref_name!r} needs a resolver to "
+                "resolve the Vercel admin token"
+            )
+        expires_at = None
+        if tags.get("vercel_token_ttl_days"):
+            try:
+                ttl_days = int(tags["vercel_token_ttl_days"])
+            except ValueError:
+                ttl_days = 0
+            if ttl_days <= 0:
+                raise RotationAdapterError(
+                    "VercelRotationAdapter: tags['vercel_token_ttl_days'] must be a "
+                    f"positive integer, got {tags['vercel_token_ttl_days']!r}"
+                )
+            # Vercel takes expiresAt in epoch milliseconds.
+            expires_at = int((time.time() + ttl_days * 86400) * 1000)
+        admin_template = (
+            self._admin_credential_ref
+            or "{{secret:%s}}" % tags.get("vercel_admin_ref", ref_name)
         )
+
+        old_token_id = tags.get("vercel_token_id", "")
+        if not old_token_id:
+            old_token_id = self._lookup_current_id(resolver, "{{secret:%s}}" % ref_name)
+        if retire_old and not old_token_id:
+            # Checked before anything is created: refusing up front beats
+            # minting a token and then not knowing which one to delete.
+            raise RotationAdapterError(
+                f"VercelRotationAdapter: --retire-old needs the id of the token stored in "
+                f"{ref_name!r} -- set tags['vercel_token_id'] (the stored token could not "
+                "be looked up, it may already be invalid)"
+            )
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        # --- 1. CREATE --------------------------------------------------------
+        body = {"name": f"portunus-{ref_name}-{int(time.time())}"[:_VERCEL_TOKEN_NAME_MAX]}
+        if expires_at:
+            body["expiresAt"] = expires_at
+        if tags.get("vercel_project_id"):
+            body["projectId"] = tags["vercel_project_id"]
+        create_path = "/v3/user/tokens"
+        if tags.get("vercel_team_id"):
+            create_path += "?teamId=" + quote(tags["vercel_team_id"], safe="")
+        elif tags.get("vercel_team_slug"):
+            create_path += "?slug=" + quote(tags["vercel_team_slug"], safe="")
+        status, created = self._admin_call(resolver, admin_template, "POST", create_path, body)
+        ok = status in (200, 201)
+        token_meta = created.get("token") if ok else None
+        new_token_id = token_meta.get("id", "") if isinstance(token_meta, dict) else ""
+        new_token = created.get("bearerToken", "") if ok else ""
+        if not new_token_id or not new_token:
+            raise RotationAdapterError(
+                f"Vercel create token failed for {ref_name!r}: {self._describe(status, created)}"
+            )
+
+        try:
+            # --- 2. VERIFY ----------------------------------------------------
+            if self._current_id(new_token) != new_token_id:
+                if self._audit:
+                    self._audit.append("rotate:vercel-token", sm_name, "warn:verify-failed")
+                try:
+                    self._admin_call(
+                        resolver, admin_template, "DELETE",
+                        f"/v3/user/tokens/{new_token_id}", None,
+                    )
+                except Exception:
+                    pass  # best-effort cleanup; the failure below is what matters
+                raise RotationAdapterError(
+                    f"Vercel token verification failed for {ref_name!r} -- "
+                    "rotation aborted; old credential left intact"
+                )
+
+            # --- 3. STORE -----------------------------------------------------
+            local_backend.store(sm_name, new_token)
+        finally:
+            del new_token
+
+        self._record_token_id(resolver, ref_name, tags, new_token_id)
+        if old_token_id:
+            update_rotation_bindings(lambda b: _add_superseded(b, "vercel", old_token_id))
+
+        # --- 4. RETIRE (opt-in): DELETE -- Vercel has no disable ---------------
+        retired = False
+        if retire_old:
+            status, deleted = self._admin_call(
+                resolver, admin_template, "DELETE", f"/v3/user/tokens/{old_token_id}", None
+            )
+            if status not in (200, 204) and status != 404:
+                if self._audit:
+                    self._audit.append(
+                        "rotate:vercel-token", sm_name, f"warn:retire-failed:new={new_token_id}"
+                    )
+                raise RotationAdapterError(
+                    f"Vercel delete of old token {old_token_id} failed for {ref_name!r} "
+                    f"({self._describe(status, deleted)}) -- the new token IS stored; "
+                    "the old one stays listed as superseded"
+                )
+            # 404: already gone -- the goal state, so treat it as retired.
+            update_rotation_bindings(lambda b: _drop_superseded(b, "vercel", old_token_id))
+            retired = True
+
+        if self._audit:
+            self._audit.append("rotate:vercel-token", sm_name, f"ok:new={new_token_id}")
+
+        return RotationResult(
+            provider="vercel",
+            ref_name=ref_name,
+            key_id=new_token_id,
+            phase="stored",
+            retired_old=retired,
+        )
+
+    # --- HTTP helpers (all calls go through self._transport) -----------------
+
+    def _admin_call(self, resolver, admin_template, method, path, body):
+        def _boundary(admin_token: str):
+            return self._transport(
+                method, _VERCEL_API + path, self._headers(admin_token), body, self._timeout
+            )
+
+        return resolver.resolve_call(admin_template, _boundary)
+
+    def _current_id(self, token: str) -> str:
+        """Id of the token authenticating the request, or "" if Vercel
+        doesn't accept it. Read-only."""
+        try:
+            status, resp = self._transport(
+                "GET", _VERCEL_API + "/v5/user/tokens/current", self._headers(token), None,
+                self._timeout,
+            )
+        except RotationAdapterError:
+            return ""
+        meta = resp.get("token") if status == 200 else None
+        return str(meta.get("id", "")) if isinstance(meta, dict) else ""
+
+    def _lookup_current_id(self, resolver, template: str) -> str:
+        try:
+            return resolver.resolve_call(template, self._current_id) or ""
+        except Exception:
+            # Unresolvable or dead stored token: the caller decides whether
+            # an unknown old id is fatal (only for --retire-old).
+            return ""
+
+    @staticmethod
+    def _headers(token: str) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "User-Agent": "portunus-rotation",
+        }
+
+    @staticmethod
+    def _describe(status: int, resp: dict) -> str:
+        # Only Vercel's error code/message -- never the response body, which
+        # on success carries the new token.
+        err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+        code = str(err.get("code", ""))[:60]
+        message = str(err.get("message", ""))[:200]
+        return f"HTTP {status}" + (f" {code}: {message}" if code or message else "")
+
+    def _record_token_id(self, resolver, ref_name: str, tags: dict, new_token_id: str) -> None:
+        registry = self._registry or getattr(resolver, "registry", None)
+        if registry is None or not hasattr(registry, "retag") or ref_name not in registry:
+            return
+        registry.retag(ref_name, tags={**tags, "vercel_token_id": new_token_id})
 
 
 # --- GitHub ---------------------------------------------------------------

@@ -154,9 +154,11 @@ POST https://api.vercel.com/v3/user/tokens
 Authorization: Bearer <admin-token>
 Body: {"name": "replacement-deploy-token"}
 
-# 2. Store new token in ARCA
+# 2. Verify (read-only; must return the id from step 1)
+GET https://api.vercel.com/v5/user/tokens/current
+Authorization: Bearer <new-token>
 
-# 3. Verify
+# 3. Store new token in ARCA
 
 # 4. Delete old token
 DELETE https://api.vercel.com/v3/user/tokens/{tokenId}

@@ -27,7 +27,7 @@ new one).
 | Provider | Credential type | Capability | Notes |
 |---|---|---|---|
 | `oauth` (any provider) | OAuth 2.0 refresh token | **auto** | `OAuthRefreshRotationAdapter` wraps `OAuthBackend` — one job drives every stored credential. Provider-returned `refresh_token` rotation is persisted immediately. |
-| `vercel` | API token | stub | Not yet implemented. |
+| `vercel` | Personal / team access token | **auto** | `VercelRotationAdapter`: create → verify (read-only `GET /v5/user/tokens/current` must return the new token's id) → store. `--retire-old` **deletes** the old token — Vercel has no disable. Proactive rotation of a still-valid token only; a dead token is a liveness problem (GH #144). See [Vercel access tokens](#vercel-access-tokens). **Not** a Vercel AI API key (unknown). |
 | `github` (classic PAT, `ghp_`) | Personal access token (classic) | **manual** | No create/reissue API — GitHub issues classic PATs through its web UI only. See [GitHub](#github-per-credential-subtype). |
 | `github` (fine-grained PAT, `github_pat_`) | Fine-grained personal access token | **manual** | The org API can only *revoke* a fine-grained PAT's access, never create or reissue one. |
 | `github` (OAuth App token, `gho_`, your own App) | OAuth App user token | **auto** | `GitHubRotationAdapter` resets it via `PATCH /applications/{client_id}/token`. Needs your OAuth App's client secret; destructive by nature, so requires `--retire-old`. |
@@ -215,6 +215,43 @@ Phases:
 
 ---
 
+## Vercel access tokens
+
+`VercelRotationAdapter` rotates a Vercel personal or team access token (e.g. `vercel-deploy-token`)
+via `portunus rotation run <ref-name> [--retire-old]` (API: https://vercel.com/docs/rest-api,
+"Authentication" endpoints). The reference needs `provider=vercel`, and its tags control the
+rotation:
+
+| Tag | Meaning |
+|---|---|
+| `vercel_token_id` | Id of the token currently stored. Optional: when absent, the adapter asks Vercel for it (`GET /v5/user/tokens/current` with the stored token) before creating anything. The adapter rewrites it to the new token's id after every successful store. |
+| `vercel_admin_ref` | Name of another reference holding a token allowed to create and delete tokens. Defaults to the reference itself. |
+| `vercel_team_id` / `vercel_team_slug` | Optional; create the new token on behalf of that team (`teamId` wins). |
+| `vercel_project_id` | Optional; scopes the new token to one project. |
+| `vercel_token_ttl_days` | Optional; sets `expiresAt` on the new token. Without it the new token never expires. |
+
+Phases:
+
+1. **create**: `POST /v3/user/tokens` with the admin token. Vercel returns the new token's value
+   only once, in this response.
+2. **verify**: `GET /v5/user/tokens/current` with the **new** token. It only reads. It must answer
+   200 with the id that create returned. Any other answer aborts the rotation. Nothing is stored,
+   and the adapter tries to delete the new, unused token.
+3. **store**: the new token goes to the local backend.
+4. **retire** (`--retire-old` only): `DELETE /v3/user/tokens/{old_id}`. **This cannot be undone.**
+   Vercel has no disable, so pass `--retire-old` only after every consumer has the new token. If
+   the old id is neither tagged nor discoverable, `--retire-old` refuses before creating anything.
+   Without it, the old token id is added to the `vercel` binding's `superseded_key_ids`, and
+   `portunus rotation audit` lists it until it is retired.
+
+**Rotation vs. liveness (GH #144).** This adapter is for rotating a token *before* it expires or
+is revoked. A token that is already dead (`invalidToken: true`) cannot authenticate the create
+call, so it can't rotate itself: point `vercel_admin_ref` at a different, valid token, or re-issue
+it by hand. Detecting dead tokens is liveness's job (`liveness.py`, GH #144). Setting
+`vercel_token_ttl_days` and rotating on a schedule keeps tokens from reaching that state.
+
+---
+
 ## YouTrack (Hub permanent tokens)
 
 `YouTrackRotationAdapter` rotates the JetBrains Hub permanent token (`perm:...`) that a
@@ -268,7 +305,6 @@ they're reported `unknown` without any request. `liveness check` exits 2 when an
 The following adapters are registered but raise on `.rotate()`. File an adapter request at
 the link in the error message if you need one of these:
 
-- **Vercel** — priority target for the first real key-rotation adapter; not yet built.
 - **Stripe** — API keys.
 
 (GitHub is no longer a stub. See [GitHub](#github-per-credential-subtype) above.)
