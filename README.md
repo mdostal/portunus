@@ -41,6 +41,10 @@ throttled to once a day, never installs anything by itself — opt out any time 
 **[portunus site →](https://mdostal.github.io/portunus/)** — landing page, install snippets, and
 the component-model pitch in one place.
 
+**[Documentation →](https://mdostal.github.io/portunus/docs/)** — quickstart, concepts,
+architecture, CLI/MCP reference, and [Process & Design](https://mdostal.github.io/portunus/docs/process/),
+the design record behind every feature, published from `.pHive/` and rebuilt on every push to `main`.
+
 ## The problem
 
 AI agents need real secrets to do real work — deploy tokens, API keys, DB creds. But the moment a
