@@ -6,16 +6,23 @@ repo_url: https://github.com/mdostal/portunus
 repo_name: mdostal/portunus
 theme:
   name: material
+  # Colours are overridden by docs/stylesheets/portunus.css (landing-page
+  # palette); `custom` lets those CSS variables take effect.
+  logo: assets/logo.png
+  favicon: assets/favicon.png
+  font:
+    text: Inter
+    code: IBM Plex Mono
   palette:
     - scheme: default
-      primary: deep orange
-      accent: orange
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
     - scheme: slate
-      primary: deep orange
-      accent: orange
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
@@ -26,8 +33,12 @@ theme:
     - content.code.copy
     - search.suggest
     - toc.follow
+extra_css:
+  - stylesheets/portunus.css
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - pymdownx.details
   - pymdownx.superfences
   - pymdownx.highlight
@@ -49,5 +60,10 @@ nav:
   - Reference:
     - CLI Reference: cli-reference.md
     - MCP Server & Agent Integration: mcp-server.md
+  # Expanded at build time by scripts/mkdocs_process_hook.py into the curated
+  # .pHive design story (foundations + one design record per epic).
+  - Process & Design: process/index.md
 plugins:
   - search
+hooks:
+  - scripts/mkdocs_process_hook.py
