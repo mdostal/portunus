@@ -26,6 +26,11 @@ Real adapters:
   verifies it read-only, stores it, and (with --retire-old) DELETES the old
   key -- Resend has no disable. All HTTP goes through the injected
   `transport` seam.
+- `GoogleCloudAPIKeyRotationAdapter` (provider `google-api-key`) rotates a
+  Google Cloud API key (`AIza...`, apikeys.googleapis.com) -- a different
+  credential type from the GCP SA key above. Copies the old key's
+  restrictions, verifies via keys:lookupKey, stores, and (with --retire-old)
+  deletes the old key, which Google can undelete for 30 days.
 - `YouTrackRotationAdapter` rotates a JetBrains Hub permanent token (the
   YouTrack REST API credential): the current token creates its replacement,
   which is verified, stored, and (with --retire-old) the old one DELETED --
@@ -1136,6 +1141,352 @@ class ResendRotationAdapter:
         registry.retag(ref_name, tags={**tags, "resend_api_key_id": new_key_id})
 
 
+_GOOGLE_APIKEYS_API = "https://apikeys.googleapis.com/v2"
+# displayName on a Google Cloud API key is capped at 63 characters.
+_GOOGLE_KEY_DISPLAY_NAME_MAX = 63
+_GOOGLE_API_KEY_PREFIX = "AIza"
+_GOOGLE_API_KEY_LEN = 39
+
+
+def classify_google_credential(value: str) -> str:
+    """Tell a Google Cloud API key from a service-account JSON key by its
+    format, never by the reference's name (PANT-1136: `flayr-vertex-ai-*-key`
+    could be either).
+
+    Returns "api-key" for an ``AIza...`` key string (39 chars), "service-account"
+    for a JSON object with ``type == "service_account"``, else "unknown".
+    """
+    value = (value or "").strip()
+    if value.startswith(_GOOGLE_API_KEY_PREFIX) and len(value) == _GOOGLE_API_KEY_LEN:
+        return "api-key"
+    if value.startswith("{"):
+        try:
+            if json.loads(value).get("type") == "service_account":
+                return "service-account"
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    return "unknown"
+
+
+def _default_google_transport(
+    method: str, url: str, headers: Dict[str, str], body: Optional[dict], timeout: float
+) -> Tuple[int, dict]:
+    return _json_http(method, url, headers, body, timeout, "Google API Keys API")
+
+
+class GoogleCloudAPIKeyRotationAdapter:
+    """Real Google Cloud API key rotation (``apikeys.googleapis.com`` v2,
+    https://cloud.google.com/api-keys/docs/reference/rest).
+
+    A different credential type from ``GCPServiceAccountKeyRotationAdapter``:
+    an API key (``AIza...``) has no private key and does not impersonate a
+    service account, so it gets its own provider name, ``google-api-key``.
+
+    Phases (in order):
+    1. find old -- the old key's resource name comes from
+                  ``tags["google_api_key_name"]`` or, failing that, from
+                  ``keys:lookupKey`` on the stored key string. Its
+                  restrictions (API targets, referrer/IP/app limits) and
+                  ``serviceAccountEmail`` are copied to the new key, so a
+                  rotation never widens what the key can call.
+    2. create  -- ``POST projects/{p}/locations/global/keys``, a long-running
+                  operation polled to completion, then ``GET .../keyString``
+    3. verify  -- ``keys:lookupKey`` on the NEW string must resolve to the new
+                  key's name. If ``tags["google_api_key_verify_url"]`` is set,
+                  a ``GET`` of that URL with the new key in ``x-goog-api-key``
+                  must also return 200 (retried while the key propagates).
+    4. store   -- write the new key string to the local backend, then record
+                  the new resource name in ``tags["google_api_key_name"]``
+    5. retire  -- OPT-IN ONLY via ``retire_old=True``: ``DELETE`` the old key.
+                  Google keeps a deleted key for 30 days, during which
+                  ``keys.undelete`` restores it.
+
+    Verify-before-store, same as the other real adapters: a failed verify
+    stores nothing, retires nothing, records ``warn:verify-failed``, and makes
+    a best-effort delete of the just-created key. Without --retire-old the old
+    key name is appended to the ``google-api-key`` RotationBinding's
+    ``superseded_key_ids``.
+
+    Refuses up front, before any API call, if the stored value is a
+    service-account JSON key (rotate that as provider ``gcp``) or anything
+    else that is not an ``AIza...`` key string.
+
+    Admin auth is a Google OAuth2 access token (``cloud-platform`` scope) for
+    an identity holding ``apikeys.keys.{create,get,getKeyString,lookup,delete}``
+    and ``serviceusage.operations.get`` on the project (all in
+    ``roles/serviceusage.apiKeysAdmin``), with ``apikeys.googleapis.com`` enabled. It comes from
+    ``admin_credential_ref`` / ``tags["google_api_key_admin_ref"]`` (a
+    reference resolved through ``Resolver.resolve_call()``), or, if neither is
+    set, from ``gcloud auth print-access-token`` through the ``runner`` seam.
+    Every HTTP call goes through the injected ``transport`` seam; no key
+    string or token is ever returned, logged, or put in an error message.
+    """
+
+    def __init__(
+        self,
+        transport: Optional[ResendTransport] = None,
+        runner=None,
+        local_backend=None,
+        audit=None,
+        registry=None,
+        admin_credential_ref: Optional[str] = None,
+        timeout: float = 30.0,
+        sleep: Callable[[float], None] = time.sleep,
+        poll_attempts: int = 30,
+        poll_interval: float = 2.0,
+        verify_attempts: int = 6,
+        verify_interval: float = 10.0,
+    ):
+        self._transport = transport or _default_google_transport
+        self._runner = runner or subprocess.run
+        self._local_backend = local_backend
+        self._audit = audit
+        self._registry = registry
+        self._admin_credential_ref = admin_credential_ref
+        self._timeout = timeout
+        self._sleep = sleep
+        self._poll_attempts = poll_attempts
+        self._poll_interval = poll_interval
+        self._verify_attempts = verify_attempts
+        self._verify_interval = verify_interval
+
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(
+        self,
+        ref,
+        resolver=None,
+        retire_old: bool = False,
+    ) -> RotationResult:
+        if hasattr(ref, "sm_name"):
+            sm_name = ref.sm_name
+            ref_name = getattr(ref, "name", sm_name)
+            tags = dict(getattr(ref, "tags", None) or {})
+            project = getattr(ref, "project", "") or ""
+        else:
+            sm_name = str(ref)
+            ref_name = sm_name
+            tags = {}
+            project = ""
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        try:
+            current = local_backend.access(sm_name, project=project)
+        except Exception:
+            current = None
+        old_name = tags.get("google_api_key_name", "")
+        if current is not None:
+            kind = classify_google_credential(current)
+            if kind != "api-key":
+                hint = (
+                    "it holds a service-account JSON key -- rotate it as provider 'gcp'"
+                    if kind == "service-account"
+                    else "it does not look like a Google Cloud API key (AIza...)"
+                )
+                raise RotationAdapterError(
+                    f"GoogleCloudAPIKeyRotationAdapter: refusing to rotate {ref_name!r}: {hint}"
+                )
+        elif not old_name:
+            raise RotationAdapterError(
+                f"GoogleCloudAPIKeyRotationAdapter: {ref_name!r} has no stored value and no "
+                "tags['google_api_key_name'] -- cannot tell which key to replace"
+            )
+
+        admin_template = self._admin_credential_ref or (
+            "{{secret:%s}}" % tags["google_api_key_admin_ref"]
+            if tags.get("google_api_key_admin_ref") else None
+        )
+        if admin_template and resolver is None:
+            raise RotationAdapterError(
+                f"GoogleCloudAPIKeyRotationAdapter: rotating {ref_name!r} needs a resolver "
+                "to resolve the admin credential"
+            )
+
+        def call(method, url, body=None):
+            return self._admin_call(resolver, admin_template, method, url, body)
+
+        # --- 1. FIND OLD ------------------------------------------------------
+        if not old_name:
+            status, found = call("GET", self._lookup_url(current))
+            old_name = found.get("name", "") if status == 200 else ""
+            if not old_name:
+                raise RotationAdapterError(
+                    f"Google API key lookup failed for {ref_name!r}: "
+                    f"{self._describe(status, found)} -- set tags['google_api_key_name']"
+                )
+        del current
+        status, old_key = call("GET", f"{_GOOGLE_APIKEYS_API}/{old_name}")
+        if status != 200:
+            raise RotationAdapterError(
+                f"Google API key get {old_name} failed for {ref_name!r}: "
+                f"{self._describe(status, old_key)}"
+            )
+        parent = old_name.split("/locations/")[0]
+
+        # --- 2. CREATE --------------------------------------------------------
+        body = {"displayName": f"portunus-{ref_name}-{int(time.time())}"[:_GOOGLE_KEY_DISPLAY_NAME_MAX]}
+        if old_key.get("restrictions"):
+            body["restrictions"] = old_key["restrictions"]
+        if old_key.get("serviceAccountEmail"):
+            body["serviceAccountEmail"] = old_key["serviceAccountEmail"]
+        status, op = call("POST", f"{_GOOGLE_APIKEYS_API}/{parent}/locations/global/keys", body)
+        if status != 200:
+            raise RotationAdapterError(
+                f"Google API key create failed for {ref_name!r}: {self._describe(status, op)}"
+            )
+        new_name = self._wait_operation(call, op, f"create for {ref_name!r}").get("name", "")
+        if not new_name:
+            raise RotationAdapterError(
+                f"Google API key create for {ref_name!r} returned no key name"
+            )
+        new_key_id = new_name.rsplit("/", 1)[-1]
+
+        new_key: Optional[str] = None
+        try:
+            status, ks = call("GET", f"{_GOOGLE_APIKEYS_API}/{new_name}/keyString")
+            new_key = ks.get("keyString", "") if status == 200 else ""
+
+            # --- 3. VERIFY ----------------------------------------------------
+            if not new_key or not self._verify(call, new_key, new_name, tags):
+                if self._audit:
+                    self._audit.append("rotate:google-api-key", sm_name, "warn:verify-failed")
+                try:
+                    call("DELETE", f"{_GOOGLE_APIKEYS_API}/{new_name}")
+                except Exception:
+                    pass  # best-effort cleanup; the failure below is what matters
+                raise RotationAdapterError(
+                    f"Google API key verification failed for {ref_name!r} -- "
+                    "rotation aborted; old credential left intact"
+                )
+
+            # --- 4. STORE -----------------------------------------------------
+            local_backend.store(sm_name, new_key)
+        finally:
+            del new_key
+
+        self._record_key_name(resolver, ref_name, tags, new_name)
+        update_rotation_bindings(lambda b: _add_superseded(b, "google-api-key", old_name))
+
+        # --- 5. RETIRE (opt-in): DELETE, undeletable for 30 days ---------------
+        retired = False
+        if retire_old:
+            status, op = call("DELETE", f"{_GOOGLE_APIKEYS_API}/{old_name}")
+            if status not in (200, 404):
+                if self._audit:
+                    self._audit.append(
+                        "rotate:google-api-key", sm_name, f"warn:retire-failed:new={new_key_id}"
+                    )
+                raise RotationAdapterError(
+                    f"Google API key delete of {old_name} failed for {ref_name!r} "
+                    f"({self._describe(status, op)}) -- the new key IS stored; "
+                    "the old one stays listed as superseded"
+                )
+            update_rotation_bindings(lambda b: _drop_superseded(b, "google-api-key", old_name))
+            retired = True
+
+        if self._audit:
+            self._audit.append("rotate:google-api-key", sm_name, f"ok:new={new_key_id}")
+
+        return RotationResult(
+            provider="google-api-key",
+            ref_name=ref_name,
+            key_id=new_key_id,
+            phase="stored",
+            retired_old=retired,
+        )
+
+    # --- HTTP helpers (all calls go through self._transport) -----------------
+
+    @staticmethod
+    def _lookup_url(key_string: str) -> str:
+        from urllib.parse import quote
+        return f"{_GOOGLE_APIKEYS_API}/keys:lookupKey?keyString={quote(key_string, safe='')}"
+
+    def _admin_call(self, resolver, admin_template, method, url, body):
+        def _boundary(token: str):
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "User-Agent": "portunus-rotation",
+            }
+            return self._transport(method, url, headers, body, self._timeout)
+
+        if admin_template:
+            return resolver.resolve_call(admin_template, _boundary)
+        proc = self._runner(
+            ["gcloud", "auth", "print-access-token"], capture_output=True, text=True, timeout=60
+        )
+        if proc.returncode != 0:
+            raise RotationAdapterError(
+                f"gcloud auth print-access-token failed: {proc.stderr.strip()[:200]}"
+            )
+        return _boundary(proc.stdout.strip())
+
+    def _wait_operation(self, call, op: dict, context: str) -> dict:
+        for _ in range(self._poll_attempts):
+            if op.get("error"):
+                err = op["error"]
+                raise RotationAdapterError(
+                    f"Google API key {context} failed: "
+                    f"{str(err.get('message', ''))[:200] if isinstance(err, dict) else ''}"
+                )
+            if op.get("done"):
+                return op.get("response") or {}
+            self._sleep(self._poll_interval)
+            status, op = call("GET", f"{_GOOGLE_APIKEYS_API}/{op.get('name', '')}")
+            if status != 200:
+                raise RotationAdapterError(
+                    f"Google API key {context}: operation poll failed: {self._describe(status, op)}"
+                )
+        raise RotationAdapterError(f"Google API key {context}: operation did not finish in time")
+
+    def _verify(self, call, new_key: str, new_name: str, tags: dict) -> bool:
+        try:
+            status, found = call("GET", self._lookup_url(new_key))
+        except RotationAdapterError:
+            return False
+        if status != 200 or found.get("name") != new_name:
+            return False
+        probe_url = tags.get("google_api_key_verify_url", "")
+        if not probe_url:
+            return True
+        # A new key can take a few minutes to start working -- retry.
+        for attempt in range(self._verify_attempts):
+            if attempt:
+                self._sleep(self._verify_interval)
+            try:
+                status, _ = self._transport(
+                    "GET", probe_url,
+                    {"x-goog-api-key": new_key, "User-Agent": "portunus-rotation"},
+                    None, self._timeout,
+                )
+            except RotationAdapterError:
+                continue
+            if status == 200:
+                return True
+        return False
+
+    @staticmethod
+    def _describe(status: int, resp: dict) -> str:
+        # Only Google's error status/message -- never a success body, which
+        # for getKeyString carries the key.
+        err = resp.get("error") if isinstance(resp, dict) else None
+        if not isinstance(err, dict):
+            return f"HTTP {status}"
+        return f"HTTP {status} {str(err.get('status', ''))[:60]}: {str(err.get('message', ''))[:200]}"
+
+    def _record_key_name(self, resolver, ref_name: str, tags: dict, new_name: str) -> None:
+        registry = self._registry or getattr(resolver, "registry", None)
+        if registry is None or not hasattr(registry, "retag") or ref_name not in registry:
+            return
+        registry.retag(ref_name, tags={**tags, "google_api_key_name": new_name})
+
+
 def _add_superseded(bindings: Dict[str, RotationBinding], provider: str, key_id: str) -> None:
     b = bindings.get(provider) or RotationBinding(provider=provider, status="real")
     if key_id not in b.superseded_key_ids:
@@ -2017,6 +2368,7 @@ class SentryRotationAdapter:
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
     "gcp": GCPServiceAccountKeyRotationAdapter,
+    "google-api-key": GoogleCloudAPIKeyRotationAdapter,
     "grafana-cloud": GrafanaCloudRotationAdapter,
     "resend": ResendRotationAdapter,
     "youtrack": YouTrackRotationAdapter,

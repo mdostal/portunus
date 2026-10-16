@@ -6,6 +6,18 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Google Cloud API key rotation (PANT-1136, #193).** New `GoogleCloudAPIKeyRotationAdapter`,
+  registered as `google-api-key` (separate from `gcp`, which rotates service-account JSON keys).
+  It runs via `portunus rotation run <ref> [--retire-old]`. It finds the old key (from
+  `tags["google_api_key_name"]` or `keys:lookupKey`), creates a new one with the same
+  restrictions, checks it with `keys:lookupKey` and, if `tags["google_api_key_verify_url"]` is
+  set, a live read-only call. Then it stores it and writes the new key name to
+  `tags["google_api_key_name"]`. `--retire-old` deletes the old key, which Google can undelete for
+  30 days. It refuses a stored value that is a service-account JSON key, so an ambiguous reference
+  such as `flayr-vertex-ai-*-key` can't be rotated as the wrong kind. Needs
+  `apikeys.googleapis.com` enabled and `roles/serviceusage.apiKeysAdmin` (or the same
+  permissions) on the calling identity.
+
 - **Vercel access token rotation (PANT-1135, #194).** `VercelRotationAdapter` (provider `vercel`)
   is no longer a stub: it creates a replacement token (`POST /v3/user/tokens`), verifies it with
   a read-only `GET /v5/user/tokens/current` that must return the new id, stores it, and with
