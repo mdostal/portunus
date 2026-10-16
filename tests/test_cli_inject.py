@@ -99,3 +99,25 @@ def test_inject_failure_path_never_leaks_value_on_bad_target(home, capsys):
     error_entries = [e for e in audit.entries() if e["action"] == "adapter_resolution"]
     assert len(error_entries) == 1
     assert SECRET not in json.dumps(error_entries[0])
+
+
+def test_inject_file_target_mode_group_json(home, capsys):
+    # PANT-1142: a caller on another uid asks for a group-readable file and
+    # gets back the file's real owner/group/mode, never the value.
+    _register()
+    target = home / "out.env"
+    gid = os.getgid()
+
+    rc = main(["inject", "--tags", "provider=vercel,project=mdostal.com",
+               "--target", "file", "--path", str(target), "--format", "env", "--key", "K",
+               "--mode", "0640", "--group", str(gid), "--json"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    out = json.loads(captured.out)
+    assert out["file"]["mode"] == "0640"
+    assert out["file"]["gid"] == gid
+    assert out["file"]["readable_by"] == f"owner and group {gid}"
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o640
+    assert SECRET not in captured.out
+    assert SECRET not in captured.err
