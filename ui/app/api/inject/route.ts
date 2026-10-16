@@ -24,6 +24,11 @@ export async function POST(req: NextRequest) {
       "--format", String(body.format || ""),
       "--key", String(body.key || ""),
     );
+    // PANT-1142: without these the file is 0600 as Portunus's own uid, which
+    // a caller running as any other uid can neither read nor delete.
+    if (body.mode) args.push("--mode", String(body.mode));
+    if (body.group !== undefined && body.group !== "") args.push("--group", String(body.group));
+    args.push("--json");
   }
 
   // PANT-1003: a caller that times out deletes its target file before this
@@ -48,6 +53,12 @@ export async function POST(req: NextRequest) {
       { error: cleanError(result.stderr, "injection failed") },
       { status: 422 },
     );
+  }
+  if (target === "file") {
+    // `file` is the written file's real uid/gid/mode/readable_by, so a
+    // caller can tell "Portunus wrote it" from "I can read it" (PANT-1142).
+    const out = JSON.parse(result.stdout || "{}");
+    return NextResponse.json({ ok: true, message: out.message, file: out.file });
   }
   return NextResponse.json({ ok: true, message: result.stdout.trim() });
 }

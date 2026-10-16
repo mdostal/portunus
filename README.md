@@ -41,6 +41,10 @@ throttled to once a day, never installs anything by itself — opt out any time 
 **[portunus site →](https://mdostal.github.io/portunus/)** — landing page, install snippets, and
 the component-model pitch in one place.
 
+**[Documentation →](https://mdostal.github.io/portunus/docs/)** — quickstart, concepts,
+architecture, CLI/MCP reference, and [Process & Design](https://mdostal.github.io/portunus/docs/process/),
+the design record behind every feature, published from `.pHive/` and rebuilt on every push to `main`.
+
 ## The problem
 
 AI agents need real secrets to do real work — deploy tokens, API keys, DB creds. But the moment a
@@ -1143,11 +1147,21 @@ rejected with **403** if it carries an `Origin` other than the UI's own, or if i
 through the UI's API. A client with no `Origin` header, such as `curl`, still works as long as it
 sends JSON.
 
+**Deploying behind a non-loopback name (containers, reverse proxies).** If anything reaches the
+UI by a name other than `localhost` / `127.0.0.1` / `[::1]`, for example another container
+calling `http://portunus-ui:7802` by its compose service name, set `PORTUNUS_UI_HOST` up front.
+Without it every write from that caller is rejected with `403 {"error":"non-loopback Host
+rejected"}` while reads keep working. The deep `GET /api/health` runs the same Host check on its
+own request, so that caller sees `status: "down"` (HTTP 503) with a failed `ui-write-host`
+check instead of a green result. `?shallow=1` skips that check. Note that a container health
+probe which curls `localhost` from inside the container sends a loopback `Host` and will still
+pass; probe health over the same name your real callers use.
+
 ### Running as a supervised service (L2 plugin lifecycle)
 
 The UI also builds as a self-contained, host-supervisable service — `GET /api/health` returns
 the result of `portunus health --json` (`{status: ok|degraded|down, checks}`; HTTP 503 when
-down), `GET /api/health?shallow=1` returns `{"status":"ok"}` without touching the CLI (the
+down) plus the `ui-write-host` check described above, `GET /api/health?shallow=1` returns `{"status":"ok"}` without touching the CLI (the
 desktop app's readiness poll uses this), and
 `next.config.mjs` sets `output: "standalone"` so a single fixed entrypoint can be supervised
 directly:

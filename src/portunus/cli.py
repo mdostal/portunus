@@ -67,7 +67,7 @@ from .leakscan import (
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
 from .localvault import LocalEncryptedBackend, SessionExpired
 from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
-from .adapters import AdapterError, EnvVarAdapter, FileAdapter
+from .adapters import AdapterError, EnvVarAdapter, FileAdapter, describe_file
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import Resolver, UnknownReference
@@ -290,7 +290,12 @@ def _adapter_from_args(args):
     key) and raise AdapterError -- no redundant pre-check here."""
     if args.target == "env":
         return EnvVarAdapter(), {"var_name": args.var}, f"env:{args.var}"
-    return FileAdapter(), {"path": args.path, "fmt": args.format, "key": args.key}, f"file:{args.path}"
+    return (
+        FileAdapter(),
+        {"path": args.path, "fmt": args.format, "key": args.key,
+         "mode": args.mode, "group": args.group},
+        f"file:{args.path}",
+    )
 
 
 def _inject_resolved_ref(resolver, broker, ref, args, audit_action: str) -> int:
@@ -306,7 +311,16 @@ def _inject_resolved_ref(resolver, broker, ref, args, audit_action: str) -> int:
         broker.audit.append(audit_action, ref.sm_name, f"error:{target_desc}")
         return _err(str(exc))
     broker.audit.append(audit_action, ref.sm_name, f"ok:{target_desc}")
-    print(f"injected {{{{secret:{ref.name}}}}} -> {target_desc}")
+    message = f"injected {{{{secret:{ref.name}}}}} -> {target_desc}"
+    if getattr(args, "json", False):
+        result = {"message": message}
+        if args.target == "file":
+            # Who can actually read what was written (PANT-1142): "ok" alone
+            # only says Portunus wrote it, not that the caller can open it.
+            result["file"] = describe_file(args.path)
+        print(json.dumps(result))
+    else:
+        print(message)
     return 0
 
 
@@ -2475,6 +2489,14 @@ def build_parser() -> argparse.ArgumentParser:
     inj.add_argument("--format", dest="format", default="", choices=("", "env", "json", "yaml"),
                       help="target file format (--target file)")
     inj.add_argument("--key", default="", help="key to template the value under (--target file)")
+    inj.add_argument("--mode", default="", choices=("", "0600", "0640", "0660"),
+                      help="file mode (--target file; default 0600). 0640/0660 with --group "
+                           "lets a caller running as another uid read the file")
+    inj.add_argument("--group", default="",
+                      help="group name or gid to own the file (--target file); portunus must "
+                           "belong to it, or it must be the directory's setgid group")
+    inj.add_argument("--json", action="store_true",
+                      help="print {message, file: {uid, gid, mode, readable_by}} on success")
     inj.set_defaults(func=cmd_inject)
 
     ask = sub.add_parser("ask", help="semantic front door: natural-language request -> injection")
@@ -2486,6 +2508,9 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--format", dest="format", default="", choices=("", "env", "json", "yaml"),
                       help="target file format (--target file)")
     ask.add_argument("--key", default="", help="key to template the value under (--target file)")
+    ask.add_argument("--mode", default="", choices=("", "0600", "0640", "0660"),
+                      help="file mode (--target file; default 0600), as for inject")
+    ask.add_argument("--group", default="", help="group name or gid to own the file (--target file), as for inject")
     ask.add_argument("--json", action="store_true", help="machine-readable output for resolve-only calls (UI consumer)")
     ask.add_argument("--name", default="", help="required for an 'add' request, e.g. --name vercel-mdostal")
     ask.add_argument("--tags", default="",

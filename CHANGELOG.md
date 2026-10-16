@@ -14,6 +14,26 @@ All notable changes to Portunus are documented in this file.
   listed under the `resend` binding's `superseded_key_ids`. `portunus rotation run` now also
   prints `key_id=` when the adapter reports one.
 
+### Fixed
+
+- **A file-target inject can now be read by a caller running as another uid (PANT-1142).**
+  `inject`/`ask` take `--mode 0600|0640|0660` and `--group <name|gid>`, and `POST /api/inject`
+  takes `mode`/`group`. Both are applied before the value is written; if Portunus can't apply
+  them, the inject fails and leaves no file. Before, every file was `0600` as Portunus's own uid
+  and a non-root caller got `ok: true` for a file it could neither read nor delete.
+  `POST /api/inject` now also returns `file: {path, uid, gid, mode, readable_by}`, so `ok` can be
+  checked against the file actually written. Default stays `0600`.
+- **`inject --tags scope=...` matches an open `scope` tag when the structured `scope` is empty
+  (PANT-1142).** The same fallback applies to every structured key. `flayr-mdostal-account`
+  carries `scope=account-wide` only in its open tags, so `ask` showed the tag but `inject` with it
+  found no reference.
+- **`GET /api/health` no longer reports healthy while every write is rejected (PANT-1143,
+  #186).** `ui/proxy.ts` 403s mutating requests whose `Host` isn't a loopback name unless
+  `PORTUNUS_UI_HOST` is set, but GET/HEAD skip that guard, so a UI reached container-to-container
+  by service name stayed green with every write failing. The deep health check now runs the same
+  Host check on its own request and adds a `ui-write-host` check; when it fails the result is
+  `down` (HTTP 503) and the detail says to set `PORTUNUS_UI_HOST`. `?shallow=1` is unchanged.
+
 ## [0.34.0] - 2026-10-14
 
 ### Fixed
