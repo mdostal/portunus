@@ -184,21 +184,25 @@ sequenceDiagram
 
 A second, genuinely different kind of "real vs. stub" split from ARCA's own (§2, §1's `Stub`
 node): ARCA answers *where a value lives*, `RotationBinding`/`RotationAdapter` (`rotation.py`)
-answer *who would rotate it, and whether Portunus can yet*. **Four adapters are real today and
+answer *who would rotate it, and whether Portunus can yet*. **Six adapters are real today and
 report `capability() == "auto"`:** `OAuthRefreshRotationAdapter` (OAuth refresh tokens, wrapping
 `OAuthBackend`), `GCPServiceAccountKeyRotationAdapter` (GCP service-account keys:
 create → verify → store, with opt-in `--retire-old` that disables, never deletes, the superseded
 key), `ResendRotationAdapter` (Resend API keys: same cycle, but `--retire-old` deletes because
-Resend has no disable) and `YouTrackRotationAdapter` (JetBrains Hub permanent tokens: same cycle,
-`--retire-old` deletes because Hub has no disable). All run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
+Resend has no disable), `GrafanaCloudRotationAdapter` (Grafana Cloud org access policy tokens:
+same cycle, `--retire-old` deletes), `YouTrackRotationAdapter` (JetBrains Hub permanent tokens: same
+cycle, `--retire-old` deletes because Hub has no disable) and `GitHubRotationAdapter` (OAuth App tokens
+from an App the operator owns, reset in place; every other GitHub subtype is refused as
+manual/not-applicable, decided per reference by `capability_for(ref)`). All run via
+`portunus rotation run <ref>`. **Vercel and Stripe are still stubs**
 that raise `RotationAdapterError` and report `capability() == "unknown"`. The per-provider
 capability matrix lives in [`docs/rotation.md`](rotation.md), and
 `tests/test_rotation_docs_drift.py` fails if an `auto` adapter isn't listed as auto there.
 
 ```mermaid
 graph TD
-    accTitle: Rotation provenance -- four real adapters, three stubs
-    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp, resend and youtrack to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
+    accTitle: Rotation provenance -- six real adapters, two stubs
+    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp, resend, grafana-cloud, youtrack and github to real adapters and vercel and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
 
     RB["RotationBinding<br/>(provider, status: real|stub|manual, account)<br/>PORTUNUS_HOME/rotation-bindings.json"]
     Registry["RotationAdapter registry<br/>(rotation_adapter_for)"]
@@ -208,14 +212,17 @@ graph TD
     Registry -->|oauth| OAuth["OAuthRefreshRotationAdapter<br/>capability: auto"]
     Registry -->|gcp| GCP["GCPServiceAccountKeyRotationAdapter<br/>capability: auto"]
     Registry -->|resend| Resend["ResendRotationAdapter<br/>capability: auto"]
+    Registry -->|grafana-cloud| Grafana["GrafanaCloudRotationAdapter<br/>capability: auto"]
     Registry -->|youtrack| YT["YouTrackRotationAdapter<br/>capability: auto"]
-    Registry -->|vercel · github · stripe| Stub["stub: raises RotationAdapterError<br/>capability: unknown"]
+    Registry -->|github| GH["GitHubRotationAdapter<br/>capability: auto (OAuth App tokens)<br/>manual/n.a. per subtype"]
+    Registry -->|vercel · stripe| Stub["stub: raises RotationAdapterError<br/>capability: unknown"]
     RB -.->|provider context| Registry
 
     GCP -->|optional admin_credential_ref resolved via| SelfResolve["resolver.resolve_call(<br/>'{{secret:...}}', boundary=...)"]
     SelfResolve -->|same boundary-only sink<br/>every other value uses| ProviderAPI["gcloud iam service-accounts keys ..."]
     Resend -->|admin key ref resolved via| SelfResolve
     SelfResolve --> ResendAPI["api.resend.com /api-keys"]
+    GH -->|App client secret resolved via| SelfResolve
     YT -->|current token authenticates its replacement| HubAPI["Hub REST API<br/>users/{id}/permanenttokens"]
     OAuth -->|OAuthBackend.access()| TokenEndpoint["provider token endpoint<br/>(rotated refresh_token persisted back)"]
 ```

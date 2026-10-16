@@ -31,8 +31,12 @@ Real adapters:
   which is verified, stored, and (with --retire-old) the old one DELETED --
   Hub has no disable. Same `transport` seam.
 
-Stub adapters (`VercelRotationAdapter`, `GitHubRotationAdapter`,
-`StripeRotationAdapter`) still raise unconditionally. A future real adapter
+- `GitHubRotationAdapter` resets OAuth App tokens the operator's own OAuth
+  App issued; every other GitHub credential type is manual or not
+  applicable, decided per reference (see the GitHub table below).
+
+Stub adapters (`VercelRotationAdapter`, `StripeRotationAdapter`) still
+raise unconditionally. A future real adapter
 (Vercel is the confirmed priority target) would authenticate using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
 docs/architecture.md for the worked example.
@@ -1403,16 +1407,314 @@ class VercelRotationAdapter:
         )
 
 
+# --- GitHub ---------------------------------------------------------------
+#
+# GitHub has no single rotation story -- it depends entirely on which kind of
+# token is stored (researched 2026-10-16 against docs.github.com/en/rest,
+# PANT-1141 / portunus#188; see docs/rotation.md's GitHub section):
+#
+#   classic PAT (ghp_)            manual -- no create/reissue API; UI only
+#   fine-grained PAT (github_pat_) manual -- the org API can only *revoke*
+#                                  access, never create or reissue
+#   OAuth App token (gho_)        auto, ONLY when the operator owns the OAuth
+#                                  App (holds its client_secret): PATCH
+#                                  /applications/{client_id}/token resets it
+#                                  without user involvement. A `gh auth login`
+#                                  token is gho_ too, but belongs to GitHub
+#                                  CLI's OAuth App -- nobody but GitHub holds
+#                                  that client_secret, so it is manual.
+#   GitHub App user token (ghu_)  not applicable here -- expiring user tokens
+#                                  come with a ghr_ refresh token; store the
+#                                  bundle via `portunus oauth store` and the
+#                                  OAuth refresh adapter rotates it.
+#   installation token (ghs_)     not applicable -- GitHub expires it after
+#                                  1 hour; re-mint from the App's private key.
+#   GitHub App private key (PEM)  manual -- generate/delete is UI-only.
+
+GITHUB_API = "https://api.github.com"
+_GITHUB_API_VERSION = "2022-11-28"
+
+# token-prefix -> subtype. Order matters: "github_pat_" before "gh?_" checks.
+_GITHUB_PREFIXES = (
+    ("github_pat_", "fine_grained_pat"),
+    ("ghp_", "classic_pat"),
+    ("gho_", "oauth_app"),
+    ("ghu_", "app_user"),
+    ("ghs_", "app_installation"),
+    ("ghr_", "app_refresh"),
+    ("-----BEGIN", "app_private_key"),
+)
+
+GITHUB_SUBTYPE_CAPABILITY = {
+    "classic_pat": "manual",
+    "fine_grained_pat": "manual",
+    "oauth_app": "auto",
+    "app_user": "not_applicable",
+    "app_refresh": "not_applicable",
+    "app_installation": "not_applicable",
+    "app_private_key": "manual",
+}
+
+_GITHUB_SUBTYPE_REASON = {
+    "classic_pat": (
+        "classic personal access tokens (ghp_) have no create/reissue API -- GitHub "
+        "only issues them through its web UI. Generate a new token in Settings -> "
+        "Developer settings, re-store it, then revoke the old one."
+    ),
+    "fine_grained_pat": (
+        "fine-grained personal access tokens (github_pat_) have no create/reissue "
+        "API -- the org endpoints can only revoke access. Generate a new token in "
+        "Settings -> Developer settings, re-store it, then revoke the old one."
+    ),
+    "app_user": (
+        "GitHub App user tokens (ghu_) expire and are refreshed with their ghr_ "
+        "refresh token -- store the bundle via `portunus oauth store` and the "
+        "OAuth refresh adapter rotates it; there is nothing for this adapter to do."
+    ),
+    "app_refresh": (
+        "a GitHub App refresh token (ghr_) is rotated by the OAuth refresh grant "
+        "itself -- store it via `portunus oauth store`, not as a plain reference."
+    ),
+    "app_installation": (
+        "GitHub App installation tokens (ghs_) expire after 1 hour and are "
+        "re-minted from the App's private key -- there is nothing to rotate."
+    ),
+    "app_private_key": (
+        "GitHub App private keys can only be generated/deleted in the App's "
+        "settings page -- no API exists. Generate a new key, re-store it, then "
+        "delete the old one."
+    ),
+}
+
+
+def github_token_subtype(value: str = "", tags: Optional[dict] = None) -> str:
+    """Classify a GitHub credential. An explicit `github_token_type` tag wins
+    (it is metadata, readable without touching the value); otherwise the
+    token's own documented prefix decides. Returns "" when neither says."""
+    tagged = (tags or {}).get("github_token_type", "")
+    if tagged:
+        return tagged
+    stripped = (value or "").strip()
+    for prefix, subtype in _GITHUB_PREFIXES:
+        if stripped.startswith(prefix):
+            return subtype
+    return ""
+
+
+def _github_http(method: str, url: str, headers: dict, body: Optional[dict], timeout: float):
+    """Default HTTP seam: returns (status, parsed_json_or_{}). Never raises on
+    an HTTP error status -- the caller decides what a 401/404 means. Tests
+    inject a fake with the same signature."""
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        status, raw = exc.code, exc.read()
+    try:
+        parsed = json.loads(raw.decode() or "{}")
+    except (ValueError, UnicodeDecodeError):
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+def _github_headers(extra: Optional[dict] = None) -> dict:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": _GITHUB_API_VERSION,
+        "User-Agent": "portunus",
+    }
+    headers.update(extra or {})
+    return headers
+
+
 class GitHubRotationAdapter:
-    """GitHub -- STUB. No real calls."""
+    """GitHub -- REAL for OAuth App tokens the operator's own OAuth App
+    issued; MANUAL / not-applicable for every other GitHub credential type
+    (see the table above and docs/rotation.md).
+
+    OAuth App token reset (`PATCH /applications/{client_id}/token`) is
+    inherently destructive: GitHub replaces the token in place and the old
+    one stops working the moment the call returns ("changes take effect
+    immediately"). There is no add-new-then-retire path, so Portunus's
+    non-destructive default cannot hold here -- the adapter refuses unless
+    the caller passes `retire_old=True` (`--retire-old`) to acknowledge it.
+    Because the old token is already dead once the reset returns, the new
+    token is STORED FIRST and verified second (the reverse of the GCP
+    adapter's verify-before-store, which only works when the old key is
+    still valid).
+
+    The ref must carry:
+    - `tags["github_client_id"]` -- the OAuth App's client ID (not secret)
+    - `tags["github_client_secret_ref"]` -- name of the registry reference
+      holding that App's client secret. Resolved through
+      `Resolver.resolve_call()` like every other value; never stored here.
+    and must live in the local backend (`backend` "" or "local") -- the
+    adapter refuses BEFORE resetting anything if it couldn't store the
+    result, since a reset with nowhere to put the new token is a lockout.
+    """
+
+    def __init__(self, http=None, local_backend=None, audit=None, timeout: float = 30.0):
+        self._http = http or _github_http
+        self._local_backend = local_backend
+        self._audit = audit
+        self._timeout = timeout
 
     def capability(self) -> str:
-        return "unknown"
+        # Provider-level: a real path exists for (some) GitHub references.
+        # Per-reference truth is capability_for(ref).
+        return "auto"
 
-    def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
-        raise RotationAdapterError(
-            f"GitHub rotation is not yet implemented -- request it: {_ADAPTER_REQUEST_URL}"
+    def capability_for(self, ref) -> str:
+        """Per-reference capability from metadata only (never the value):
+        "auto" / "manual" / "not_applicable", or "unknown" when the ref has
+        no `github_token_type` tag to go on."""
+        tags = getattr(ref, "tags", None) or {}
+        subtype = github_token_subtype(tags=tags)
+        cap = GITHUB_SUBTYPE_CAPABILITY.get(subtype, "unknown")
+        if cap == "auto" and not tags.get("github_client_secret_ref"):
+            # gho_ without the owning App's secret (e.g. a `gh auth login`
+            # token) -- reset is impossible.
+            return "manual"
+        return cap
+
+    def rotate(self, ref, resolver=None, retire_old: bool = False) -> RotationResult:
+        if ref is None or not hasattr(ref, "sm_name"):
+            raise RotationAdapterError(
+                "GitHub rotation needs a registry reference (with tags), not a bare name"
+            )
+        if resolver is None:
+            raise RotationAdapterError("GitHub rotation needs a resolver to read the stored token")
+        ref_name = getattr(ref, "name", ref.sm_name)
+        tags = getattr(ref, "tags", None) or {}
+
+        template = "{{secret:" + ref_name + "}}"
+        subtype = github_token_subtype(tags=tags) or resolver.resolve_call(
+            template, lambda value: github_token_subtype(value=value)
         )
+        if subtype != "oauth_app":
+            reason = _GITHUB_SUBTYPE_REASON.get(subtype) or (
+                "unrecognized GitHub credential -- set tags['github_token_type'] "
+                "(classic_pat, fine_grained_pat, oauth_app, app_user, "
+                "app_installation, app_private_key)"
+            )
+            raise RotationAdapterError(f"GitHub rotation not possible for {ref_name!r}: {reason}")
+
+        client_id = tags.get("github_client_id", "")
+        secret_ref = tags.get("github_client_secret_ref", "")
+        if not client_id or not secret_ref:
+            raise RotationAdapterError(
+                f"GitHub rotation not possible for {ref_name!r}: an OAuth App token can only "
+                "be reset by the App that issued it -- set tags['github_client_id'] and "
+                "tags['github_client_secret_ref'] (a reference holding that App's client "
+                "secret). A `gh auth login` token belongs to GitHub CLI's own OAuth App, "
+                "so it is manual: re-run `gh auth login` and re-store it."
+            )
+        if not retire_old:
+            raise RotationAdapterError(
+                f"GitHub OAuth App token reset for {ref_name!r} invalidates the current token "
+                "immediately (GitHub has no add-then-retire path) -- re-run with --retire-old "
+                "to acknowledge."
+            )
+        if getattr(ref, "backend", "") not in ("", "local"):
+            raise RotationAdapterError(
+                f"GitHub rotation for {ref_name!r}: reference lives in backend "
+                f"{ref.backend!r}, but this adapter can only store to the local vault -- "
+                "refusing before reset, which would otherwise leave no valid token stored."
+            )
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        secret_template = "{{secret:" + secret_ref + "}}"
+        auth_id = resolver.resolve_call(
+            secret_template,
+            lambda client_secret: resolver.resolve_call(
+                template,
+                lambda old_token: self._reset_store_verify(
+                    ref, ref_name, client_id, client_secret, old_token, local_backend
+                ),
+            ),
+        )
+        return RotationResult(
+            provider="github",
+            ref_name=ref_name,
+            key_id=auth_id,
+            phase="verified",
+            retired_old=True,
+        )
+
+    def _app_call(self, method: str, client_id: str, client_secret: str, token: str):
+        import base64
+
+        basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        return self._http(
+            method,
+            f"{GITHUB_API}/applications/{client_id}/token",
+            _github_headers({"Authorization": f"Basic {basic}", "Content-Type": "application/json"}),
+            {"access_token": token},
+            self._timeout,
+        )
+
+    def _audit_append(self, sm_name: str, result: str) -> None:
+        if self._audit:
+            self._audit.append("rotate:github-oauth-app", sm_name, result)
+
+    def _reset_store_verify(self, ref, ref_name, client_id, client_secret, old_token, local_backend) -> str:
+        old_token = old_token.strip()
+        # Reset only works on a still-valid token -- check first so a dead
+        # token gets a clear "re-authorize" answer instead of a bare 422.
+        status, _ = self._app_call("POST", client_id, client_secret, old_token)
+        if status == 404:
+            self._audit_append(ref.sm_name, "err:old-token-invalid")
+            raise RotationAdapterError(
+                f"GitHub rotation for {ref_name!r}: the stored token is already invalid "
+                "(GitHub's check-token returned 404) -- reset needs a valid token; the "
+                "user must re-authorize the OAuth App."
+            )
+        if status != 200:
+            self._audit_append(ref.sm_name, f"err:check-{status}")
+            raise RotationAdapterError(
+                f"GitHub rotation for {ref_name!r}: check-token returned HTTP {status} -- "
+                "verify github_client_id / the client secret reference."
+            )
+
+        status, body = self._app_call("PATCH", client_id, client_secret, old_token)
+        new_token = str(body.get("token") or "")
+        if status != 200 or not new_token:
+            self._audit_append(ref.sm_name, f"err:reset-{status}")
+            raise RotationAdapterError(
+                f"GitHub rotation for {ref_name!r}: reset returned HTTP {status}; nothing "
+                "was changed on Portunus's side."
+            )
+        auth_id = str(body.get("id") or "")
+
+        # The old token is dead from here on -- store before anything else.
+        try:
+            local_backend.store(ref.sm_name, new_token)
+        except Exception as exc:
+            self._audit_append(ref.sm_name, "err:store-failed-after-reset")
+            raise RotationAdapterError(
+                f"GitHub rotation for {ref_name!r}: GitHub reset the token but storing the "
+                f"new one failed ({type(exc).__name__}) -- the old token is invalid; the "
+                "user must re-authorize the OAuth App."
+            ) from exc
+
+        status, _ = self._app_call("POST", client_id, client_secret, new_token)
+        if status != 200:
+            self._audit_append(ref.sm_name, f"warn:verify-{status}")
+            raise RotationAdapterError(
+                f"GitHub rotation for {ref_name!r}: new token stored, but check-token "
+                f"returned HTTP {status} for it -- investigate before relying on it."
+            )
+        self._audit_append(ref.sm_name, f"ok:auth={auth_id}" if auth_id else "ok")
+        return auth_id
 
 
 class StripeRotationAdapter:

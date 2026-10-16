@@ -242,6 +242,19 @@ def test_oauth_refresh_request_format_defaults_to_form_encoded():
     assert seen["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
 
 
+def test_oauth_refresh_asks_for_a_json_response():
+    # GitHub's token endpoint returns form-urlencoded unless Accept says JSON
+    # -- without this, a GitHub App user-token (ghr_) refresh can't be parsed.
+    seen = {}
+
+    def transport(url, data, headers, timeout):
+        seen["headers"] = dict(headers)
+        return {"access_token": "X", "expires_in": 60}
+
+    _oauth_auth(transport).mint()
+    assert seen["headers"]["Accept"] == "application/json"
+
+
 def test_default_gcp_transport_sends_a_real_json_body_when_asked():
     # _default_gcp_transport is the shared wire-serialization point for
     # every Auth class in this module -- confirm it actually respects the

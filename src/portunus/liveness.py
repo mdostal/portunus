@@ -32,8 +32,8 @@ Parity:
   target names grouped by equality -- never a value, and never a
   fingerprint that could be compared across runs.
 
-Built-in provider probes are registered by the provider sub-issues; this
-module ships the machinery only. See docs/liveness.md.
+Built-in provider probes are registered at the bottom of this module by the
+provider sub-issues (GitHub, PANT-1141, is the first). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -348,3 +348,61 @@ def parity_check(ref_name: str, fetchers: Mapping[str, Callable[[], str]]) -> Pa
 def backend_fetcher(backend, sm_name: str, project: str = "") -> Callable[[], str]:
     """Fetcher for any Portunus SecretBackend (local vault, GCP, ...)."""
     return lambda: backend.access(sm_name, project=project)
+
+
+# ---------------------------------------------------------------------------
+# Built-in provider probes.
+# ---------------------------------------------------------------------------
+
+
+class GitHubLivenessAdapter(HTTPLivenessAdapter):
+    """GitHub (PANT-1141): `GET /rate_limit` with the stored token. It doesn't
+    count against the REST rate limit and accepts every bearer-token type
+    (classic/fine-grained PAT, OAuth App, App user, installation), so one
+    probe covers them all. Only 401 ("Bad credentials") is dead -- GitHub's
+    403 also means rate-limited or forbidden, so it stays unknown. A stored
+    `ghs_` installation token reads dead after its 1-hour expiry, which is
+    the truth about that stored copy.
+
+    A GitHub App private key is not a bearer token (it signs a JWT), so
+    sending it would read as a false "dead" -- it is reported unknown
+    without any request, whether identified by the `github_token_type` tag
+    or by its PEM header inside the resolver boundary."""
+
+    PRIVATE_KEY = -1  # boundary sentinel: never a real HTTP status
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__(
+            "github",
+            HTTPProbe(url="https://api.github.com/rate_limit", dead_statuses=(401,)),
+            transport=transport,
+            timeout=timeout,
+        )
+
+    def check(self, ref, resolver) -> LivenessResult:
+        not_bearer = LivenessResult(ref.name, self.provider, UNKNOWN,
+                                    detail="GitHub App private key -- not a bearer token, not probed")
+        if (getattr(ref, "tags", None) or {}).get("github_token_type") == "app_private_key":
+            return not_bearer
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if value.startswith("-----BEGIN"):
+                return self.PRIVATE_KEY
+            return self._transport(
+                self.probe.method, self.probe.url, self.probe.headers_for(value), self._timeout
+            )
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.PRIVATE_KEY:
+            return not_bearer
+        return LivenessResult(
+            ref_name=ref.name,
+            provider=self.provider,
+            status=self.probe.classify(code),
+            http_status=code,
+            detail=f"{self.probe.method} {self.probe.url} -> {code}",
+        )
+
+
+register_liveness_adapter("github", GitHubLivenessAdapter)
