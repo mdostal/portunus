@@ -29,6 +29,10 @@ Stub adapters (`VercelRotationAdapter`, `GitHubRotationAdapter`,
 admin credential resolved through `Resolver.resolve_call()` -- see
 docs/architecture.md for the worked example.
 
+Manual adapters (`SentryRotationAdapter`) report capability "manual" and
+raise with the human re-issue path: the provider has no programmatic
+rotation API at all.
+
 See also: docs/rotation.md for the provider capability matrix and the
 non-destructive-default rationale.
 """
@@ -848,6 +852,36 @@ class StripeRotationAdapter:
         )
 
 
+class SentryRotationAdapter:
+    """Sentry -- MANUAL. No real calls, and none are possible.
+
+    Every Sentry token-management endpoint -- user auth tokens
+    (``/api/0/api-tokens/``), organization auth tokens
+    (``/api/0/organizations/{org}/org-auth-tokens/``) and internal-integration
+    tokens (``/api/0/sentry-apps/{slug}/api-tokens/``) -- uses
+    ``SessionNoAuthTokenAuthentication``, which rejects any request carrying
+    an ``Authorization`` header, and is marked ``ApiPublishStatus.PRIVATE``.
+    A bearer admin token, whatever its scopes, cannot mint or revoke another
+    token, so there is no create -> verify -> retire path to drive. Session-
+    cookie scripting of the web UI is deliberately not attempted (SSO/2FA,
+    undocumented, breaks silently). See docs/provider-rotation-matrix.md.
+
+    Registered so `rotation run` explains the human re-issue path instead of
+    reporting "no adapter registered".
+    """
+
+    def capability(self) -> str:
+        return "manual"
+
+    def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
+        raise RotationAdapterError(
+            "Sentry tokens cannot be rotated programmatically -- Sentry's token "
+            "endpoints accept session auth only and reject bearer tokens. Re-issue by "
+            "hand (Settings > Auth Tokens), store the new value, then revoke the old one "
+            "in the same page; see docs/provider-rotation-matrix.md (Sentry auth tokens)."
+        )
+
+
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
     "gcp": GCPServiceAccountKeyRotationAdapter,
@@ -855,6 +889,7 @@ _ADAPTERS = {
     "vercel": VercelRotationAdapter,
     "github": GitHubRotationAdapter,
     "stripe": StripeRotationAdapter,
+    "sentry": SentryRotationAdapter,
 }
 
 

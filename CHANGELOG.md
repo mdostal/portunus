@@ -16,6 +16,15 @@ All notable changes to Portunus are documented in this file.
 
 ### Fixed
 
+- **Sentry tokens are `manual`, not `auto` (PANT-1139, #190).** `provider-rotation-matrix.md`
+  listed Sentry user auth tokens as auto-rotatable via `POST /api/0/api-tokens/` with an
+  `org:admin` bearer token. That call is always rejected: Sentry's user, org and
+  internal-integration token endpoints use `SessionNoAuthTokenAuthentication`, which refuses any
+  `Authorization` header, and they have done so since 2023. A new `SentryRotationAdapter`
+  (`_ADAPTERS["sentry"]`) reports `manual`, and `portunus rotation run` on a Sentry reference
+  now prints the human re-issue steps rather than "no adapter registered". The matrix and
+  `docs/rotation.md` are corrected.
+
 - **A file-target inject can now be read by a caller running as another uid (PANT-1142).**
   `inject`/`ask` take `--mode 0600|0640|0660` and `--group <name|gid>`, and `POST /api/inject`
   takes `mode`/`group`. Both are applied before the value is written; if Portunus can't apply

@@ -33,6 +33,7 @@ new one).
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
 | `resend` | API key (`re_...`) | **auto** | `ResendRotationAdapter`: create → verify (read-only `GET /api-keys`, sends no email) → store. `--retire-old` **deletes** the old key — Resend has no disable. Needs `tags["resend_api_key_id"]` for `--retire-old`; see [Resend API keys](#resend-api-keys) below. |
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
+| `sentry` | User / org / internal-integration auth token | **manual** | Sentry's token endpoints accept session auth only and reject any bearer token, so no admin credential can mint or revoke a token. `SentryRotationAdapter` is registered so `rotation run` prints the human re-issue steps. See `provider-rotation-matrix.md`. |
 
 > **Capability vocabulary:**
 > - `auto` — a programmatic rotation path exists and Portunus has a real adapter for this credential type.

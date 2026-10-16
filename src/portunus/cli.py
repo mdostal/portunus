@@ -1469,6 +1469,14 @@ def cmd_rotation_run(args) -> int:
         return 1
 
     cap = getattr(adapter, "capability", lambda: "stub")()
+    if cap == "manual":
+        # A manual adapter's rotate() only raises, carrying the human
+        # re-issue instructions -- surface those rather than "stub".
+        try:
+            adapter.rotate(ref, resolver=resolver, retire_old=args.retire_old)
+        except RotationAdapterError as exc:
+            _err(str(exc))
+        return 1
     if cap != "auto":
         _err(
             f"rotation adapter for {provider!r} is a stub (capability={cap!r}) -- "
