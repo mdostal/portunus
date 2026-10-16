@@ -36,7 +36,6 @@ def test_rotation_binding_defaults_to_stub_status():
 
 @pytest.mark.parametrize("adapter_cls,provider_name", [
     (VercelRotationAdapter, "Vercel"),
-    (GitHubRotationAdapter, "GitHub"),
     (StripeRotationAdapter, "Stripe"),
 ])
 def test_stub_adapters_unconditionally_raise(adapter_cls, provider_name):
@@ -258,7 +257,6 @@ def test_rotation_result_field_set_includes_key_id():
 
 @pytest.mark.parametrize("adapter_cls", [
     VercelRotationAdapter,
-    GitHubRotationAdapter,
     StripeRotationAdapter,
 ])
 def test_stub_adapters_capability_returns_unknown(adapter_cls):
@@ -271,7 +269,6 @@ def test_oauth_adapter_capability_returns_auto():
 
 @pytest.mark.parametrize("adapter_cls", [
     VercelRotationAdapter,
-    GitHubRotationAdapter,
     StripeRotationAdapter,
 ])
 def test_stub_adapters_rotate_accepts_retire_old_kwarg(adapter_cls):

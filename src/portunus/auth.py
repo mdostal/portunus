@@ -348,7 +348,10 @@ class OAuthRefreshTokenAuth:
         resp = self.transport(
             self.token_endpoint,
             data,
-            {"Content-Type": content_type},
+            # Accept: GitHub's token endpoint answers form-urlencoded unless
+            # asked for JSON (GitHub App user tokens, ghu_/ghr_, PANT-1141);
+            # every other provider already returns JSON and ignores it.
+            {"Content-Type": content_type, "Accept": "application/json"},
             self.timeout,
         )
         access_token = str(resp.get("access_token", ""))

@@ -1,7 +1,11 @@
 """docs/rotation.md's capability matrix must not lag behind the code: every
 adapter in rotation.py's registry that reports capability() == "auto" has to
 appear as **auto** in that table (PANT-853 -- README/architecture once said
-"nothing rotates yet" while two adapters were already real)."""
+"nothing rotates yet" while two adapters were already real).
+
+A provider may have several rows, one per credential subtype (Linear,
+GitHub -- PANT-1141): the provider counts as documented-auto when ANY of
+its rows says **auto**."""
 import re
 from pathlib import Path
 
@@ -10,14 +14,22 @@ from portunus import rotation
 ROTATION_MD = Path(__file__).resolve().parent.parent / "docs" / "rotation.md"
 
 
-def _doc_capabilities() -> dict:
-    """Parse the provider capability matrix: provider -> capability."""
-    caps = {}
+def _doc_rows() -> dict:
+    """Parse the provider capability matrix: provider -> {capabilities}."""
+    rows = {}
     for line in ROTATION_MD.read_text().splitlines():
-        m = re.match(r"^\|\s*`([a-z0-9_-]+)`[^|]*\|[^|]*\|\s*\**([a-z]+)\**\s*\|", line)
+        m = re.match(r"^\|\s*`([a-z0-9_-]+)`[^|]*\|[^|]*\|\s*\**([a-z_ ]+?)\**\s*\|", line)
         if m:
-            caps[m.group(1)] = m.group(2)
-    return caps
+            rows.setdefault(m.group(1), set()).add(m.group(2))
+    return rows
+
+
+def _doc_capabilities() -> dict:
+    """provider -> "auto" if any of its rows is auto, else its one capability."""
+    return {
+        provider: "auto" if "auto" in caps else sorted(caps)[0]
+        for provider, caps in _doc_rows().items()
+    }
 
 
 def _code_capabilities() -> dict:
