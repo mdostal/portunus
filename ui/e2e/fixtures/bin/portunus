@@ -3,6 +3,12 @@
 # puts this directory first on the UI server's PATH). Records every
 # invocation so a spec can assert whether a route reached the CLI at all.
 [ -n "$PORTUNUS_STUB_LOG" ] && echo "$*" >> "$PORTUNUS_STUB_LOG"
+# `health --json` answers like a healthy home, so /api/health's own checks
+# (e2e/health.spec.ts) are what decide its result.
+if [ "$1" = "health" ]; then
+  echo '{"status": "ok", "checks": [{"name": "home", "ok": true, "detail": "stub"}]}'
+  exit 0
+fi
 # A file-target inject whose path contains "slow-" behaves like a slow vault
 # backend: it waits, then writes the file (see e2e/inject-abort.spec.ts).
 path=""
