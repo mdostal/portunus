@@ -4,6 +4,16 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **YouTrack token rotation (PANT-1138, #191).** `YouTrackRotationAdapter` (`provider=youtrack`)
+  rotates a JetBrains Hub permanent token through the Hub REST API. It creates a new token with the
+  current token's scope, checks that the new token authenticates as the same user, stores it, and
+  deletes the old token only with `--retire-old`. The Hub URL comes from a `hub_url`, `youtrack_url`
+  or `youtrack_url_ref` tag. Nothing is hardcoded. The current token's id lives in `hub_token_id`,
+  and `rotation run` updates that tag after each rotation. `docs/provider-rotation-matrix.md` had
+  the wrong endpoint (`users/me/tokens`). It now shows the documented `users/{id}/permanenttokens`.
+
 ### Fixed
 
 - **A file-target inject can now be read by a caller running as another uid (PANT-1142).**

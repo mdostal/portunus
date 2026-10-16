@@ -1482,6 +1482,19 @@ def cmd_rotation_run(args) -> int:
         audit.append("rotate", ref.sm_name, "error")
         return 1
 
+    # Adapters whose provider can't identify a credential from its value
+    # (YouTrack/Hub) keep the current credential's id in a tag -- keep it
+    # pointed at the credential that is now stored.
+    key_id_tag = getattr(adapter, "key_id_tag", "")
+    if key_id_tag and result.key_id:
+        try:
+            registry.retag(ref.name, tags={**ref.tags, key_id_tag: result.key_id})
+        except Exception as exc:
+            _err(
+                f"rotated, but could not record {key_id_tag}={result.key_id} on "
+                f"{ref.name!r}: {exc} -- set it with `portunus retag`"
+            )
+
     print(
         f"rotated {result.ref_name}  "
         f"provider={result.provider}  phase={result.phase}  "
@@ -2783,14 +2796,14 @@ def build_parser() -> argparse.ArgumentParser:
     rot_sub = rot_run.add_subparsers(dest="rotation_action", required=True)
     rot_run_cmd = rot_sub.add_parser(
         "run",
-        help="rotate a reference's credential (create→verify→store; disable old with --retire-old)",
+        help="rotate a reference's credential (create→verify→store; retire old with --retire-old)",
     )
     rot_run_cmd.add_argument("ref_name", help="reference name in the registry (e.g. ffe-cicd-sa-key)")
     rot_run_cmd.add_argument(
         "--retire-old",
         action="store_true",
         default=False,
-        help="disable the superseded credential after storing the new one (never deletes in the same call)",
+        help="retire the superseded credential after storing the new one (GCP: disable, never delete; YouTrack: delete -- Hub has no disable)",
     )
     rot_run_cmd.set_defaults(func=cmd_rotation_run)
     rot_audit = rot_sub.add_parser(

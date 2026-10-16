@@ -31,6 +31,7 @@ new one).
 | `github` | Personal access token / app token | stub | Not yet implemented. |
 | `stripe` | API key | stub | Not yet implemented. |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
+| `youtrack` (JetBrains Hub permanent token) | `perm:...` token for the YouTrack REST API | **auto** | `YouTrackRotationAdapter` drives `create → verify → store` against the Hub REST API. `--retire-old` **deletes** the old token (Hub has no disable). Needs a Hub URL tag and `hub_token_id`; see below. |
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 
 > **Capability vocabulary:**
@@ -86,6 +87,32 @@ via `portunus rotation run <ref-name> [--retire-old]`. The reference must have:
   (e.g. `sa@project.iam.gserviceaccount.com`)
 
 Prefer Workload Identity Federation where possible -- WIF credentials require no rotation.
+
+### YouTrack (Hub permanent tokens)
+
+`YouTrackRotationAdapter` rotates the JetBrains Hub permanent token (`perm:...`) that a
+YouTrack REST client authenticates with, via `portunus rotation run <ref-name> [--retire-old]`.
+The current token authenticates its own replacement -- no separate admin credential.
+
+1. `GET <hub>/api/rest/users/me` with the current token gives the owner's user id.
+2. A new token is created under that user with the **same scope** as the current one.
+3. `GET users/me` with the new token must return the same user, or the new token is deleted
+   and nothing is stored.
+4. The new token is stored; with `--retire-old` the old one is **deleted**. Hub has no way to
+   disable a permanent token, so this is irreversible; leave it off until consumers have the
+   new token.
+
+The reference needs `provider=youtrack` and these tags:
+
+| Tag | Purpose |
+|---|---|
+| `hub_url` | Hub service URL, e.g. `https://yt.example.com/hub`. Optional if one of the next two is set. |
+| `youtrack_url` | YouTrack URL; Hub is taken as its built-in `/hub` (`…/youtrack` → `…/hub`). |
+| `youtrack_url_ref` | Name of a reference that stores the YouTrack URL (e.g. `ffe-orchestration-dev-youtrack-base-url`); resolved through the normal resolver. |
+| `hub_token_id` | Hub id of the token currently stored. Required for `--retire-old` and to copy its scope. List ids with `GET <hub>/api/rest/users/me/permanenttokens?fields=id,name`. `rotation run` updates it to the new token's id after each rotation. |
+| `hub_scope` | Comma-separated Hub service ids, used only when `hub_token_id` is not set. |
+
+The Hub URL is per install, so the adapter never assumes one.
 
 ---
 

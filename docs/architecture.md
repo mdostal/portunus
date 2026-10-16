@@ -184,19 +184,20 @@ sequenceDiagram
 
 A second, genuinely different kind of "real vs. stub" split from ARCA's own (§2, §1's `Stub`
 node): ARCA answers *where a value lives*, `RotationBinding`/`RotationAdapter` (`rotation.py`)
-answer *who would rotate it, and whether Portunus can yet*. **Two adapters are real today and
+answer *who would rotate it, and whether Portunus can yet*. **Three adapters are real today and
 report `capability() == "auto"`:** `OAuthRefreshRotationAdapter` (OAuth refresh tokens, wrapping
-`OAuthBackend`) and `GCPServiceAccountKeyRotationAdapter` (GCP service-account keys:
+`OAuthBackend`), `GCPServiceAccountKeyRotationAdapter` (GCP service-account keys:
 create → verify → store, with opt-in `--retire-old` that disables, never deletes, the superseded
-key). Both run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
+key) and `YouTrackRotationAdapter` (JetBrains Hub permanent tokens: create → verify → store, with
+opt-in `--retire-old` that deletes the old token, since Hub has no disable). All run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
 that raise `RotationAdapterError` and report `capability() == "unknown"`. The per-provider
 capability matrix lives in [`docs/rotation.md`](rotation.md), and
 `tests/test_rotation_docs_drift.py` fails if an `auto` adapter isn't listed as auto there.
 
 ```mermaid
 graph TD
-    accTitle: Rotation provenance -- two real adapters, three stubs
-    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth and gcp to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
+    accTitle: Rotation provenance -- three real adapters, three stubs
+    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp and youtrack to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
 
     RB["RotationBinding<br/>(provider, status: real|stub|manual, account)<br/>PORTUNUS_HOME/rotation-bindings.json"]
     Registry["RotationAdapter registry<br/>(rotation_adapter_for)"]
@@ -205,11 +206,13 @@ graph TD
     Run --> Registry
     Registry -->|oauth| OAuth["OAuthRefreshRotationAdapter<br/>capability: auto"]
     Registry -->|gcp| GCP["GCPServiceAccountKeyRotationAdapter<br/>capability: auto"]
+    Registry -->|youtrack| YT["YouTrackRotationAdapter<br/>capability: auto"]
     Registry -->|vercel · github · stripe| Stub["stub: raises RotationAdapterError<br/>capability: unknown"]
     RB -.->|provider context| Registry
 
     GCP -->|optional admin_credential_ref resolved via| SelfResolve["resolver.resolve_call(<br/>'{{secret:...}}', boundary=...)"]
     SelfResolve -->|same boundary-only sink<br/>every other value uses| ProviderAPI["gcloud iam service-accounts keys ..."]
+    YT -->|current token authenticates its replacement| HubAPI["Hub REST API<br/>users/{id}/permanenttokens"]
     OAuth -->|OAuthBackend.access()| TokenEndpoint["provider token endpoint<br/>(rotated refresh_token persisted back)"]
 ```
 

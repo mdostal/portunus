@@ -195,23 +195,29 @@ Authorization: Bearer <admin-token>
 
 **Credential type**: JetBrains Hub permanent personal token (`perm:...`), used to authenticate the YouTrack REST API.
 
-**Source**: https://www.jetbrains.com/help/hub/rest-api-reference.html#operation/HubRestApi_getTokens
+**Source**: https://www.jetbrains.com/help/hub/hub-rest-api-users-permanent-tokens-of-user-add-permanent-token-to-permanent-tokens-of-a-user.html
 
-**Concrete call sequence**:
+**Adapter**: `YouTrackRotationAdapter` (`provider=youtrack`). See [rotation.md](rotation.md#youtrack-hub-permanent-tokens).
+
+**Concrete call sequence** (the resource is `permanenttokens` under a user id; `scope` is a list of Hub service objects):
 
 ```bash
-# 1. Create a replacement token
-POST <hub-base-url>/api/rest/users/me/tokens
+# 0. Resolve the token owner's user id
+GET <hub-base-url>/api/rest/users/me?fields=id
 Authorization: Bearer <existing-token>
-Body: {"name": "replacement", "scope": [...]}
 
-# 2. Store new token in ARCA
-
-# 3. Verify
-
-# 4. Delete old token
-DELETE <hub-base-url>/api/rest/users/me/tokens/{tokenId}
+# 1. Create a replacement token (scope copied from the existing token)
+POST <hub-base-url>/api/rest/users/{userId}/permanenttokens?fields=id,token
 Authorization: Bearer <existing-token>
+Body: {"name": "replacement", "scope": [{"id": "<service id>"}]}
+
+# 2. Verify: GET users/me with the new token returns the same id
+
+# 3. Store new token in ARCA
+
+# 4. Delete old token (Hub has no disable)
+DELETE <hub-base-url>/api/rest/users/{userId}/permanenttokens/{tokenId}
+Authorization: Bearer <new-token>
 ```
 
 ---

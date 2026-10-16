@@ -18,6 +18,9 @@ Real adapters:
   superseded key. All gcloud calls go through the injected `runner` seam.
   Deletion of the old key is never performed in the same call as disable --
   that is left to a future grace-period sweep.
+- `YouTrackRotationAdapter` rotates a JetBrains Hub permanent token (the
+  YouTrack REST API credential) through the Hub REST API: create, verify,
+  store, and (with --retire-old) delete the old token.
 
 Stub adapters (`VercelRotationAdapter`, `GitHubRotationAdapter`,
 `StripeRotationAdapter`) still raise unconditionally. A future real adapter
@@ -527,6 +530,230 @@ class GCPServiceAccountKeyRotationAdapter:
             return None
 
 
+def _default_hub_transport(
+    method: str, url: str, headers: Dict[str, str], body: Optional[dict], timeout: float
+) -> Tuple[int, Optional[dict]]:
+    """Minimal JSON-over-HTTP transport for the Hub REST API. Returns
+    (status, parsed-json-or-None); never raises on an HTTP error status so
+    the adapter can phrase the failure itself."""
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(body).encode() if body is not None else None
+    req_headers = {"Accept": "application/json", **headers}
+    if data is not None:
+        req_headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        status, raw = exc.code, exc.read()
+    except urllib.error.URLError as exc:
+        raise RotationAdapterError(f"Hub request failed: {exc.reason}") from exc
+    try:
+        return status, (json.loads(raw.decode()) if raw else None)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return status, None
+
+
+class YouTrackRotationAdapter:
+    """Real JetBrains Hub permanent-token rotation (the ``perm:...`` tokens
+    that authenticate the YouTrack REST API).
+
+    Phases (in order):
+    1. create  -- ``POST <hub>/api/rest/users/{id}/permanenttokens``, with
+                  the same scope as the token being replaced, authenticated
+                  by the CURRENT token (a Hub token manages its own user's
+                  tokens -- no separate admin credential).
+    2. verify  -- ``GET <hub>/api/rest/users/me`` with the NEW token must
+                  return the same user id.
+    3. store   -- write the new token to the local backend.
+    4. retire  -- OPT-IN ONLY via ``retire_old=True``: DELETE the old token.
+                  Hub has no disable for permanent tokens, so this is
+                  irreversible -- which is why it stays opt-in.
+
+    Verify-before-store, same as the GCP adapter: if verify fails nothing is
+    stored or retired, the unverified new token is deleted best-effort, and
+    the audit log records ``warn:verify-failed``.
+
+    The Hub base URL is a per-install value, never hardcoded. In order:
+    - ``tags["hub_url"]`` -- the Hub service URL (e.g. ``https://yt.example.com/hub``)
+    - ``tags["youtrack_url"]`` -- the YouTrack URL; Hub is derived as the
+      built-in ``/hub`` (``.../youtrack`` -> ``.../hub`` for older
+      ``*.myjetbrains.com/youtrack`` Cloud instances)
+    - ``tags["youtrack_url_ref"]`` -- name of a reference that STORES the
+      YouTrack URL (e.g. ``ffe-orchestration-dev-youtrack-base-url``),
+      resolved through ``Resolver.resolve_call()``; derived as above.
+
+    Hub returns no token id to a token holder, so the id of the CURRENT
+    token is kept in ``tags["hub_token_id"]``. It is required for
+    ``retire_old`` and to copy the old token's scope (otherwise
+    ``tags["hub_scope"]``, comma-separated Hub service ids, is used). The
+    new token's id is returned as ``RotationResult.key_id`` and, via
+    ``key_id_tag``, written back to ``hub_token_id`` by ``portunus rotation run``.
+    """
+
+    key_id_tag = "hub_token_id"
+
+    def __init__(self, transport=None, local_backend=None, audit=None, timeout: float = 30.0):
+        self._transport = transport or _default_hub_transport
+        self._local_backend = local_backend
+        self._audit = audit
+        self._timeout = timeout
+
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(
+        self,
+        ref,
+        resolver=None,
+        retire_old: bool = False,
+    ) -> RotationResult:
+        if hasattr(ref, "sm_name"):
+            sm_name = ref.sm_name
+            ref_name = getattr(ref, "name", sm_name)
+            tags = dict(getattr(ref, "tags", None) or {})
+        else:
+            sm_name = str(ref)
+            ref_name = sm_name
+            tags = {}
+
+        old_token_id = tags.get("hub_token_id", "")
+        if retire_old and not old_token_id:
+            raise RotationAdapterError(
+                f"YouTrackRotationAdapter: ref {ref_name!r} has no hub_token_id tag -- "
+                "--retire-old needs the current token's Hub id (list them with "
+                "GET <hub>/api/rest/users/me/permanenttokens?fields=id,name); "
+                "nothing was changed"
+            )
+        api = self._hub_base_url(ref_name, tags, resolver).rstrip("/") + "/api/rest"
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+        old_token = local_backend.access(sm_name)
+
+        user_id = self._whoami(api, old_token)
+        if not user_id:
+            raise RotationAdapterError(
+                f"YouTrack rotation for {ref_name!r}: the stored token was rejected by Hub "
+                "-- nothing was changed"
+            )
+        scope = self._scope(api, old_token, user_id, old_token_id, tags, ref_name)
+
+        # --- 1. CREATE --------------------------------------------------------
+        status, body = self._call(
+            "POST",
+            f"{api}/users/{user_id}/permanenttokens?fields=id,token",
+            old_token,
+            {"name": f"portunus-{ref_name}-{int(time.time())}", "scope": scope},
+        )
+        body = body or {}
+        new_token, new_token_id = body.get("token", ""), body.get("id", "")
+        if status != 200 or not new_token or not new_token_id:
+            raise RotationAdapterError(
+                f"YouTrack token create failed for {ref_name!r} (HTTP {status}) -- "
+                "old credential left intact"
+            )
+
+        # --- 2. VERIFY --------------------------------------------------------
+        if self._whoami(api, new_token) != user_id:
+            self._call(
+                "DELETE", f"{api}/users/{user_id}/permanenttokens/{new_token_id}", old_token
+            )
+            if self._audit:
+                self._audit.append("rotate:youtrack", sm_name, "warn:verify-failed")
+            raise RotationAdapterError(
+                f"YouTrack token verification failed for {ref_name!r} -- "
+                "rotation aborted; old credential left intact"
+            )
+
+        # --- 3. STORE ---------------------------------------------------------
+        local_backend.store(sm_name, new_token)
+
+        # --- 4. RETIRE (opt-in): Hub only supports delete ---------------------
+        if retire_old:
+            status, _ = self._call(
+                "DELETE", f"{api}/users/{user_id}/permanenttokens/{old_token_id}", new_token
+            )
+            if status not in (200, 204):
+                raise RotationAdapterError(
+                    f"YouTrack rotation for {ref_name!r}: new token {new_token_id} is stored, "
+                    f"but deleting old token {old_token_id} failed (HTTP {status}) -- "
+                    "delete it in the Hub profile"
+                )
+
+        if self._audit:
+            self._audit.append("rotate:youtrack", sm_name, f"ok:new={new_token_id}")
+
+        return RotationResult(
+            provider="youtrack",
+            ref_name=ref_name,
+            key_id=new_token_id,
+            phase="stored",
+            retired_old=retire_old,
+        )
+
+    # --- helpers ----------------------------------------------------------------
+
+    def _hub_base_url(self, ref_name: str, tags: dict, resolver) -> str:
+        if tags.get("hub_url"):
+            return tags["hub_url"]
+        youtrack_url = tags.get("youtrack_url", "")
+        if not youtrack_url and tags.get("youtrack_url_ref") and resolver is not None:
+            # A URL is configuration, not a credential -- it is fine for it
+            # to leave the boundary.
+            youtrack_url = resolver.resolve_call(
+                "{{secret:%s}}" % tags["youtrack_url_ref"], lambda v: v.strip()
+            )
+        if not youtrack_url:
+            raise RotationAdapterError(
+                f"YouTrackRotationAdapter: ref {ref_name!r} has no Hub URL -- set "
+                "tags['hub_url'], tags['youtrack_url'], or tags['youtrack_url_ref'] "
+                "(a reference storing the YouTrack URL)"
+            )
+        youtrack_url = youtrack_url.rstrip("/")
+        if youtrack_url.endswith("/youtrack"):
+            return youtrack_url[: -len("/youtrack")] + "/hub"
+        return youtrack_url + "/hub"
+
+    def _scope(self, api, token, user_id, old_token_id, tags, ref_name) -> List[dict]:
+        if old_token_id:
+            status, body = self._call(
+                "GET",
+                f"{api}/users/{user_id}/permanenttokens/{old_token_id}?fields=scope(id)",
+                token,
+            )
+            scope = [{"id": s["id"]} for s in (body or {}).get("scope", []) if s.get("id")]
+            if status == 200 and scope:
+                return scope
+            raise RotationAdapterError(
+                f"YouTrack rotation for {ref_name!r}: could not read the scope of token "
+                f"{old_token_id} (HTTP {status}) -- check the hub_token_id tag; "
+                "nothing was changed"
+            )
+        ids = [s.strip() for s in tags.get("hub_scope", "").split(",") if s.strip()]
+        if not ids:
+            raise RotationAdapterError(
+                f"YouTrackRotationAdapter: ref {ref_name!r} needs tags['hub_token_id'] "
+                "(scope is copied from the current token) or tags['hub_scope'] "
+                "(comma-separated Hub service ids)"
+            )
+        return [{"id": i} for i in ids]
+
+    def _whoami(self, api: str, token: str) -> str:
+        status, body = self._call("GET", f"{api}/users/me?fields=id", token)
+        return (body or {}).get("id", "") if status == 200 else ""
+
+    def _call(self, method, url, token, body=None) -> Tuple[int, Optional[dict]]:
+        return self._transport(
+            method, url, {"Authorization": f"Bearer {token}"}, body, self._timeout
+        )
+
+
 class VercelRotationAdapter:
     """Vercel -- STUB. No real calls.
 
@@ -574,6 +801,7 @@ class StripeRotationAdapter:
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
     "gcp": GCPServiceAccountKeyRotationAdapter,
+    "youtrack": YouTrackRotationAdapter,
     "vercel": VercelRotationAdapter,
     "github": GitHubRotationAdapter,
     "stripe": StripeRotationAdapter,
