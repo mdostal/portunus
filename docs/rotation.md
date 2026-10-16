@@ -31,6 +31,7 @@ new one).
 | `github` | Personal access token / app token | stub | Not yet implemented. |
 | `stripe` | API key | stub | Not yet implemented. |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
+| `grafana-cloud` (org access policy token) | Grafana Cloud access policy token (`glc_...`) | **auto** | `GrafanaCloudRotationAdapter`: create a sibling token under the same access policy → verify (read-only GET with the new token) → store. `--retire-old` **deletes** the old token — the API has no disable. Needs `grafana_access_policy_id` + `grafana_region` tags; see [Grafana Cloud access policy tokens](#grafana-cloud-access-policy-tokens). **Not** a self-hosted Grafana admin password (manual) or a stack data-source credential (unknown). |
 | `resend` | API key (`re_...`) | **auto** | `ResendRotationAdapter`: create → verify (read-only `GET /api-keys`, sends no email) → store. `--retire-old` **deletes** the old key — Resend has no disable. Needs `tags["resend_api_key_id"]` for `--retire-old`; see [Resend API keys](#resend-api-keys) below. |
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 | `google-api-key` | Google Cloud API key (`AIza...`) | **auto** | `GoogleCloudAPIKeyRotationAdapter`: copies the old key's restrictions → create → verify (`keys:lookupKey`, plus an optional live probe) → store. `--retire-old` **deletes** the old key, which Google can undelete for 30 days. Refuses a stored value that is a service-account JSON key. Needs `apikeys.googleapis.com` enabled; see [Google Cloud API keys](#google-cloud-api-keys) below. |
@@ -89,6 +90,42 @@ via `portunus rotation run <ref-name> [--retire-old]`. The reference must have:
   (e.g. `sa@project.iam.gserviceaccount.com`)
 
 Prefer Workload Identity Federation where possible -- WIF credentials require no rotation.
+
+---
+
+## Grafana Cloud access policy tokens
+
+`GrafanaCloudRotationAdapter` rotates a Grafana Cloud **organization-level access policy token**
+via `portunus rotation run <ref-name> [--retire-old]`
+(API: https://grafana.com/docs/grafana-cloud/developer-resources/api-reference/cloud-api/).
+The reference needs `provider=grafana-cloud`, and its tags control the rotation:
+
+| Tag | Meaning |
+|---|---|
+| `grafana_access_policy_id` | **Required.** Id of the access policy the token belongs to. The new token is created under the same policy, so it has the same scopes. |
+| `grafana_region` | **Required.** The policy's region (e.g. `us`, `prod-us-east-0`). Every token endpoint takes it as `?region=`. |
+| `grafana_token_id` | Id of the token currently stored. Required for `--retire-old`. The adapter rewrites it to the new token's id after every successful store. |
+| `grafana_admin_ref` | Name of another reference holding a token whose policy has `accesspolicies:write` (and `accesspolicies:delete` for `--retire-old`), used to create and delete tokens. Defaults to the reference itself, which only works if the rotated token's own policy grants those scopes. |
+| `grafana_token_ttl_days` | Optional. Sets `expiresAt` on the new token. Without it the new token never expires. |
+| `grafana_verify_path` | Optional. Overrides the verify call, as a `/api/...` path on `https://grafana.com` (e.g. `/api/orgs/<slug>`). Use it when the policy lacks `accesspolicies:read`. |
+
+Phases:
+
+1. **create**: `POST https://www.grafana.com/api/v1/tokens?region=<region>` with the admin token,
+   body `{accessPolicyId, name, displayName[, expiresAt]}`.
+2. **verify**: a read-only GET with the **new** token, by default
+   `GET /api/v1/accesspolicies/<policyId>?region=<region>`. Only HTTP 200 passes. On failure nothing
+   is stored, and the adapter tries to delete the new, unused token.
+3. **store**: the new token goes to the local backend.
+4. **retire** (`--retire-old` only): `DELETE /api/v1/tokens/<old_id>?region=<region>`. **This cannot
+   be undone.** Pass `--retire-old` only after every consumer has the new token. Without it, the old
+   token id is added to the `grafana-cloud` binding's `superseded_key_ids`, and
+   `portunus rotation audit` lists it until it is retired.
+
+**Out of scope for this adapter:** a self-hosted Grafana instance's admin password is `manual`
+(changing it requires the current password), and Grafana Cloud stack-scoped data-source credentials
+(Prometheus remote-write token, Loki push credentials) are `unknown`. They use a different API surface
+and need their own research.
 
 ---
 

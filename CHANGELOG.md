@@ -18,6 +18,22 @@ All notable changes to Portunus are documented in this file.
   `apikeys.googleapis.com` enabled and `roles/serviceusage.apiKeysAdmin` (or the same
   permissions) on the calling identity.
 
+- **Grafana Cloud access policy token rotation (PANT-1137, #192).** `GrafanaCloudRotationAdapter`
+  (provider `grafana-cloud`) creates a new token under the same access policy, verifies it with a
+  read-only GET, stores it, and with `--retire-old` deletes the old token. It needs the
+  `grafana_access_policy_id` and `grafana_region` tags; see `docs/rotation.md`. Only org-level
+  access policy tokens are covered: self-hosted admin passwords and stack data-source credentials
+  are not. `docs/provider-rotation-matrix.md` had the wrong endpoints
+  (`/orgs/{slug}/access-policies/{id}/tokens`); it now lists the documented ones
+  (`/api/v1/tokens?region=`).
+- **Credential liveness checks and a parity primitive (PANT-1152, GH #141).** `portunus liveness
+  check <name>|--all` probes a stored credential against its provider's own API and reports
+  `live` / `dead` / `unknown`; `portunus liveness status --failing` lists dead keys oldest first.
+  The value only reaches the outbound request header and the response body is never read.
+  Results are audited and kept in `liveness-status.json` until a live check clears them. MCP:
+  `portunus_liveness_check`, `portunus_liveness_status`. `parity_check()` compares one value
+  across targets (GCP, Convex, ...) without exposing a value. Provider probes come with the
+  Vercel, Autumn, Clerk and Convex sub-issues. See `docs/liveness.md`.
 - **Resend API key rotation (PANT-1140).** New `ResendRotationAdapter`, registered as `resend`,
   runs via `portunus rotation run <ref> [--retire-old]`. It creates a new key with an admin key,
   checks it with a read-only `GET /api-keys` (no test email; a `sending_access` key passes on 401

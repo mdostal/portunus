@@ -46,7 +46,7 @@ EXIT_CODES = {OK: 0, DEGRADED: 1, DOWN: 2}
 _PRIVATE_FILES = (
     "registry.json", "audit.log", ".clock", "master.key", "vault.enc.json",
     "vault-bindings.json", "gcp-bindings.json", "rotation-bindings.json",
-    "roles.json", "roles-enforce.json", "leak-status.json",
+    "roles.json", "roles-enforce.json", "leak-status.json", "liveness-status.json",
 )
 
 _STUB_BACKENDS = ("aws", "vault", "infisical", "doppler", "onepassword", "azure")
