@@ -4,8 +4,8 @@ import { cleanError, runPortunus } from "@/lib/portunus";
 // Thin shell-out to `portunus rotation-bindings show` -- same pattern
 // every other route uses. Feeds DetailDrawer's Auto-rotate button: a
 // reference's provider is real/rotatable only when this reports
-// status="real" for it (only the oauth and gcp adapters are real today;
-// vercel/github/stripe are stubs) -- the button derives its disabled-ness from this response
+// status="real" for it (oauth, gcp, resend, grafana-cloud and vercel
+// adapters are real today; github/stripe are stubs) -- the button derives its disabled-ness from this response
 // instead of a hardcoded `disabled` attribute.
 export async function GET(req: NextRequest) {
   const provider = req.nextUrl.searchParams.get("provider") || "";

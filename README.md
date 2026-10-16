@@ -86,7 +86,7 @@ That's portunus.
       caller-supplied boundary callable via the library's `resolve_call` — works, but there's no
       built-in `HttpHeaderAdapter`/`HttpBodyAdapter` class yet, only `EnvVarAdapter`/`FileAdapter`)*
 - [ ] More secret-rotation adapters *(four real adapters ship today — OAuth refresh tokens, GCP
-      service-account keys, Resend API keys and Grafana Cloud access policy tokens, all `auto` via `portunus rotation run`; Vercel, GitHub and Stripe are
+      service-account keys, Resend API keys, Grafana Cloud access policy tokens and Vercel access tokens, all `auto` via `portunus rotation run`; GitHub and Stripe are
       still stubs that raise. See [docs/rotation.md](docs/rotation.md) for the capability matrix)*
 - [ ] Scope-aware `list`/`tree` — these two MCP tools still return full-vault metadata regardless
       of the caller's own access scope; only the actual `resolve`/inject path is gated today
@@ -657,8 +657,8 @@ via `gcloud auth login`), so neither is masked in the UI.
 A rotation binding's `account` (the free-text context hint `portunus rotation-bindings set
 <provider> --account ...` already accepted, e.g. a Vercel team slug) is likewise editable inline
 in a reference's detail view, next to the Auto-rotate button. `status` (`stub`/`real`) stays
-code-driven and is never reachable from the UI — only the OAuth and GCP service-account adapters
-are real today (Vercel/GitHub/Stripe are stubs), and a UI control that could flip a stub to real
+code-driven and is never reachable from the UI — only the OAuth, GCP service-account, Resend,
+Grafana Cloud and Vercel adapters are real today (GitHub/Stripe are stubs), and a UI control that could flip a stub to real
 would misrepresent what actually happens on click.
 
 Bulk-import many secrets at once — e.g. importing a batch of candidate passwords/keys before
@@ -852,7 +852,7 @@ below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 | `portunus_drop_bulk(entries)` | Create many local-vault secrets in one call — `{"created": [names], "failed": [{"name","error"}]}`, never a value |
 | `portunus_state(name, state)` | Change a reference's lifecycle state — `{name, state}` |
 | `portunus_sync(project)` | Force a recency check for every cached-mode reference in a project — `{"synced", "already_fresh", "failed"}`, names only |
-| `portunus_rotation_status(provider="")` | Configured per-provider rotation bindings (status/account/capability) — one provider or all. `capability` comes from the adapter registry: `auto` for `oauth` and `gcp`, `unknown` for the Vercel/GitHub/Stripe stubs |
+| `portunus_rotation_status(provider="")` | Configured per-provider rotation bindings (status/account/capability) — one provider or all. `capability` comes from the adapter registry: `auto` for the real adapters (`oauth`, `gcp`, `resend`, `grafana-cloud`, `vercel`), `manual` for `sentry`, `unknown` for the GitHub/Stripe stubs |
 
 The injection tools use the same **dual addressing** as the CLI's own `inject`/`ask`: give an
 exact `name` (from a prior `portunus_list`/`portunus_tree` call) or `tags` — never raw
