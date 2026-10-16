@@ -2,8 +2,8 @@
 
 This is the adopter-facing reference — the one page meant to answer "how does this actually
 work" without reading five source files first. For narrative/prose context see the main
-[README](../README.md); for the historical design record behind these decisions see
-`.pHive/epics/*/docs/`.
+[README](https://github.com/mdostal/portunus#readme); for the historical design record behind these decisions see
+[Process & Design](process/index.md) (published from `.pHive/epics/*/docs/`).
 
 ## 1. Component diagram
 
@@ -985,7 +985,7 @@ code rather than resurrecting the old branches' own now-superseded designs).
 
 ## See also
 
-- [README.md](../README.md) — component model table, install/usage, MCP tool reference
+- [README.md](https://github.com/mdostal/portunus#readme) — component model table, install/usage, MCP tool reference
 - `.pHive/CONTEXT.md` — terminology glossary
 - `.pHive/epics/portunus-swappable-trio/docs/` — the research and design record behind this
   page (6-product vault-adapter research, RBAC/escalation-pattern research, OSS
