@@ -4,6 +4,17 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Grafana Cloud access policy token rotation (PANT-1137, #192).** `GrafanaCloudRotationAdapter`
+  (provider `grafana-cloud`) creates a new token under the same access policy, verifies it with a
+  read-only GET, stores it, and with `--retire-old` deletes the old token. It needs the
+  `grafana_access_policy_id` and `grafana_region` tags; see `docs/rotation.md`. Only org-level
+  access policy tokens are covered: self-hosted admin passwords and stack data-source credentials
+  are not. `docs/provider-rotation-matrix.md` had the wrong endpoints
+  (`/orgs/{slug}/access-policies/{id}/tokens`); it now lists the documented ones
+  (`/api/v1/tokens?region=`).
+
 ### Fixed
 
 - **A file-target inject can now be read by a caller running as another uid (PANT-1142).**

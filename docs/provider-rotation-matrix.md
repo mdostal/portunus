@@ -224,20 +224,24 @@ Authorization: Bearer <existing-token>
 
 **Source**: https://grafana.com/docs/grafana-cloud/account-management/authentication-and-permissions/grafana-cloud-access-policies/
 
-**Concrete call sequence** (using Access Policies API, preferred over legacy API keys):
+**API reference**: https://grafana.com/docs/grafana-cloud/developer-resources/api-reference/cloud-api/
+
+**Concrete call sequence** (using Access Policies API, preferred over legacy API keys). Implemented by
+`GrafanaCloudRotationAdapter` (provider `grafana-cloud`), see `docs/rotation.md`:
 
 ```bash
 # 1. Create a replacement token under the same access policy
-POST https://grafana.com/api/v1/orgs/{orgSlug}/access-policies/{policyId}/tokens
+POST https://www.grafana.com/api/v1/tokens?region={region}
 Authorization: Bearer <admin-token>
-Body: {"name": "replacement"}
+Body: {"accessPolicyId": "{policyId}", "name": "replacement"}
 
-# 2. Store new token in ARCA
+# 2. Verify (read-only, with the NEW token)
+GET https://www.grafana.com/api/v1/accesspolicies/{policyId}?region={region}
 
-# 3. Verify
+# 3. Store new token in ARCA
 
 # 4. Delete old token
-DELETE https://grafana.com/api/v1/orgs/{orgSlug}/access-policies/{policyId}/tokens/{tokenId}
+DELETE https://www.grafana.com/api/v1/tokens/{tokenId}?region={region}
 ```
 
 ---
