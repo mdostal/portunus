@@ -18,6 +18,10 @@ Real adapters:
   superseded key. All gcloud calls go through the injected `runner` seam.
   Deletion of the old key is never performed in the same call as disable --
   that is left to a future grace-period sweep.
+- `GrafanaCloudRotationAdapter` rotates a Grafana Cloud org-level access
+  policy token: creates a sibling token under the same policy, verifies it
+  read-only, stores it, and (with --retire-old) DELETES the old token. All
+  HTTP goes through the injected `transport` seam.
 - `ResendRotationAdapter` creates a new Resend API key with an admin key,
   verifies it read-only, stores it, and (with --retire-old) DELETES the old
   key -- Resend has no disable. All HTTP goes through the injected
@@ -537,6 +541,327 @@ class GCPServiceAccountKeyRotationAdapter:
             return json.loads(current).get("private_key_id") or None
         except Exception:
             return None
+
+
+_GRAFANA_CLOUD_API = "https://www.grafana.com/api/v1"
+# The org/stack endpoints (/api/orgs, /api/instances) live on grafana.com,
+# not www -- only used for a tags["grafana_verify_path"] override.
+_GRAFANA_COM = "https://grafana.com"
+_GRAFANA_TOKEN_NAME_MAX = 100
+
+# (method, url, headers, json_body_or_None, timeout) -> (status, parsed_json_or_{})
+GrafanaCloudTransport = Callable[[str, str, Dict[str, str], Optional[dict], float], Tuple[int, dict]]
+
+
+def _default_grafana_cloud_transport(
+    method: str, url: str, headers: Dict[str, str], body: Optional[dict], timeout: float
+) -> Tuple[int, dict]:
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=dict(headers), method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        status, raw = exc.code, exc.read()
+    except urllib.error.URLError as exc:
+        raise RotationAdapterError(f"Grafana Cloud API unreachable: {exc.reason}") from exc
+    try:
+        parsed = json.loads(raw.decode() or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+class GrafanaCloudRotationAdapter:
+    """Real rotation of a Grafana Cloud **organization-level access policy
+    token** (``glc_...``), via the Cloud Access Policies API
+    (https://grafana.com/docs/grafana-cloud/developer-resources/api-reference/cloud-api/).
+
+    Scope is deliberately narrow -- this is NOT for:
+    - a self-hosted Grafana instance admin password (``manual``: changing it
+      needs the current password; no adapter will ever exist), or
+    - stack-scoped data-source credentials (Prometheus remote-write / Loki
+      push creds) -- ``unknown``, a different API surface, needs its own
+      research pass.
+
+    Phases (in order):
+    1. create  -- ``POST /api/v1/tokens?region=R`` with the admin token, body
+                  ``{accessPolicyId, name, displayName[, expiresAt]}``; the
+                  response carries ``{id, token}``. The new token lives under
+                  the SAME access policy, so it has exactly the old scopes.
+    2. verify  -- a read-only GET with the NEW token: by default
+                  ``GET /api/v1/accesspolicies/{policyId}?region=R`` (needs
+                  ``accesspolicies:read`` on the policy). Only 200 passes.
+                  ``tags["grafana_verify_path"]`` overrides it for policies
+                  without that scope (e.g. ``/api/orgs/<slug>``).
+    3. store   -- write the new token to the local backend, then record the
+                  new token id in ``tags["grafana_token_id"]``
+    4. retire  -- OPT-IN ONLY via ``retire_old=True``: ``DELETE
+                  /api/v1/tokens/{old_id}?region=R``. The API has no disable,
+                  so this is irreversible -- only pass --retire-old once every
+                  consumer has the new token.
+
+    Verify-before-store, same as the GCP adapter: a failed verify stores
+    nothing, retires nothing, records ``warn:verify-failed``, and makes a
+    best-effort delete of the just-created (never-stored) token. Without
+    --retire-old the old token id is appended to the ``grafana-cloud``
+    RotationBinding's ``superseded_key_ids`` so ``portunus rotation audit``
+    shows it as un-retired.
+
+    The ref's tags drive the adapter:
+    - ``grafana_access_policy_id`` -- required; the policy the token belongs to
+    - ``grafana_region`` -- required; the policy's region (e.g. ``us``,
+      ``prod-us-east-0``) -- every token endpoint needs it
+    - ``grafana_token_id`` -- id of the currently stored token; required for
+      --retire-old (a ``glc_`` token does not expose its id to us)
+    - ``grafana_admin_ref`` -- name of another reference holding a token with
+      ``accesspolicies:write``/``:delete``, used for create/delete. Defaults
+      to the ref itself, which only works if the rotated token's own policy
+      grants those scopes.
+    - ``grafana_token_ttl_days`` -- optional; sets ``expiresAt`` on the new
+      token. Without it the new token never expires.
+    - ``grafana_verify_path`` -- optional verify override, see phase 2.
+
+    The admin token is only ever handled inside a ``Resolver.resolve_call()``
+    boundary; every HTTP call goes through the injected ``transport`` seam,
+    so tests never contact the real API. Neither token is ever returned,
+    logged, or put in an error message.
+    """
+
+    def __init__(
+        self,
+        transport: Optional[GrafanaCloudTransport] = None,
+        local_backend=None,
+        audit=None,
+        registry=None,
+        admin_credential_ref: Optional[str] = None,
+        timeout: float = 30.0,
+    ):
+        self._transport = transport or _default_grafana_cloud_transport
+        self._local_backend = local_backend
+        self._audit = audit
+        # Falls back to resolver.registry when not injected.
+        self._registry = registry
+        # A "{{secret:NAME}}" template; overrides tags["grafana_admin_ref"].
+        self._admin_credential_ref = admin_credential_ref
+        self._timeout = timeout
+
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(
+        self,
+        ref,
+        resolver=None,
+        retire_old: bool = False,
+    ) -> RotationResult:
+        from urllib.parse import quote
+
+        if hasattr(ref, "sm_name"):
+            sm_name = ref.sm_name
+            ref_name = getattr(ref, "name", sm_name)
+            tags = dict(getattr(ref, "tags", None) or {})
+        else:
+            sm_name = str(ref)
+            ref_name = sm_name
+            tags = {}
+
+        if resolver is None:
+            raise RotationAdapterError(
+                f"GrafanaCloudRotationAdapter: rotating {ref_name!r} needs a resolver to "
+                "resolve the Grafana Cloud admin token"
+            )
+        policy_id = tags.get("grafana_access_policy_id", "")
+        region = tags.get("grafana_region", "")
+        if not policy_id or not region:
+            raise RotationAdapterError(
+                f"GrafanaCloudRotationAdapter: ref {ref_name!r} needs "
+                "tags['grafana_access_policy_id'] and tags['grafana_region']"
+            )
+        expires_at = None
+        if tags.get("grafana_token_ttl_days"):
+            try:
+                ttl_days = int(tags["grafana_token_ttl_days"])
+            except ValueError:
+                ttl_days = 0
+            if ttl_days <= 0:
+                raise RotationAdapterError(
+                    "GrafanaCloudRotationAdapter: tags['grafana_token_ttl_days'] must be a "
+                    f"positive integer, got {tags['grafana_token_ttl_days']!r}"
+                )
+            expires_at = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + ttl_days * 86400)
+            )
+        verify_path = tags.get("grafana_verify_path", "")
+        if verify_path and not verify_path.startswith("/api/"):
+            raise RotationAdapterError(
+                "GrafanaCloudRotationAdapter: tags['grafana_verify_path'] must start "
+                f"with '/api/', got {verify_path!r}"
+            )
+        old_token_id = tags.get("grafana_token_id", "")
+        if retire_old and not old_token_id:
+            # Checked before anything is created: refusing up front beats
+            # minting a token and then not knowing which one to delete.
+            raise RotationAdapterError(
+                f"GrafanaCloudRotationAdapter: --retire-old needs tags['grafana_token_id'] "
+                f"on {ref_name!r} -- the id of the token currently stored"
+            )
+        admin_template = (
+            self._admin_credential_ref
+            or "{{secret:%s}}" % tags.get("grafana_admin_ref", ref_name)
+        )
+        q_region = quote(region, safe="")
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        # --- 1. CREATE --------------------------------------------------------
+        name = self._token_name(ref_name)
+        body = {"accessPolicyId": policy_id, "name": name, "displayName": name}
+        if expires_at:
+            body["expiresAt"] = expires_at
+        status, created = self._admin_call(
+            resolver, admin_template, "POST", f"/tokens?region={q_region}", body
+        )
+        ok = status in (200, 201)
+        new_token_id = str(created.get("id", "")) if ok else ""
+        new_token = created.get("token", "") if ok else ""
+        if not new_token_id or not new_token:
+            raise RotationAdapterError(
+                f"Grafana Cloud create token failed for {ref_name!r}: "
+                f"{self._describe(status, created)}"
+            )
+        delete_new = f"/tokens/{quote(new_token_id, safe='')}?region={q_region}"
+
+        try:
+            # --- 2. VERIFY ----------------------------------------------------
+            if verify_path:
+                verify_url = _GRAFANA_COM + verify_path
+            else:
+                verify_url = (
+                    f"{_GRAFANA_CLOUD_API}/accesspolicies/{quote(policy_id, safe='')}"
+                    f"?region={q_region}"
+                )
+            if not self._verify(new_token, verify_url):
+                if self._audit:
+                    self._audit.append("rotate:grafana-cloud-token", sm_name, "warn:verify-failed")
+                try:
+                    self._admin_call(resolver, admin_template, "DELETE", delete_new, None)
+                except Exception:
+                    pass  # best-effort cleanup; the failure below is what matters
+                raise RotationAdapterError(
+                    f"Grafana Cloud token verification failed for {ref_name!r} -- "
+                    "rotation aborted; old credential left intact"
+                )
+
+            # --- 3. STORE -----------------------------------------------------
+            local_backend.store(sm_name, new_token)
+        finally:
+            del new_token
+
+        self._record_token_id(resolver, ref_name, tags, new_token_id)
+        if old_token_id:
+            update_rotation_bindings(lambda b: self._mark_superseded(b, old_token_id, add=True))
+
+        # --- 4. RETIRE (opt-in): DELETE -- the API has no disable --------------
+        retired = False
+        if retire_old:
+            status, deleted = self._admin_call(
+                resolver, admin_template, "DELETE",
+                f"/tokens/{quote(old_token_id, safe='')}?region={q_region}", None,
+            )
+            if status not in (200, 204, 404):
+                if self._audit:
+                    self._audit.append(
+                        "rotate:grafana-cloud-token", sm_name,
+                        f"warn:retire-failed:new={new_token_id}",
+                    )
+                raise RotationAdapterError(
+                    f"Grafana Cloud delete of old token {old_token_id} failed for "
+                    f"{ref_name!r} ({self._describe(status, deleted)}) -- the new token IS "
+                    "stored; the old one stays listed as superseded"
+                )
+            # 404: already gone -- the goal state, so treat it as retired.
+            update_rotation_bindings(lambda b: self._mark_superseded(b, old_token_id, add=False))
+            retired = True
+
+        if self._audit:
+            self._audit.append("rotate:grafana-cloud-token", sm_name, f"ok:new={new_token_id}")
+
+        return RotationResult(
+            provider="grafana-cloud",
+            ref_name=ref_name,
+            key_id=new_token_id,
+            phase="stored",
+            retired_old=retired,
+        )
+
+    # --- HTTP helpers (all calls go through self._transport) -----------------
+
+    def _admin_call(self, resolver, admin_template, method, path, body):
+        def _boundary(admin_token: str):
+            return self._transport(
+                method, _GRAFANA_CLOUD_API + path, self._headers(admin_token), body,
+                self._timeout,
+            )
+
+        return resolver.resolve_call(admin_template, _boundary)
+
+    def _verify(self, token: str, url: str) -> bool:
+        try:
+            status, _ = self._transport("GET", url, self._headers(token), None, self._timeout)
+        except RotationAdapterError:
+            return False
+        return status == 200
+
+    @staticmethod
+    def _token_name(ref_name: str) -> str:
+        # Grafana doesn't document token-name rules; lowercase alnum + dashes
+        # is the shape its own UI produces, so stay inside it.
+        slug = "".join(c if c.isascii() and c.isalnum() else "-" for c in ref_name.lower())
+        slug = "-".join(part for part in slug.split("-") if part) or "token"
+        suffix = f"-{int(time.time())}"
+        return ("portunus-" + slug)[: _GRAFANA_TOKEN_NAME_MAX - len(suffix)] + suffix
+
+    @staticmethod
+    def _headers(token: str) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "portunus-rotation",
+        }
+
+    @staticmethod
+    def _describe(status: int, resp: dict) -> str:
+        # Only Grafana's error code/message -- never the response body, which
+        # on success carries the new token.
+        code = str(resp.get("code", ""))[:60]
+        message = str(resp.get("message", ""))[:200]
+        return f"HTTP {status}" + (f" {code}: {message}" if code or message else "")
+
+    def _record_token_id(self, resolver, ref_name: str, tags: dict, new_token_id: str) -> None:
+        registry = self._registry or getattr(resolver, "registry", None)
+        if registry is None or not hasattr(registry, "retag") or ref_name not in registry:
+            return
+        registry.retag(ref_name, tags={**tags, "grafana_token_id": new_token_id})
+
+    @staticmethod
+    def _mark_superseded(bindings: Dict[str, RotationBinding], token_id: str, add: bool) -> None:
+        if not add and "grafana-cloud" not in bindings:
+            return
+        b = bindings.get("grafana-cloud") or RotationBinding(provider="grafana-cloud", status="real")
+        ids = tuple(k for k in b.superseded_key_ids if k != token_id)
+        if add:
+            ids += (token_id,)
+        bindings["grafana-cloud"] = RotationBinding(
+            provider=b.provider, status=b.status, account=b.account, superseded_key_ids=ids,
+        )
 
 
 _RESEND_API = "https://api.resend.com"
@@ -1135,6 +1460,7 @@ class SentryRotationAdapter:
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
     "gcp": GCPServiceAccountKeyRotationAdapter,
+    "grafana-cloud": GrafanaCloudRotationAdapter,
     "resend": ResendRotationAdapter,
     "youtrack": YouTrackRotationAdapter,
     "vercel": VercelRotationAdapter,
