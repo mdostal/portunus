@@ -30,6 +30,17 @@ All notable changes to Portunus are documented in this file.
   `portunus_liveness_check`, `portunus_liveness_status`. `parity_check()` compares one value
   across targets (GCP, Convex, ...) without exposing a value. Provider probes come with the
   Vercel, Autumn, Clerk and Convex sub-issues. See `docs/liveness.md`.
+- **GitHub rotation is now decided per token type (PANT-1141, #188).** `GitHubRotationAdapter`
+  is no longer a stub. It resets OAuth App tokens (`gho_`) issued by an OAuth App you own, using
+  `PATCH /applications/{client_id}/token`. Because GitHub kills the old token immediately, this
+  requires `--retire-old`. Classic and fine-grained PATs, `gh auth login` tokens and App private
+  keys are `manual`, since GitHub has no reissue API for them. App user and installation tokens
+  are `not applicable`. Every refusal explains why and makes no API call.
+- **GitHub liveness check (PANT-1141).** `github` is registered with the shared liveness
+  framework (PANT-1152), so `portunus liveness check` now covers GitHub references using
+  `GET /rate_limit` (it doesn't count against the rate limit): 200 means live, 401 means dead,
+  anything else is unknown. GitHub App private keys aren't bearer tokens, so they report unknown
+  without any API call.
 - **Resend API key rotation (PANT-1140).** New `ResendRotationAdapter`, registered as `resend`,
   runs via `portunus rotation run <ref> [--retire-old]`. It creates a new key with an admin key,
   checks it with a read-only `GET /api-keys` (no test email; a `sending_access` key passes on 401
@@ -37,9 +48,19 @@ All notable changes to Portunus are documented in this file.
   `--retire-old` deletes the old key, because Resend has no disable. Without it, the old id is
   listed under the `resend` binding's `superseded_key_ids`. `portunus rotation run` now also
   prints `key_id=` when the adapter reports one.
+- **YouTrack token rotation (PANT-1138, #191).** `YouTrackRotationAdapter` (`provider=youtrack`)
+  rotates a JetBrains Hub permanent token through the Hub REST API. It creates a new token with the
+  current token's scope, checks that the new token authenticates as the same user, stores it, and
+  deletes the old token only with `--retire-old`. The Hub URL comes from a `hub_url`, `youtrack_url`
+  or `youtrack_url_ref` tag. Nothing is hardcoded. The current token's id lives in `hub_token_id`.
+  The adapter updates it after each rotation, and lists the old id under `superseded_key_ids` until
+  it is retired, the same as Resend. `docs/provider-rotation-matrix.md` had
+  the wrong endpoint (`users/me/tokens`). It now shows the documented `users/{id}/permanenttokens`.
 
 ### Fixed
 
+- **OAuth refresh now sends `Accept: application/json`.** GitHub's token endpoint returns
+  form-urlencoded unless asked for JSON, so refreshing a GitHub App user token failed to parse.
 - **Sentry tokens are `manual`, not `auto` (PANT-1139, #190).** `provider-rotation-matrix.md`
   listed Sentry user auth tokens as auto-rotatable via `POST /api/0/api-tokens/` with an
   `org:admin` bearer token. That call is always rejected: Sentry's user, org and

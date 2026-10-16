@@ -173,23 +173,29 @@ Authorization: Bearer <admin-token>
 
 **Credential type**: JetBrains Hub permanent personal token (`perm:...`), used to authenticate the YouTrack REST API.
 
-**Source**: https://www.jetbrains.com/help/hub/rest-api-reference.html#operation/HubRestApi_getTokens
+**Source**: https://www.jetbrains.com/help/hub/hub-rest-api-users-permanent-tokens-of-user-add-permanent-token-to-permanent-tokens-of-a-user.html
 
-**Concrete call sequence**:
+**Adapter**: `YouTrackRotationAdapter` (`provider=youtrack`). See [rotation.md](rotation.md#youtrack-hub-permanent-tokens).
+
+**Concrete call sequence** (the resource is `permanenttokens` under a user id; `scope` is a list of Hub service objects):
 
 ```bash
-# 1. Create a replacement token
-POST <hub-base-url>/api/rest/users/me/tokens
+# 0. Resolve the token owner's user id
+GET <hub-base-url>/api/rest/users/me?fields=id
 Authorization: Bearer <existing-token>
-Body: {"name": "replacement", "scope": [...]}
 
-# 2. Store new token in ARCA
-
-# 3. Verify
-
-# 4. Delete old token
-DELETE <hub-base-url>/api/rest/users/me/tokens/{tokenId}
+# 1. Create a replacement token (scope copied from the existing token)
+POST <hub-base-url>/api/rest/users/{userId}/permanenttokens?fields=id,token
 Authorization: Bearer <existing-token>
+Body: {"name": "replacement", "scope": [{"id": "<service id>"}]}
+
+# 2. Verify: GET users/me with the new token returns the same id
+
+# 3. Store new token in ARCA
+
+# 4. Delete old token (Hub has no disable)
+DELETE <hub-base-url>/api/rest/users/{userId}/permanenttokens/{tokenId}
+Authorization: Bearer <new-token>
 ```
 
 ---
@@ -307,6 +313,8 @@ This token is obtained by running the `claude` CLI's own OAuth device-code flow.
 Classic GitHub PATs cannot be created via the REST API — creation requires browser-based authentication through GitHub's UI. Fine-grained PATs can be revoked via API but not created via API. The `gho_...` OAuth token produced by `gh auth login` requires re-running the device-code consent flow to replace. No silent, programmatic re-issue path exists for either type.
 
 Note: GitHub App installation tokens rotate automatically (1-hour TTL) and are not in scope here — none of the stored names indicate an installation token.
+
+**Update 2026-10-16 (PANT-1141):** an OAuth App token issued by an OAuth App *the operator owns* can be reset via `PATCH /applications/{client_id}/token`. `GitHubRotationAdapter` now does this. A `gh auth login` token (like `github-pat-dostal`) is issued by GitHub CLI's own OAuth App, so it is still manual. See the per-subtype breakdown in [rotation.md](rotation.md#github-per-credential-subtype).
 
 ---
 

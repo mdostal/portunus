@@ -74,8 +74,14 @@ value, for providers that use something like `X-Api-Key`) and
 authentication and never returns business data. Confirm it against the
 provider's API docs and a real key.
 
-No provider probes are registered yet. Each provider sub-issue of #141 adds
-its own: Vercel (#144), Autumn (#143), Clerk (#145) and Convex (#142).
+### Registered providers
+
+| Provider | Probe | Dead | Notes |
+|---|---|---|---|
+| `github` | `GET https://api.github.com/rate_limit` (Bearer) | 401 only | Doesn't count against the rate limit. GitHub's 403 can mean rate-limited, so it reads `unknown`. GitHub App private keys aren't bearer tokens: they read `unknown` without a request. A stored `ghs_` installation token reads `dead` after its 1-hour expiry. See [rotation.md](rotation.md#github-per-credential-subtype). |
+
+The other provider sub-issues of #141 add their own: Vercel (#144), Autumn (#143), Clerk (#145)
+and Convex (#142).
 
 ## Parity
 

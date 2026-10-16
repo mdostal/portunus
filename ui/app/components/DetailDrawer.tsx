@@ -206,8 +206,9 @@ export default function DetailDrawer({
 
   // Auto-rotate button state is DERIVED from the rotation-provenance
   // bindings, not hardcoded -- enabled only when the provider's binding
-  // says status="real" (oauth, gcp, resend, grafana-cloud and vercel
-  // adapters are real today; github/stripe are stubs), no UI change needed as more ship. A missing/unconfigured provider is absent from
+  // says status="real" (the oauth, gcp, resend, grafana-cloud, youtrack, vercel
+  // and github adapters are real today -- github for OAuth App tokens only; stripe
+  // is a stub), no UI change needed as more ship. A missing/unconfigured provider is absent from
   // the response entirely, which reads the same as status !== "real".
   useEffect(() => {
     let cancelled = false;
