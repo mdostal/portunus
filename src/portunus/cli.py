@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import webbrowser
 from urllib.parse import urlparse
 from pathlib import Path
@@ -1439,8 +1440,9 @@ def cmd_rotation_run(args) -> int:
 
     Looks up the reference by name, resolves its provider's rotation adapter,
     and drives it through the full create→verify→store cycle. With
-    ``--retire-old`` the superseded key is also DISABLED (never deleted --
-    deletion requires a separate grace-period sweep). Only the key
+    ``--retire-old`` the superseded key is also retired: DISABLED where the
+    provider supports it (GCP -- deletion is left to a grace-period sweep),
+    DELETED where it has no disable (Resend). Only the key
     identifier is reported; no credential material ever reaches stdout.
     """
     from .rotation import rotation_adapter_for, RotationAdapterError
@@ -1468,6 +1470,14 @@ def cmd_rotation_run(args) -> int:
         return 1
 
     cap = getattr(adapter, "capability", lambda: "stub")()
+    if cap == "manual":
+        # A manual adapter's rotate() only raises, carrying the human
+        # re-issue instructions -- surface those rather than "stub".
+        try:
+            adapter.rotate(ref, resolver=resolver, retire_old=args.retire_old)
+        except RotationAdapterError as exc:
+            _err(str(exc))
+        return 1
     if cap != "auto":
         _err(
             f"rotation adapter for {provider!r} is a stub (capability={cap!r}) -- "
@@ -1482,24 +1492,89 @@ def cmd_rotation_run(args) -> int:
         audit.append("rotate", ref.sm_name, "error")
         return 1
 
-    # Adapters whose provider can't identify a credential from its value
-    # (YouTrack/Hub) keep the current credential's id in a tag -- keep it
-    # pointed at the credential that is now stored.
-    key_id_tag = getattr(adapter, "key_id_tag", "")
-    if key_id_tag and result.key_id:
-        try:
-            registry.retag(ref.name, tags={**ref.tags, key_id_tag: result.key_id})
-        except Exception as exc:
-            _err(
-                f"rotated, but could not record {key_id_tag}={result.key_id} on "
-                f"{ref.name!r}: {exc} -- set it with `portunus retag`"
-            )
-
     print(
         f"rotated {result.ref_name}  "
         f"provider={result.provider}  phase={result.phase}  "
         f"retired_old={result.retired_old}"
+        + (f"  key_id={result.key_id}" if result.key_id else "")
     )
+    return 0
+
+
+def _ago(ts) -> str:
+    if not ts:
+        return "-"
+    secs = max(0, int(time.time()) - int(ts))
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if secs >= size:
+            return f"{secs // size}{unit}"
+    return f"{secs}s"
+
+
+def cmd_liveness_check(args) -> int:
+    """Probe stored credentials against their provider's own API. Exit 0
+    when every probed reference is live, 2 if any is dead, 1 if any check
+    could not reach a verdict. Never prints a value or a response body."""
+    from . import liveness
+
+    registry, audit, broker, resolver = _build()
+    if args.all:
+        refs = liveness.checkable_references(registry)
+        if not refs:
+            print("(no references with a liveness adapter -- providers: "
+                  f"{', '.join(liveness.liveness_providers()) or 'none registered'})")
+            return 0
+    else:
+        if not args.names:
+            return _err("name a reference to check, or pass --all")
+        refs = []
+        for name in args.names:
+            ref = registry.get(name)
+            if ref is None:
+                return _err(f"no reference {name!r} in registry")
+            refs.append(ref)
+
+    results = []
+    for ref in refs:
+        result = liveness.check_reference(ref, resolver)
+        liveness.audit_liveness(audit, ref, result)
+        results.append(result)
+    statuses = liveness.record_results(results)
+
+    if args.json:
+        print(json.dumps({"results": [r.to_dict() for r in results]}))
+    else:
+        for r in results:
+            st = statuses[r.ref_name]
+            since = f"  failing for {_ago(st.first_failed_at)}" if r.status != liveness.LIVE else ""
+            print(f"  {r.status.upper():8} {r.ref_name}  provider={r.provider or '-'}  {r.detail}{since}")
+
+    if any(r.status == liveness.DEAD for r in results):
+        return 2
+    if any(r.status != liveness.LIVE for r in results):
+        return 1
+    return 0
+
+
+def cmd_liveness_status(args) -> int:
+    """Show the last persisted liveness verdict per reference (metadata only)."""
+    from . import liveness
+
+    statuses = liveness.load_liveness_status()
+    rows = liveness.failing(statuses) if args.failing else sorted(
+        statuses.values(), key=lambda st: st.ref_name)
+    if args.json:
+        print(json.dumps({"statuses": [st.to_dict() for st in rows]}))
+        return 0
+    if not rows:
+        print("(no failing references)" if args.failing else "(no liveness checks recorded)")
+        return 0
+    for st in rows:
+        line = (f"  {st.status.upper():8} {st.ref_name}  provider={st.provider or '-'}  "
+                f"checked {_ago(st.last_checked_at)} ago")
+        if st.status != liveness.LIVE:
+            line += f"  failing for {_ago(st.first_failed_at)} ({st.consecutive_failures} checks)"
+        print(line)
     return 0
 
 
@@ -2803,7 +2878,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--retire-old",
         action="store_true",
         default=False,
-        help="retire the superseded credential after storing the new one (GCP: disable, never delete; YouTrack: delete -- Hub has no disable)",
+        help="retire the superseded credential after storing the new one (GCP: disable, never delete; Resend, YouTrack: delete -- they have no disable)",
     )
     rot_run_cmd.set_defaults(func=cmd_rotation_run)
     rot_audit = rot_sub.add_parser(
@@ -2812,6 +2887,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rot_audit.add_argument("--json", action="store_true")
     rot_audit.set_defaults(func=cmd_rotation_audit)
+
+    lv = sub.add_parser(
+        "liveness",
+        help="probe stored credentials against their provider's own API (live/dead/unknown)",
+    )
+    lv_sub = lv.add_subparsers(dest="liveness_action", required=True)
+    lv_check = lv_sub.add_parser(
+        "check", help="probe references now; exit 0 all live, 2 any dead, 1 any unknown",
+    )
+    lv_check.add_argument("names", nargs="*", help="reference names to probe")
+    lv_check.add_argument("--all", action="store_true",
+                          help="probe every reference whose provider has a liveness adapter")
+    lv_check.add_argument("--json", action="store_true")
+    lv_check.set_defaults(func=cmd_liveness_check)
+    lv_status = lv_sub.add_parser("status", help="show the last recorded verdict per reference")
+    lv_status.add_argument("--failing", action="store_true",
+                           help="only references whose last check was not live, oldest failure first")
+    lv_status.add_argument("--json", action="store_true")
+    lv_status.set_defaults(func=cmd_liveness_status)
 
     rbnd = sub.add_parser(
         "rotation-bindings",

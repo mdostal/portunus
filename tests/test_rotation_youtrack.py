@@ -4,7 +4,6 @@ Every Hub REST call goes through an injected fake transport -- no real Hub
 is ever contacted. The fake models one Hub user with a set of permanent
 tokens, so assertions can check exactly which tokens exist afterwards.
 """
-import argparse
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +11,7 @@ import pytest
 from portunus.rotation import (
     RotationAdapterError,
     YouTrackRotationAdapter,
+    load_rotation_bindings,
     rotation_adapter_for,
 )
 
@@ -95,10 +95,31 @@ def _ref(**tags):
     return SimpleNamespace(name="yt-api-key", sm_name="yt-token", tags={k: v for k, v in base.items() if v is not None})
 
 
-def _adapter(hub=None):
+class _FakeRegistry:
+    def __init__(self, names=("yt-api-key",)):
+        self.names = set(names)
+        self.retagged = {}
+
+    def __contains__(self, name):
+        return name in self.names
+
+    def retag(self, name, *, tags):
+        self.retagged[name] = tags
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(home):
+    # superseded token ids land in PORTUNUS_HOME/rotation-bindings.json
+    return home
+
+
+def _adapter(hub=None, registry=None):
     hub = hub or _FakeHub()
     backend, audit = _FakeBackend(), _FakeAudit()
-    return YouTrackRotationAdapter(transport=hub, local_backend=backend, audit=audit), hub, backend, audit
+    adapter = YouTrackRotationAdapter(
+        transport=hub, local_backend=backend, audit=audit, registry=registry
+    )
+    return adapter, hub, backend, audit
 
 
 def test_registered_and_auto():
@@ -108,7 +129,8 @@ def test_registered_and_auto():
 
 
 def test_rotate_creates_verifies_and_stores_without_retiring():
-    adapter, hub, backend, audit = _adapter()
+    registry = _FakeRegistry()
+    adapter, hub, backend, audit = _adapter(registry=registry)
     result = adapter.rotate(_ref())
 
     assert backend.values["yt-token"] == "perm:FAKE-NEW-1"
@@ -121,6 +143,9 @@ def test_rotate_creates_verifies_and_stores_without_retiring():
     assert hub.created_bodies[0]["scope"] == SCOPE
     assert not any(m == "DELETE" for m, _ in hub.calls)
     assert audit.entries[-1] == ("rotate:youtrack", "yt-token", "ok:new=tok-new-1")
+    # new id recorded on the reference, old id listed as superseded
+    assert registry.retagged["yt-api-key"] == {"hub_url": HUB, "hub_token_id": "tok-new-1"}
+    assert load_rotation_bindings()["youtrack"].superseded_key_ids == (OLD_TOKEN_ID,)
     # no token value in the result or the audit trail
     assert "perm:" not in repr(result) + repr(audit.entries)
 
@@ -132,6 +157,14 @@ def test_retire_old_deletes_old_token():
     assert OLD_TOKEN not in hub.tokens
     assert set(hub.tokens) == {"perm:FAKE-NEW-1"}
     assert ("DELETE", f"{API}/users/{USER_ID}/permanenttokens/{OLD_TOKEN_ID}") in hub.calls
+    assert load_rotation_bindings()["youtrack"].superseded_key_ids == ()
+
+
+def test_registry_falls_back_to_resolver_registry():
+    registry = _FakeRegistry()
+    adapter, _, _, _ = _adapter()
+    adapter.rotate(_ref(), resolver=SimpleNamespace(registry=registry))
+    assert registry.retagged["yt-api-key"]["hub_token_id"] == "tok-new-1"
 
 
 def test_retire_old_without_token_id_fails_before_any_call():
@@ -182,9 +215,10 @@ def test_rejected_stored_token_raises():
 
 def test_retire_failure_reports_new_token_is_stored():
     adapter, hub, backend, _ = _adapter(_FakeHub(delete_ok=False))
-    with pytest.raises(RotationAdapterError, match="is stored"):
+    with pytest.raises(RotationAdapterError, match="IS stored"):
         adapter.rotate(_ref(), retire_old=True)
     assert backend.values["yt-token"] == "perm:FAKE-NEW-1"
+    assert load_rotation_bindings()["youtrack"].superseded_key_ids == (OLD_TOKEN_ID,)
 
 
 def test_missing_hub_url_raises():
@@ -222,33 +256,3 @@ def test_hub_url_from_stored_reference_via_resolver():
     )
     assert seen == ["{{secret:ffe-orchestration-dev-youtrack-base-url}}"]
     assert hub.calls[0][1].startswith(API + "/")
-
-
-def test_cli_rotation_run_records_new_token_id(monkeypatch, capsys):
-    from portunus import cli, rotation
-
-    hub, backend = _FakeHub(), _FakeBackend()
-    retagged = {}
-    ref = SimpleNamespace(
-        name="yt-api-key", sm_name="yt-token", provider="youtrack",
-        tags={"hub_url": HUB, "hub_token_id": OLD_TOKEN_ID},
-    )
-
-    class _Registry:
-        def get(self, name):
-            return ref
-
-        def retag(self, name, *, tags):
-            retagged[name] = tags
-
-    monkeypatch.setattr(cli, "_build", lambda: (_Registry(), _FakeAudit(), None, None))
-    monkeypatch.setitem(
-        rotation._ADAPTERS, "youtrack",
-        lambda: YouTrackRotationAdapter(transport=hub, local_backend=backend),
-    )
-    rc = cli.cmd_rotation_run(argparse.Namespace(ref_name="yt-api-key", retire_old=True))
-    assert rc == 0
-    assert retagged["yt-api-key"]["hub_token_id"] == "tok-new-1"
-    assert retagged["yt-api-key"]["hub_url"] == HUB
-    out = capsys.readouterr().out
-    assert "provider=youtrack" in out and "perm:" not in out
