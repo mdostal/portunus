@@ -1439,8 +1439,9 @@ def cmd_rotation_run(args) -> int:
 
     Looks up the reference by name, resolves its provider's rotation adapter,
     and drives it through the full create→verify→store cycle. With
-    ``--retire-old`` the superseded key is also DISABLED (never deleted --
-    deletion requires a separate grace-period sweep). Only the key
+    ``--retire-old`` the superseded key is also retired: DISABLED where the
+    provider supports it (GCP -- deletion is left to a grace-period sweep),
+    DELETED where it has no disable (Resend). Only the key
     identifier is reported; no credential material ever reaches stdout.
     """
     from .rotation import rotation_adapter_for, RotationAdapterError
@@ -1486,6 +1487,7 @@ def cmd_rotation_run(args) -> int:
         f"rotated {result.ref_name}  "
         f"provider={result.provider}  phase={result.phase}  "
         f"retired_old={result.retired_old}"
+        + (f"  key_id={result.key_id}" if result.key_id else "")
     )
     return 0
 
@@ -2783,14 +2785,14 @@ def build_parser() -> argparse.ArgumentParser:
     rot_sub = rot_run.add_subparsers(dest="rotation_action", required=True)
     rot_run_cmd = rot_sub.add_parser(
         "run",
-        help="rotate a reference's credential (create→verify→store; disable old with --retire-old)",
+        help="rotate a reference's credential (create→verify→store; retire old with --retire-old)",
     )
     rot_run_cmd.add_argument("ref_name", help="reference name in the registry (e.g. ffe-cicd-sa-key)")
     rot_run_cmd.add_argument(
         "--retire-old",
         action="store_true",
         default=False,
-        help="disable the superseded credential after storing the new one (never deletes in the same call)",
+        help="retire the superseded credential after storing the new one (GCP: disable, never delete; Resend: delete -- it has no disable)",
     )
     rot_run_cmd.set_defaults(func=cmd_rotation_run)
     rot_audit = rot_sub.add_parser(

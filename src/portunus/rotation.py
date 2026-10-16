@@ -18,6 +18,10 @@ Real adapters:
   superseded key. All gcloud calls go through the injected `runner` seam.
   Deletion of the old key is never performed in the same call as disable --
   that is left to a future grace-period sweep.
+- `ResendRotationAdapter` creates a new Resend API key with an admin key,
+  verifies it read-only, stores it, and (with --retire-old) DELETES the old
+  key -- Resend has no disable. All HTTP goes through the injected
+  `transport` seam.
 
 Stub adapters (`VercelRotationAdapter`, `GitHubRotationAdapter`,
 `StripeRotationAdapter`) still raise unconditionally. A future real adapter
@@ -527,6 +531,279 @@ class GCPServiceAccountKeyRotationAdapter:
             return None
 
 
+_RESEND_API = "https://api.resend.com"
+# Resend caps API key names at 50 characters.
+_RESEND_KEY_NAME_MAX = 50
+_RESEND_PERMISSIONS = ("full_access", "sending_access")
+
+# (method, url, headers, json_body_or_None, timeout) -> (status, parsed_json_or_{})
+ResendTransport = Callable[[str, str, Dict[str, str], Optional[dict], float], Tuple[int, dict]]
+
+
+def _default_resend_transport(
+    method: str, url: str, headers: Dict[str, str], body: Optional[dict], timeout: float
+) -> Tuple[int, dict]:
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=dict(headers), method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        status, raw = exc.code, exc.read()
+    except urllib.error.URLError as exc:
+        raise RotationAdapterError(f"Resend API unreachable: {exc.reason}") from exc
+    try:
+        parsed = json.loads(raw.decode() or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+class ResendRotationAdapter:
+    """Real Resend API key rotation (https://resend.com/docs/api-reference/api-keys).
+
+    Phases (in order):
+    1. create  -- ``POST /api-keys`` with the admin key; returns ``{id, token}``
+    2. verify  -- ``GET /api-keys?limit=1`` with the NEW key, read-only, sends
+                  no email. 200 (full_access key) or 401 ``restricted_api_key``
+                  ("restricted to only send emails", i.e. a valid
+                  sending_access key) both prove the key is live; anything
+                  else (invalid / not active / suspended) fails.
+    3. store   -- write the new token to the local backend, then record the
+                  new key id in the reference's ``tags["resend_api_key_id"]``
+    4. retire  -- OPT-IN ONLY via ``retire_old=True``: ``DELETE
+                  /api-keys/{old_id}``. Resend has no disable, so this is a
+                  real, irreversible delete -- only pass --retire-old once
+                  every consumer has picked up the new key.
+
+    Verify-before-store, same as the GCP adapter: a failed verify stores
+    nothing, retires nothing, records ``warn:verify-failed``, and makes a
+    best-effort delete of the just-created (never-stored) key so it doesn't
+    linger orphaned in the Resend account. Without --retire-old the old key
+    id is appended to the ``resend`` RotationBinding's ``superseded_key_ids``
+    so ``portunus rotation audit`` shows it as un-retired.
+
+    The ref's tags drive the adapter:
+    - ``resend_api_key_id`` -- id of the currently stored key; required for
+      --retire-old (Resend tokens don't encode their id)
+    - ``resend_admin_ref`` -- name of another reference holding a
+      full_access key used for create/delete. Defaults to the ref itself,
+      which only works if the rotated key is full_access.
+    - ``resend_permission`` -- ``full_access`` (default, matches what the
+      existing keys were issued as) or ``sending_access``
+    - ``resend_domain_id`` -- optional, restricts a sending_access key
+
+    The admin key is only ever handled inside a ``Resolver.resolve_call()``
+    boundary; every HTTP call goes through the injected ``transport`` seam,
+    so tests never contact the real API. Neither token is ever returned,
+    logged, or put in an error message.
+    """
+
+    def __init__(
+        self,
+        transport: Optional[ResendTransport] = None,
+        local_backend=None,
+        audit=None,
+        registry=None,
+        admin_credential_ref: Optional[str] = None,
+        timeout: float = 30.0,
+    ):
+        self._transport = transport or _default_resend_transport
+        self._local_backend = local_backend
+        self._audit = audit
+        # Falls back to resolver.registry when not injected.
+        self._registry = registry
+        # A "{{secret:NAME}}" template; overrides tags["resend_admin_ref"].
+        self._admin_credential_ref = admin_credential_ref
+        self._timeout = timeout
+
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(
+        self,
+        ref,
+        resolver=None,
+        retire_old: bool = False,
+    ) -> RotationResult:
+        if hasattr(ref, "sm_name"):
+            sm_name = ref.sm_name
+            ref_name = getattr(ref, "name", sm_name)
+            tags = dict(getattr(ref, "tags", None) or {})
+        else:
+            sm_name = str(ref)
+            ref_name = sm_name
+            tags = {}
+
+        if resolver is None:
+            raise RotationAdapterError(
+                f"ResendRotationAdapter: rotating {ref_name!r} needs a resolver to "
+                "resolve the Resend admin key"
+            )
+        permission = tags.get("resend_permission", "full_access")
+        if permission not in _RESEND_PERMISSIONS:
+            raise RotationAdapterError(
+                f"ResendRotationAdapter: tags['resend_permission'] must be one of "
+                f"{_RESEND_PERMISSIONS}, got {permission!r}"
+            )
+        old_key_id = tags.get("resend_api_key_id", "")
+        if retire_old and not old_key_id:
+            # Checked before anything is created: refusing up front beats
+            # minting a key and then not knowing which one to delete.
+            raise RotationAdapterError(
+                f"ResendRotationAdapter: --retire-old needs tags['resend_api_key_id'] "
+                f"on {ref_name!r} -- the id of the key currently stored"
+            )
+        admin_template = (
+            self._admin_credential_ref
+            or "{{secret:%s}}" % tags.get("resend_admin_ref", ref_name)
+        )
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        # --- 1. CREATE --------------------------------------------------------
+        body = {"name": f"portunus-{ref_name}-{int(time.time())}"[:_RESEND_KEY_NAME_MAX],
+                "permission": permission}
+        if tags.get("resend_domain_id") and permission == "sending_access":
+            body["domain_id"] = tags["resend_domain_id"]
+        status, created = self._admin_call(resolver, admin_template, "POST", "/api-keys", body)
+        new_key_id = created.get("id", "") if status in (200, 201) else ""
+        new_token = created.get("token", "") if status in (200, 201) else ""
+        if not new_key_id or not new_token:
+            raise RotationAdapterError(
+                f"Resend create key failed for {ref_name!r}: {self._describe(status, created)}"
+            )
+
+        try:
+            # --- 2. VERIFY ----------------------------------------------------
+            if not self._verify(new_token):
+                if self._audit:
+                    self._audit.append("rotate:resend-api-key", sm_name, "warn:verify-failed")
+                try:
+                    self._admin_call(
+                        resolver, admin_template, "DELETE", f"/api-keys/{new_key_id}", None
+                    )
+                except Exception:
+                    pass  # best-effort cleanup; the failure below is what matters
+                raise RotationAdapterError(
+                    f"Resend key verification failed for {ref_name!r} -- "
+                    "rotation aborted; old credential left intact"
+                )
+
+            # --- 3. STORE -----------------------------------------------------
+            local_backend.store(sm_name, new_token)
+        finally:
+            del new_token
+
+        self._record_key_id(resolver, ref_name, tags, new_key_id)
+        if old_key_id:
+            update_rotation_bindings(lambda b: _add_superseded(b, "resend", old_key_id))
+
+        # --- 4. RETIRE (opt-in): DELETE -- Resend has no disable ---------------
+        retired = False
+        if retire_old:
+            status, deleted = self._admin_call(
+                resolver, admin_template, "DELETE", f"/api-keys/{old_key_id}", None
+            )
+            if status not in (200, 204) and status != 404:
+                if self._audit:
+                    self._audit.append(
+                        "rotate:resend-api-key", sm_name, f"warn:retire-failed:new={new_key_id}"
+                    )
+                raise RotationAdapterError(
+                    f"Resend delete of old key {old_key_id} failed for {ref_name!r} "
+                    f"({self._describe(status, deleted)}) -- the new key IS stored; "
+                    "the old one stays listed as superseded"
+                )
+            # 404: already gone -- the goal state, so treat it as retired.
+            update_rotation_bindings(lambda b: _drop_superseded(b, "resend", old_key_id))
+            retired = True
+
+        if self._audit:
+            self._audit.append("rotate:resend-api-key", sm_name, f"ok:new={new_key_id}")
+
+        return RotationResult(
+            provider="resend",
+            ref_name=ref_name,
+            key_id=new_key_id,
+            phase="stored",
+            retired_old=retired,
+        )
+
+    # --- HTTP helpers (all calls go through self._transport) -----------------
+
+    def _admin_call(self, resolver, admin_template, method, path, body):
+        def _boundary(admin_key: str):
+            return self._transport(
+                method, _RESEND_API + path, self._headers(admin_key), body, self._timeout
+            )
+
+        return resolver.resolve_call(admin_template, _boundary)
+
+    def _verify(self, token: str) -> bool:
+        try:
+            status, resp = self._transport(
+                "GET", _RESEND_API + "/api-keys?limit=1", self._headers(token), None,
+                self._timeout,
+            )
+        except RotationAdapterError:
+            return False
+        if status == 200:
+            return True
+        # A sending_access key can't read /api-keys, and Resend says so with
+        # 401 restricted_api_key -- which it only returns for a valid key.
+        # A key that is "not active" is also restricted_api_key, but 403.
+        return status == 401 and resp.get("name") == "restricted_api_key"
+
+    @staticmethod
+    def _headers(token: str) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "User-Agent": "portunus-rotation",
+        }
+
+    @staticmethod
+    def _describe(status: int, resp: dict) -> str:
+        # Only Resend's error name/message -- never the response body, which
+        # on success carries the new token.
+        name = str(resp.get("name", ""))[:60]
+        message = str(resp.get("message", ""))[:200]
+        return f"HTTP {status}" + (f" {name}: {message}" if name or message else "")
+
+    def _record_key_id(self, resolver, ref_name: str, tags: dict, new_key_id: str) -> None:
+        registry = self._registry or getattr(resolver, "registry", None)
+        if registry is None or not hasattr(registry, "retag") or ref_name not in registry:
+            return
+        registry.retag(ref_name, tags={**tags, "resend_api_key_id": new_key_id})
+
+
+def _add_superseded(bindings: Dict[str, RotationBinding], provider: str, key_id: str) -> None:
+    b = bindings.get(provider) or RotationBinding(provider=provider, status="real")
+    if key_id not in b.superseded_key_ids:
+        b = RotationBinding(
+            provider=b.provider, status=b.status, account=b.account,
+            superseded_key_ids=b.superseded_key_ids + (key_id,),
+        )
+    bindings[provider] = b
+
+
+def _drop_superseded(bindings: Dict[str, RotationBinding], provider: str, key_id: str) -> None:
+    b = bindings.get(provider)
+    if b is None:
+        return
+    bindings[provider] = RotationBinding(
+        provider=b.provider, status=b.status, account=b.account,
+        superseded_key_ids=tuple(k for k in b.superseded_key_ids if k != key_id),
+    )
+
+
 class VercelRotationAdapter:
     """Vercel -- STUB. No real calls.
 
@@ -574,6 +851,7 @@ class StripeRotationAdapter:
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
     "gcp": GCPServiceAccountKeyRotationAdapter,
+    "resend": ResendRotationAdapter,
     "vercel": VercelRotationAdapter,
     "github": GitHubRotationAdapter,
     "stripe": StripeRotationAdapter,

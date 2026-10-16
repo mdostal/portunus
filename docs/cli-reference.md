@@ -473,7 +473,7 @@ Run a real rotation for a single reference: create → verify → store cycle. O
 portunus rotation run <ref_name> [--retire-old]
 ```
 
-`--retire-old` disables the superseded credential after storing the new one (never deletes in the same call).
+`--retire-old` retires the superseded credential after storing the new one. GCP keys are disabled, never deleted in the same call. Resend keys are deleted, because Resend has no disable (see [rotation.md](rotation.md#resend-api-keys)).
 
 **Example:**
 ```sh
