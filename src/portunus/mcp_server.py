@@ -199,8 +199,9 @@ def portunus_rotation_status(provider: str = "") -> dict:
     resolver, never a value this tool could see. Same values as
     `portunus rotation-bindings show --json`. Real adapters: `oauth`
     (wraps OAuthBackend -- drives every stored OAuth refresh credential
-    through a single job) and `gcp` (service-account key create/verify/
-    store). Stub adapters: vercel, github, stripe. Manual (no
+    through a single job), `gcp` (service-account key create/verify/
+    store), `resend` (API key) and `youtrack` (JetBrains Hub permanent
+    token). Stub adapters: vercel, github, stripe. Manual (no
     programmatic path exists): sentry."""
     bindings = load_rotation_bindings()
     if provider:

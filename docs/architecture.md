@@ -184,23 +184,24 @@ sequenceDiagram
 
 A second, genuinely different kind of "real vs. stub" split from ARCA's own (§2, §1's `Stub`
 node): ARCA answers *where a value lives*, `RotationBinding`/`RotationAdapter` (`rotation.py`)
-answer *who would rotate it, and whether Portunus can yet*. **Five adapters are real today and
+answer *who would rotate it, and whether Portunus can yet*. **Six adapters are real today and
 report `capability() == "auto"`:** `OAuthRefreshRotationAdapter` (OAuth refresh tokens, wrapping
 `OAuthBackend`), `GCPServiceAccountKeyRotationAdapter` (GCP service-account keys:
 create → verify → store, with opt-in `--retire-old` that disables, never deletes, the superseded
 key), `GoogleCloudAPIKeyRotationAdapter` (Google Cloud `AIza...` API keys, provider
 `google-api-key`: copies the old key's restrictions, and `--retire-old` deletes, which Google can
 undo for 30 days), `ResendRotationAdapter` (Resend API keys: same cycle, but `--retire-old`
-deletes because Resend has no disable) and `GrafanaCloudRotationAdapter` (Grafana Cloud access
-policy tokens, provider `grafana-cloud`). All run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
+deletes because Resend has no disable), `GrafanaCloudRotationAdapter` (Grafana Cloud access
+policy tokens, provider `grafana-cloud`) and `YouTrackRotationAdapter` (JetBrains Hub permanent
+tokens: same cycle, `--retire-old` deletes because Hub has no disable). All run via `portunus rotation run <ref>`. **Vercel, GitHub and Stripe are still stubs**
 that raise `RotationAdapterError` and report `capability() == "unknown"`. The per-provider
 capability matrix lives in [`docs/rotation.md`](rotation.md), and
 `tests/test_rotation_docs_drift.py` fails if an `auto` adapter isn't listed as auto there.
 
 ```mermaid
 graph TD
-    accTitle: Rotation provenance -- five real adapters, three stubs
-    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp, google-api-key, resend and grafana-cloud to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
+    accTitle: Rotation provenance -- six real adapters, three stubs
+    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp, google-api-key, grafana-cloud, resend and youtrack to real adapters and vercel, github and stripe to stubs that raise. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
 
     RB["RotationBinding<br/>(provider, status: real|stub|manual, account)<br/>PORTUNUS_HOME/rotation-bindings.json"]
     Registry["RotationAdapter registry<br/>(rotation_adapter_for)"]
@@ -211,6 +212,7 @@ graph TD
     Registry -->|gcp| GCP["GCPServiceAccountKeyRotationAdapter<br/>capability: auto"]
     Registry -->|google-api-key| GKey["GoogleCloudAPIKeyRotationAdapter<br/>capability: auto"]
     Registry -->|resend| Resend["ResendRotationAdapter<br/>capability: auto"]
+    Registry -->|youtrack| YT["YouTrackRotationAdapter<br/>capability: auto"]
     Registry -->|vercel · github · stripe| Stub["stub: raises RotationAdapterError<br/>capability: unknown"]
     RB -.->|provider context| Registry
 
@@ -220,6 +222,7 @@ graph TD
     SelfResolve --> ResendAPI["api.resend.com /api-keys"]
     GKey -->|admin token ref resolved via| SelfResolve
     SelfResolve --> GKeyAPI["apikeys.googleapis.com v2"]
+    YT -->|current token authenticates its replacement| HubAPI["Hub REST API<br/>users/{id}/permanenttokens"]
     OAuth -->|OAuthBackend.access()| TokenEndpoint["provider token endpoint<br/>(rotated refresh_token persisted back)"]
 ```
 

@@ -2879,7 +2879,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--retire-old",
         action="store_true",
         default=False,
-        help="retire the superseded credential after storing the new one (GCP: disable, never delete; Resend: delete -- it has no disable)",
+        help="retire the superseded credential after storing the new one (GCP: disable, never delete; Resend, YouTrack: delete -- they have no disable)",
     )
     rot_run_cmd.set_defaults(func=cmd_rotation_run)
     rot_audit = rot_sub.add_parser(
