@@ -4,6 +4,15 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GET /api/health` no longer reports healthy while every write is rejected (PANT-1143,
+  #186).** `ui/proxy.ts` 403s mutating requests whose `Host` isn't a loopback name unless
+  `PORTUNUS_UI_HOST` is set, but GET/HEAD skip that guard, so a UI reached container-to-container
+  by service name stayed green with every write failing. The deep health check now runs the same
+  Host check on its own request and adds a `ui-write-host` check; when it fails the result is
+  `down` (HTTP 503) and the detail says to set `PORTUNUS_UI_HOST`. `?shallow=1` is unchanged.
+
 ## [0.34.0] - 2026-10-14
 
 ### Fixed
