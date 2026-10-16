@@ -6,16 +6,25 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Credential liveness checks and a parity primitive (PANT-1152, GH #141).** `portunus liveness
+  check <name>|--all` probes a stored credential against its provider's own API and reports
+  `live` / `dead` / `unknown`; `portunus liveness status --failing` lists dead keys oldest first.
+  The value only reaches the outbound request header and the response body is never read.
+  Results are audited and kept in `liveness-status.json` until a live check clears them. MCP:
+  `portunus_liveness_check`, `portunus_liveness_status`. `parity_check()` compares one value
+  across targets (GCP, Convex, ...) without exposing a value. Provider probes come with the
+  Vercel, Autumn, Clerk and Convex sub-issues. See `docs/liveness.md`.
 - **GitHub rotation is now decided per token type (PANT-1141, #188).** `GitHubRotationAdapter`
   is no longer a stub. It resets OAuth App tokens (`gho_`) issued by an OAuth App you own, using
   `PATCH /applications/{client_id}/token`. Because GitHub kills the old token immediately, this
   requires `--retire-old`. Classic and fine-grained PATs, `gh auth login` tokens and App private
   keys are `manual`, since GitHub has no reissue API for them. App user and installation tokens
   are `not applicable`. Every refusal explains why and makes no API call.
-- **`portunus rotation liveness`**: checks whether stored credentials are still accepted by their
-  provider. GitHub is the first check, using `GET /rate_limit`. Each result is recorded in the
-  audit chain, and the command exits 2 if anything is dead. It's a shared runner that the
-  Autumn/Vercel/Clerk liveness checks (#143–#145) can plug into.
+- **GitHub liveness check (PANT-1141).** `github` is registered with the shared liveness
+  framework (PANT-1152), so `portunus liveness check` now covers GitHub references using
+  `GET /rate_limit` (it doesn't count against the rate limit): 200 means live, 401 means dead,
+  anything else is unknown. GitHub App private keys aren't bearer tokens, so they report unknown
+  without any API call.
 - **Resend API key rotation (PANT-1140).** New `ResendRotationAdapter`, registered as `resend`,
   runs via `portunus rotation run <ref> [--retire-old]`. It creates a new key with an admin key,
   checks it with a read-only `GET /api-keys` (no test email; a `sending_access` key passes on 401

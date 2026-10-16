@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import webbrowser
 from urllib.parse import urlparse
 from pathlib import Path
@@ -1500,31 +1501,81 @@ def cmd_rotation_run(args) -> int:
     return 0
 
 
-def cmd_rotation_liveness(args) -> int:
-    """Ask each stored credential's provider whether it is still accepted.
-    Detection only -- never rotates. Exit 2 if anything is dead, so a
-    cron/CI schedule calling this fails loudly instead of logging quietly."""
-    from .liveness import DEAD, run_liveness, supported_providers
+def _ago(ts) -> str:
+    if not ts:
+        return "-"
+    secs = max(0, int(time.time()) - int(ts))
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if secs >= size:
+            return f"{secs // size}{unit}"
+    return f"{secs}s"
+
+
+def cmd_liveness_check(args) -> int:
+    """Probe stored credentials against their provider's own API. Exit 0
+    when every probed reference is live, 2 if any is dead, 1 if any check
+    could not reach a verdict. Never prints a value or a response body."""
+    from . import liveness
 
     registry, audit, broker, resolver = _build()
-    if args.ref_name and registry.get(args.ref_name) is None:
-        _err(f"no reference {args.ref_name!r} in registry")
-        return 1
-    results = run_liveness(
-        registry, resolver, provider=args.provider, ref_name=args.ref_name, audit=audit,
-    )
-    dead = [r for r in results if r.status == DEAD]
+    if args.all:
+        refs = liveness.checkable_references(registry)
+        if not refs:
+            print("(no references with a liveness adapter -- providers: "
+                  f"{', '.join(liveness.liveness_providers()) or 'none registered'})")
+            return 0
+    else:
+        if not args.names:
+            return _err("name a reference to check, or pass --all")
+        refs = []
+        for name in args.names:
+            ref = registry.get(name)
+            if ref is None:
+                return _err(f"no reference {name!r} in registry")
+            refs.append(ref)
+
+    results = []
+    for ref in refs:
+        result = liveness.check_reference(ref, resolver)
+        liveness.audit_liveness(audit, ref, result)
+        results.append(result)
+    statuses = liveness.record_results(results)
+
     if args.json:
-        print(json.dumps({"results": [r.to_dict() for r in results], "dead": len(dead)}))
-    elif not results:
-        print(f"(no references with a liveness check -- supported providers: "
-              f"{', '.join(supported_providers())})")
+        print(json.dumps({"results": [r.to_dict() for r in results]}))
     else:
         for r in results:
-            print(f"  {r.status.upper():<12} {r.ref_name}  provider={r.provider or '-'}  {r.detail}")
-    for r in dead:
-        _err(f"DEAD credential: {r.ref_name} ({r.provider}) -- {r.detail}; re-issue or rotate it")
-    return 2 if dead else 0
+            st = statuses[r.ref_name]
+            since = f"  failing for {_ago(st.first_failed_at)}" if r.status != liveness.LIVE else ""
+            print(f"  {r.status.upper():8} {r.ref_name}  provider={r.provider or '-'}  {r.detail}{since}")
+
+    if any(r.status == liveness.DEAD for r in results):
+        return 2
+    if any(r.status != liveness.LIVE for r in results):
+        return 1
+    return 0
+
+
+def cmd_liveness_status(args) -> int:
+    """Show the last persisted liveness verdict per reference (metadata only)."""
+    from . import liveness
+
+    statuses = liveness.load_liveness_status()
+    rows = liveness.failing(statuses) if args.failing else sorted(
+        statuses.values(), key=lambda st: st.ref_name)
+    if args.json:
+        print(json.dumps({"statuses": [st.to_dict() for st in rows]}))
+        return 0
+    if not rows:
+        print("(no failing references)" if args.failing else "(no liveness checks recorded)")
+        return 0
+    for st in rows:
+        line = (f"  {st.status.upper():8} {st.ref_name}  provider={st.provider or '-'}  "
+                f"checked {_ago(st.last_checked_at)} ago")
+        if st.status != liveness.LIVE:
+            line += f"  failing for {_ago(st.first_failed_at)} ({st.consecutive_failures} checks)"
+        print(line)
+    return 0
 
 
 def cmd_rotation_audit(args) -> int:
@@ -2836,14 +2887,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rot_audit.add_argument("--json", action="store_true")
     rot_audit.set_defaults(func=cmd_rotation_audit)
-    rot_live = rot_sub.add_parser(
+
+    lv = sub.add_parser(
         "liveness",
-        help="check stored credentials are still accepted by their provider (exit 2 if any are dead)",
+        help="probe stored credentials against their provider's own API (live/dead/unknown)",
     )
-    rot_live.add_argument("ref_name", nargs="?", default="", help="check only this reference")
-    rot_live.add_argument("--provider", default="", help="check only this provider's references, e.g. github")
-    rot_live.add_argument("--json", action="store_true")
-    rot_live.set_defaults(func=cmd_rotation_liveness)
+    lv_sub = lv.add_subparsers(dest="liveness_action", required=True)
+    lv_check = lv_sub.add_parser(
+        "check", help="probe references now; exit 0 all live, 2 any dead, 1 any unknown",
+    )
+    lv_check.add_argument("names", nargs="*", help="reference names to probe")
+    lv_check.add_argument("--all", action="store_true",
+                          help="probe every reference whose provider has a liveness adapter")
+    lv_check.add_argument("--json", action="store_true")
+    lv_check.set_defaults(func=cmd_liveness_check)
+    lv_status = lv_sub.add_parser("status", help="show the last recorded verdict per reference")
+    lv_status.add_argument("--failing", action="store_true",
+                           help="only references whose last check was not live, oldest failure first")
+    lv_status.add_argument("--json", action="store_true")
+    lv_status.set_defaults(func=cmd_liveness_status)
 
     rbnd = sub.add_parser(
         "rotation-bindings",

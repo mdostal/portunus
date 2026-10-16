@@ -88,7 +88,7 @@ That's portunus.
 - [ ] More secret-rotation adapters *(four real adapters ship today, all run via
       `portunus rotation run`: OAuth refresh tokens, GCP service-account keys, Resend API keys, and
       GitHub OAuth App tokens from an App you own. GitHub PATs are `manual` because GitHub has no
-      reissue API. Vercel and Stripe are still stubs that raise. `portunus rotation liveness` flags
+      reissue API. Vercel and Stripe are still stubs that raise. `portunus liveness check` flags
       dead GitHub tokens. See [docs/rotation.md](docs/rotation.md) for the per-subtype capability matrix)*
 - [ ] Scope-aware `list`/`tree` — these two MCP tools still return full-vault metadata regardless
       of the caller's own access scope; only the actual `resolve`/inject path is gated today

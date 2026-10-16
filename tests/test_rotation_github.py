@@ -8,7 +8,8 @@ import json
 import pytest
 
 from portunus.cli import main
-from portunus.liveness import DEAD, LIVE, UNKNOWN, UNSUPPORTED, check_reference, run_liveness
+from portunus import liveness
+from portunus.liveness import DEAD, LIVE, UNKNOWN, GitHubLivenessAdapter, check_reference
 from portunus.rotation import (
     GitHubRotationAdapter,
     RotationAdapterError,
@@ -229,79 +230,99 @@ def test_rotate_reset_failure_stores_nothing(gh):
     assert store.stored == {}
 
 
-# --- liveness ---------------------------------------------------------------
+# --- liveness (registered with the shared PANT-1152 framework) -------------
+
+class _FakeTransport:
+    """Shared-liveness transport signature: (method, url, headers, timeout) -> status."""
+
+    def __init__(self, valid=(OLD,), code=None, exc=None):
+        self.valid = set(valid)
+        self.code = code
+        self.exc = exc
+        self.calls = []
+
+    def __call__(self, method, url, headers, timeout):
+        self.calls.append((method, url, dict(headers)))
+        if self.exc is not None:
+            raise self.exc
+        if self.code is not None:
+            return self.code
+        token = headers["Authorization"].split(" ", 1)[1]
+        return 200 if token in self.valid else 401
+
+
+def test_github_is_a_registered_liveness_provider():
+    assert "github" in liveness.liveness_providers()
+    assert isinstance(liveness.liveness_adapter_for("github"), GitHubLivenessAdapter)
+
 
 def test_liveness_live_and_dead(gh):
-    _add_token(gh, OLD, name="alive")
-    _add_token(gh, "ghp_FAKEDEAD", name="dead")
-    results = {r.ref_name: r for r in run_liveness(
-        gh["registry"], gh["resolver"], http=_FakeGitHub(valid=(OLD,)), audit=gh["audit"]
-    )}
-    assert set(results) == {"alive", "dead"}  # non-github refs are skipped
-    assert results["alive"].status == LIVE
-    assert results["dead"].status == DEAD
-    log = gh["audit"].path.read_text()
-    assert "ok:live" in log and "err:dead" in log
-    assert OLD not in log and "ghp_FAKEDEAD" not in log
+    alive = _add_token(gh, OLD, name="alive")
+    dead = _add_token(gh, "ghp_FAKEDEAD", name="dead")
+    transport = _FakeTransport(valid=(OLD,))
+    adapter = GitHubLivenessAdapter(transport=transport)
+    assert check_reference(alive, gh["resolver"], adapter=adapter).status == LIVE
+    result = check_reference(dead, gh["resolver"], adapter=adapter)
+    assert result.status == DEAD and result.http_status == 401
+    assert all(c[1] == "https://api.github.com/rate_limit" for c in transport.calls)
+    assert "ghp_FAKEDEAD" not in repr(result)
 
 
-def test_liveness_ambiguous_status_is_unknown(gh):
+def test_liveness_403_is_unknown_not_dead(gh):
+    # GitHub's 403 can mean rate-limited / forbidden -- never call that dead.
     ref = _add_token(gh, OLD)
-    result = check_reference(ref, gh["resolver"], http=lambda *a: (503, {}))
+    result = check_reference(ref, gh["resolver"], adapter=GitHubLivenessAdapter(transport=_FakeTransport(code=403)))
+    assert result.status == UNKNOWN
+
+
+def test_liveness_5xx_is_unknown(gh):
+    ref = _add_token(gh, OLD)
+    result = check_reference(ref, gh["resolver"], adapter=GitHubLivenessAdapter(transport=_FakeTransport(code=503)))
     assert result.status == UNKNOWN
 
 
 def test_liveness_network_error_is_unknown(gh):
     ref = _add_token(gh, OLD)
-
-    def boom(*a):
-        raise OSError("unreachable")
-
-    assert check_reference(ref, gh["resolver"], http=boom).status == UNKNOWN
+    transport = _FakeTransport(exc=liveness.LivenessError("request failed: OSError"))
+    assert check_reference(ref, gh["resolver"], adapter=GitHubLivenessAdapter(transport=transport)).status == UNKNOWN
 
 
-def test_liveness_private_key_is_unsupported(gh):
-    ref = _add_token(gh, "-----BEGIN RSA PRIVATE KEY-----\nFAKE\n-----END RSA PRIVATE KEY-----")
-    http = _FakeGitHub()
-    assert check_reference(ref, gh["resolver"], http=http).status == UNSUPPORTED
-    assert http.calls == []
+@pytest.mark.parametrize("value,tags", [
+    ("-----BEGIN RSA PRIVATE KEY-----\nFAKE\n-----END RSA PRIVATE KEY-----", None),
+    ("opaque-key-material", {"github_token_type": "app_private_key"}),
+])
+def test_liveness_private_key_is_never_probed(gh, value, tags):
+    ref = _add_token(gh, value, tags=tags)
+    transport = _FakeTransport()
+    result = check_reference(ref, gh["resolver"], adapter=GitHubLivenessAdapter(transport=transport))
+    assert result.status == UNKNOWN
+    assert "private key" in result.detail
+    assert transport.calls == []
 
 
-def test_liveness_requested_placeholder_is_unsupported(gh):
+def test_liveness_requested_placeholder_is_unknown_without_a_request(gh):
     # e.g. `demo-github-ci` -- state=requested, no value ever stored
     ref = gh["registry"].add("demo-github-ci", "demo-github-ci", provider="github", state="requested")
-    http = _FakeGitHub()
-    assert check_reference(ref, gh["resolver"], http=http).status == UNSUPPORTED
-    assert http.calls == []
-
-
-def test_liveness_unknown_provider_is_unsupported(gh):
-    ref = gh["registry"].add("x", "x-sm", provider="stripe")
-    assert check_reference(ref, gh["resolver"]).status == UNSUPPORTED
+    transport = _FakeTransport()
+    result = check_reference(ref, gh["resolver"], adapter=GitHubLivenessAdapter(transport=transport))
+    assert result.status == UNKNOWN
+    assert transport.calls == []
 
 
 # --- CLI --------------------------------------------------------------------
 
-def test_cli_liveness_exits_2_on_dead(home, monkeypatch, capsys):
-    import portunus.liveness as liveness
+def test_cli_liveness_check_all_covers_github(home, monkeypatch, capsys):
+    from portunus import Registry
 
     monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
     monkeypatch.setenv("PORTUNUS_MOCK_GH_DEAD", "ghp_FAKEDEAD")
-    monkeypatch.setattr(liveness, "_github_http", _FakeGitHub(valid=()))
-    from portunus import Registry
-
+    transport = _FakeTransport(valid=())
+    monkeypatch.setitem(liveness._ADAPTERS, "github", lambda: GitHubLivenessAdapter(transport=transport))
     Registry().add("gh-dead", "gh-dead", provider="github")
-    rc = main(["rotation", "liveness", "--json"])
+    rc = main(["liveness", "check", "--all", "--json"])
     out, err = capsys.readouterr()
     assert rc == 2
     payload = json.loads(out)
-    assert payload["dead"] == 1
-    assert payload["results"][0]["status"] == DEAD
-    assert "DEAD credential: gh-dead" in err
+    assert [(r["ref_name"], r["status"]) for r in payload["results"]] == [("gh-dead", DEAD)]
     assert "ghp_FAKEDEAD" not in out + err
-
-
-def test_cli_liveness_empty_registry(home, monkeypatch, capsys):
-    monkeypatch.setenv("PORTUNUS_BACKEND", "mock")
-    assert main(["rotation", "liveness"]) == 0
-    assert "supported providers: github" in capsys.readouterr().out
+    assert "ghp_FAKEDEAD" not in (home / "audit.log").read_text()

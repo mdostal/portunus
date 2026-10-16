@@ -492,12 +492,23 @@ portunus rotation audit [--json]
 
 ---
 
-### `rotation liveness`
+### `liveness check`
 
-Ask each stored credential's provider whether it is still accepted. This only detects; it never rotates. Today the only check is GitHub (`GET /rate_limit`). Exits 2 if any credential is dead.
+Probe stored credentials against their provider's own API with one cheap, read-only call. Registered providers today: `github` (`GET /rate_limit`). Exits `0` when all are live, `2` if any is dead, `1` if any check could not reach a verdict. Never prints a value or a response body. See [Liveness & Parity](liveness.md).
 
 ```
-portunus rotation liveness [<ref_name>] [--provider <provider>] [--json]
+portunus liveness check <name> [<name> ...] [--json]
+portunus liveness check --all [--json]
+```
+
+---
+
+### `liveness status`
+
+Show the last recorded verdict per reference. `--failing` lists only non-live references, oldest failure first.
+
+```
+portunus liveness status [--failing] [--json]
 ```
 
 ---

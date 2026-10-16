@@ -150,57 +150,21 @@ token's documented prefix inside the resolver boundary. Refusals never make a Gi
 
 ## Liveness checks
 
-Rotation only fixes credentials Portunus *can* rotate. Most stored GitHub tokens are manual, and they
-can die silently (expired, revoked, rotated by hand somewhere else). `portunus rotation liveness`
-asks each provider whether the stored credential still works:
+Rotation only fixes credentials Portunus *can* rotate. Most stored GitHub tokens are manual, and
+they can die silently (expired, revoked, rotated by hand somewhere else). The shared liveness
+framework ([liveness.md](liveness.md)) has a `github` probe, so `portunus liveness check` asks
+GitHub whether each stored token still works:
 
 ```sh
-portunus rotation liveness                 # every reference with a liveness check
-portunus rotation liveness --provider github
-portunus rotation liveness my-token --json
+portunus liveness check --all              # every reference with a registered probe, github included
+portunus liveness check my-token --json
+portunus liveness status --failing         # dead/unknown references, oldest failure first
 ```
 
-- **GitHub:** `GET /rate_limit` with the stored token. It doesn't count against the rate limit and
-  accepts every bearer-token type. `200` means live and `401` means dead; anything else
-  (network error, 5xx, 403) is `unknown`, not a guess. App private keys aren't bearer tokens, so
-  they're reported `unsupported`. So are references with no stored value (`state: requested`).
-- Every result is appended to the audit chain (`liveness <sm_name> ok:live|err:dead|warn:unknown`).
-  Response bodies and values are never logged.
-- **The command exits 2 if anything is dead**, so a cron job, systemd timer or CI schedule running it
-  fails loudly. Portunus has no built-in scheduler yet (tracked in #141), so run this command from
-  whatever scheduler you already use.
-
-New providers add one check function to `portunus/liveness.py`'s `_CHECKS`. Autumn (#143), Vercel
-(#144) and Clerk (#145) are meant to reuse this runner rather than build their own.
-
----
-
-## Resend API keys
-
-`ResendRotationAdapter` rotates a Resend API key via `portunus rotation run <ref-name> [--retire-old]`
-(API: https://resend.com/docs/api-reference/api-keys). The reference needs `provider=resend`, and
-its tags control the rotation:
-
-| Tag | Meaning |
-|---|---|
-| `resend_api_key_id` | Id of the key currently stored. Required for `--retire-old` (a Resend token does not encode its id). The adapter rewrites it to the new key's id after every successful store. |
-| `resend_admin_ref` | Name of another reference holding a `full_access` key, used to create and delete keys. Defaults to the reference itself, which only works if the rotated key is `full_access`. |
-| `resend_permission` | `full_access` (default) or `sending_access`. Use `sending_access` together with `resend_admin_ref` for least privilege. |
-| `resend_domain_id` | Optional; limits a `sending_access` key to one domain. |
-
-Phases:
-
-1. **create**: `POST /api-keys` with the admin key.
-2. **verify**: `GET /api-keys?limit=1` with the **new** key. It only reads and sends no email.
-   A `full_access` key gets 200. A `sending_access` key gets 401 `restricted_api_key` ("restricted
-   to only send emails"), and Resend only sends that for a valid key. Any other answer (invalid,
-   not active, suspended) aborts the rotation. Nothing is stored, and the adapter tries to delete
-   the new, unused key.
-3. **store**: the new token goes to the local backend.
-4. **retire** (`--retire-old` only): `DELETE /api-keys/{old_id}`. **This cannot be undone.**
-   Resend has no disable, so pass `--retire-old` only after every consumer has the new key.
-   Without it, the old key id is added to the `resend` binding's `superseded_key_ids`, and
-   `portunus rotation audit` lists it until it is retired.
+The GitHub probe calls `GET /rate_limit` with the stored token. It doesn't count against the rate
+limit and accepts every bearer-token type. `200` means live and `401` means dead. Anything else
+(network error, 5xx, 403) is `unknown`, not a guess. App private keys aren't bearer tokens, so
+they're reported `unknown` without any request. `liveness check` exits 2 when anything is dead.
 
 ---
 
