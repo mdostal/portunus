@@ -472,6 +472,27 @@ portunus rotation audit [--json]
 
 ---
 
+### `liveness check`
+
+Probe stored credentials against their provider's own API with one cheap, read-only call. Exits `0` when all are live, `2` if any is dead, `1` if any check could not reach a verdict. Never prints a value or a response body. See [Liveness & Parity](liveness.md).
+
+```
+portunus liveness check <name> [<name> ...] [--json]
+portunus liveness check --all [--json]
+```
+
+---
+
+### `liveness status`
+
+Show the last recorded verdict per reference. `--failing` lists only non-live references, oldest failure first.
+
+```
+portunus liveness status [--failing] [--json]
+```
+
+---
+
 ### `rotation-bindings`
 
 Configure per-provider rotation provenance.

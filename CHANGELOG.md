@@ -4,6 +4,17 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Credential liveness checks and a parity primitive (PANT-1152, GH #141).** `portunus liveness
+  check <name>|--all` probes a stored credential against its provider's own API and reports
+  `live` / `dead` / `unknown`; `portunus liveness status --failing` lists dead keys oldest first.
+  The value only reaches the outbound request header and the response body is never read.
+  Results are audited and kept in `liveness-status.json` until a live check clears them. MCP:
+  `portunus_liveness_check`, `portunus_liveness_status`. `parity_check()` compares one value
+  across targets (GCP, Convex, ...) without exposing a value. Provider probes come with the
+  Vercel, Autumn, Clerk and Convex sub-issues. See `docs/liveness.md`.
+
 ## [0.34.0] - 2026-10-14
 
 ### Fixed
