@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { writeHostAllowed } from "@/lib/host-guard";
 
 // Guards every mutating /api/* call before it reaches a route handler (and so
 // before any `portunus` CLI spawn). The routes themselves take caller-supplied
@@ -13,21 +14,15 @@ import { NextRequest, NextResponse } from "next/server";
 //   - Content-Type not application/json             -> 415
 //
 // GET/HEAD pass through untouched: they don't mutate, and a cross-origin page
-// can't read their responses without CORS headers, which no route sets.
+// can't read their responses without CORS headers, which no route sets. The
+// deep GET /api/health still runs the Host check itself (lib/host-guard.ts)
+// and reports "down" when it would fail, so a misconfigured non-loopback
+// deployment doesn't look healthy while every write is rejected.
 
 const SAFE_METHODS = new Set(["GET", "HEAD"]);
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function reject(status: number, error: string) {
   return NextResponse.json({ error }, { status });
-}
-
-function hostnameOf(host: string): string {
-  try {
-    return new URL(`http://${host}`).hostname;
-  } catch {
-    return "";
-  }
 }
 
 function isSameOrigin(origin: string, host: string): boolean {
@@ -50,7 +45,7 @@ export function proxy(req: NextRequest) {
   if (origin !== null && !isSameOrigin(origin, host)) {
     return reject(403, "cross-origin request rejected");
   }
-  if (!process.env.PORTUNUS_UI_HOST && !LOOPBACK_HOSTNAMES.has(hostnameOf(host))) {
+  if (!writeHostAllowed(host)) {
     return reject(403, "non-loopback Host rejected");
   }
 
