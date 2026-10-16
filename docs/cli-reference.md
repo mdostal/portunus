@@ -472,6 +472,16 @@ portunus rotation audit [--json]
 
 ---
 
+### `rotation liveness`
+
+Ask each stored credential's provider whether it is still accepted. This only detects; it never rotates. Today the only check is GitHub (`GET /rate_limit`). Exits 2 if any credential is dead.
+
+```
+portunus rotation liveness [<ref_name>] [--provider <provider>] [--json]
+```
+
+---
+
 ### `rotation-bindings`
 
 Configure per-provider rotation provenance.

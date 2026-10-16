@@ -296,6 +296,8 @@ Classic GitHub PATs cannot be created via the REST API — creation requires bro
 
 Note: GitHub App installation tokens rotate automatically (1-hour TTL) and are not in scope here — none of the stored names indicate an installation token.
 
+**Update 2026-10-16 (PANT-1141):** an OAuth App token issued by an OAuth App *the operator owns* can be reset via `PATCH /applications/{client_id}/token`. `GitHubRotationAdapter` now does this. A `gh auth login` token (like `github-pat-dostal`) is issued by GitHub CLI's own OAuth App, so it is still manual. See the per-subtype breakdown in [rotation.md](rotation.md#github-per-credential-subtype).
+
 ---
 
 ### Stripe standard API key (secret and publishable)

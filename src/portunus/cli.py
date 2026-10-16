@@ -1476,6 +1476,33 @@ def cmd_rotation_run(args) -> int:
     return 0
 
 
+def cmd_rotation_liveness(args) -> int:
+    """Ask each stored credential's provider whether it is still accepted.
+    Detection only -- never rotates. Exit 2 if anything is dead, so a
+    cron/CI schedule calling this fails loudly instead of logging quietly."""
+    from .liveness import DEAD, run_liveness, supported_providers
+
+    registry, audit, broker, resolver = _build()
+    if args.ref_name and registry.get(args.ref_name) is None:
+        _err(f"no reference {args.ref_name!r} in registry")
+        return 1
+    results = run_liveness(
+        registry, resolver, provider=args.provider, ref_name=args.ref_name, audit=audit,
+    )
+    dead = [r for r in results if r.status == DEAD]
+    if args.json:
+        print(json.dumps({"results": [r.to_dict() for r in results], "dead": len(dead)}))
+    elif not results:
+        print(f"(no references with a liveness check -- supported providers: "
+              f"{', '.join(supported_providers())})")
+    else:
+        for r in results:
+            print(f"  {r.status.upper():<12} {r.ref_name}  provider={r.provider or '-'}  {r.detail}")
+    for r in dead:
+        _err(f"DEAD credential: {r.ref_name} ({r.provider}) -- {r.detail}; re-issue or rotate it")
+    return 2 if dead else 0
+
+
 def cmd_rotation_audit(args) -> int:
     """Walk everything Portunus knows about -- registry references, vault
     bindings, and list_oauth_credentials() -- group by provider, join to
@@ -2774,6 +2801,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rot_audit.add_argument("--json", action="store_true")
     rot_audit.set_defaults(func=cmd_rotation_audit)
+    rot_live = rot_sub.add_parser(
+        "liveness",
+        help="check stored credentials are still accepted by their provider (exit 2 if any are dead)",
+    )
+    rot_live.add_argument("ref_name", nargs="?", default="", help="check only this reference")
+    rot_live.add_argument("--provider", default="", help="check only this provider's references, e.g. github")
+    rot_live.add_argument("--json", action="store_true")
+    rot_live.set_defaults(func=cmd_rotation_liveness)
 
     rbnd = sub.add_parser(
         "rotation-bindings",

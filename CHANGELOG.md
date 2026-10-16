@@ -4,6 +4,24 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **GitHub rotation is now decided per token type (PANT-1141, #188).** `GitHubRotationAdapter`
+  is no longer a stub. It resets OAuth App tokens (`gho_`) issued by an OAuth App you own, using
+  `PATCH /applications/{client_id}/token`. Because GitHub kills the old token immediately, this
+  requires `--retire-old`. Classic and fine-grained PATs, `gh auth login` tokens and App private
+  keys are `manual`, since GitHub has no reissue API for them. App user and installation tokens
+  are `not applicable`. Every refusal explains why and makes no API call.
+- **`portunus rotation liveness`**: checks whether stored credentials are still accepted by their
+  provider. GitHub is the first check, using `GET /rate_limit`. Each result is recorded in the
+  audit chain, and the command exits 2 if anything is dead. It's a shared runner that the
+  Autumn/Vercel/Clerk liveness checks (#143–#145) can plug into.
+
+### Fixed
+
+- **OAuth refresh now sends `Accept: application/json`.** GitHub's token endpoint returns
+  form-urlencoded unless asked for JSON, so refreshing a GitHub App user token failed to parse.
+
 ## [0.34.0] - 2026-10-14
 
 ### Fixed
