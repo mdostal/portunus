@@ -18,6 +18,18 @@ All notable changes to Portunus are documented in this file.
 - **`drop --keep-whitespace`**, implied by `--kind password`: only the final newline is removed,
   so a password with leading or trailing spaces is stored exactly.
 
+- **Neon Postgres liveness + role-password rotation (PANT-1120, #209).** New `neon` liveness probe
+  connects with each stored connection string and runs `SELECT 1`. SQLSTATE class 28 (`28P01`
+  password authentication failed) reads `dead`, and network, TLS and endpoint errors read
+  `unknown`. It would have caught the 2026-10-16 incident, where Neon's dev-branch password changed
+  server-side and `shop-mdostal-database-url-dev` sat broken. It uses a new driverless Postgres
+  client, `portunus.pgwire` (TLS with certificate verification, SCRAM-SHA-256 with channel binding,
+  MD5, cleartext), so there's no new dependency. New `NeonRotationAdapter` (provider `neon`) resets
+  the role password through the Neon API, stores the connection string with only its password
+  replaced, waits for Neon's operations to finish and verifies it with a real connect. A reset
+  retires the old password by design, so `--retire-old` is required. Neon is now in
+  `docs/rotation.md` and `docs/provider-rotation-matrix.md`.
+
 - **Google Cloud API key rotation (PANT-1136, #193).** New `GoogleCloudAPIKeyRotationAdapter`,
   registered as `google-api-key` (separate from `gcp`, which rotates service-account JSON keys).
   It runs via `portunus rotation run <ref> [--retire-old]`. It finds the old key (from
