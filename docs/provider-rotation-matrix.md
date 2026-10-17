@@ -525,6 +525,8 @@ These are application-level secrets with no provider API. Rotation requires upda
 
 `unknown` is the honest default; it does not mean `manual`. Each row below lists what would be needed to resolve the finding.
 
+Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthchecks.io (API key), Pexels, Pixabay, SerpAPI, Shippo, Tremendous and Vercel AI now have liveness probes (PANT-1125, GH #204), so a dead stored key shows up in `portunus liveness status --failing` instead of sitting undetected. See [liveness.md](liveness.md#registered-providers), which also explains why the other long-tail rows have no probe yet.
+
 | provider | credential_type | vault_examples | what to verify |
 |---|---|---|---|
 | Autumn | App secret key / webhook secret | `autumn-sandbox-flayr-secret-key`, `*-autumn-secret-key`, `*-autumn-webhook-secret` | Autumn (useautumn.com) subscription billing; no rotation API found in public docs at research time |

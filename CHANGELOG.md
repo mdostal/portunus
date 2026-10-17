@@ -36,6 +36,17 @@ All notable changes to Portunus are documented in this file.
 - **`drop --keep-whitespace`**, implied by `--kind password`: only the final newline is removed,
   so a password with leading or trailing spaces is stored exactly.
 
+- **Liveness probes for long-tail single-key SaaS providers (PANT-1125, #204).** New built-in
+  probes for `browserbase`, `firecrawl`, `healthchecks`, `pexels`, `pixabay`, `serpapi`, `shippo`,
+  `tremendous` and `vercel-ai`, so `portunus liveness check --all` now finds dead keys for these
+  providers too. Each probe is one cheap authenticated read, and only an explicit credential
+  rejection reads `dead`. `HTTPProbe(query_param=...)` covers providers that only accept the key
+  in the query string (Pixabay, SerpAPI) and keeps it out of results. Tremendous picks the sandbox
+  or production host from the `TEST_`/`PROD_` key prefix or the `tremendous_env` tag. The default
+  liveness transport now sends a `portunus-liveness` User-Agent, because Pexels and Pixabay reject
+  urllib's default with 403. `docs/liveness.md` explains why Fly.io, stack-scoped Grafana Cloud,
+  Qdrant Cloud and Slack still have no probe.
+
 - **Neon Postgres liveness + role-password rotation (PANT-1120, #209).** New `neon` liveness probe
   connects with each stored connection string and runs `SELECT 1`. SQLSTATE class 28 (`28P01`
   password authentication failed) reads `dead`, and network, TLS and endpoint errors read

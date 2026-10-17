@@ -36,7 +36,8 @@ Built-in provider probes are registered at the bottom of this module by the
 provider sub-issues (GitHub, PANT-1141, is the first; Neon, PANT-1120, probes a
 Postgres connection string instead of an HTTP API; the event-api sources
 Eventbrite, Ticketmaster, SeatGeek and Meetup, PANT-1126, probe only the
-credential kinds that can be sent on their own). See docs/liveness.md.
+credential kinds that can be sent on their own; PANT-1125 adds the
+long-tail single-API-key SaaS providers). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -85,8 +86,12 @@ Transport = Callable[[str, str, Mapping[str, str], float], int]
 def _default_transport(method: str, url: str, headers: Mapping[str, str], timeout: float) -> int:
     """urllib transport that returns the status code only. The body is never
     read: a provider error body can echo the key back (Autumn's
-    `invalid_secret_key` response does), so it must not reach a result."""
-    req = urllib.request.Request(url, headers=dict(headers), method=method)
+    `invalid_secret_key` response does), so it must not reach a result.
+
+    Sends its own User-Agent: Pexels and Pixabay answer urllib's default
+    `Python-urllib/x.y` with 403 before looking at the key."""
+    headers = {"User-Agent": "portunus-liveness", **headers}
+    req = urllib.request.Request(url, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status
@@ -628,3 +633,92 @@ class NeonLivenessAdapter:
 
 
 register_liveness_adapter("neon", NeonLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Long-tail single-API-key SaaS providers (PANT-1125, GH #204). Each is one
+# cheap authenticated read; every endpoint returned 401 (Pixabay: 400) for a
+# bogus key when this was written. None of them returns 401 for a rate
+# limit, so 429/5xx stay unknown as usual.
+# ---------------------------------------------------------------------------
+
+LONG_TAIL_PROBES: Dict[str, HTTPProbe] = {
+    # Lists the account's projects. `browserbase-project-id` is config, not a key.
+    "browserbase": HTTPProbe(url="https://api.browserbase.com/v1/projects",
+                             header="X-BB-API-Key", scheme="", dead_statuses=(401,)),
+    # Remaining credits for the key's team; scrapes nothing.
+    "firecrawl": HTTPProbe(url="https://api.firecrawl.dev/v2/team/credit-usage", dead_statuses=(401,)),
+    # Lists checks; works with read-only keys too. healthchecks.io only: a
+    # self-hosted instance needs its own probe. Ping keys/URLs are not
+    # probed -- a request to them records a ping.
+    "healthchecks": HTTPProbe(url="https://healthchecks.io/api/v3/checks/",
+                              header="X-Api-Key", scheme="", dead_statuses=(401,)),
+    # One curated photo. Counts against the 200/hour request limit.
+    "pexels": HTTPProbe(url="https://api.pexels.com/v1/curated?per_page=1", scheme="",
+                       dead_statuses=(401,)),
+    # Key only accepted as `?key=`. An invalid key is a plain 400 (the
+    # request is otherwise fixed and valid), so 400 is dead here.
+    "pixabay": HTTPProbe(url="https://pixabay.com/api/?per_page=3",
+                         query_param="key", dead_statuses=(400,)),
+    # Account API: free, not counted toward the search quota. Key only
+    # accepted as `?api_key=`.
+    "serpapi": HTTPProbe(url="https://serpapi.com/account.json",
+                         query_param="api_key", dead_statuses=(401,)),
+    # One address. Test and live tokens share the same host.
+    "shippo": HTTPProbe(url="https://api.goshippo.com/addresses?results=1",
+                        scheme="ShippoToken", dead_statuses=(401,)),
+    # Vercel AI Gateway API key (not the Vercel deploy token): the team's
+    # credit balance.
+    "vercel-ai": HTTPProbe(url="https://ai-gateway.vercel.sh/v1/credits", dead_statuses=(401,)),
+}
+
+
+def _register_long_tail(provider: str, probe: HTTPProbe) -> None:
+    register_liveness_adapter(provider, lambda: HTTPLivenessAdapter(provider, probe))
+
+
+for _provider, _probe in LONG_TAIL_PROBES.items():
+    _register_long_tail(_provider, _probe)
+
+
+class TremendousLivenessAdapter(HTTPLivenessAdapter):
+    """Tremendous: `GET /api/v2/funding_sources`. Sandbox and production
+    keys live on different hosts, and a key sent to the wrong one reads
+    401, a false dead. The host is picked from the key prefix (`TEST_` ->
+    testflight, `PROD_` -> api) inside the boundary, or from the
+    `tremendous_env` tag (`sandbox` / `production`) for an older key
+    without a prefix. With neither, the key is reported unknown without a
+    request."""
+
+    HOSTS = {"sandbox": "https://testflight.tremendous.com",
+             "production": "https://api.tremendous.com"}
+    PATH = "/api/v2/funding_sources"
+    NO_ENV = -1  # boundary sentinel: never a real HTTP status
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__("tremendous",
+                         HTTPProbe(url=self.HOSTS["production"] + self.PATH, dead_statuses=(401,)),
+                         transport=transport, timeout=timeout)
+
+    def check(self, ref, resolver) -> LivenessResult:
+        tagged = (getattr(ref, "tags", None) or {}).get("tremendous_env", "")
+        used = {}
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            env = ("sandbox" if value.startswith("TEST_")
+                   else "production" if value.startswith("PROD_") else tagged)
+            if env not in self.HOSTS:
+                return self.NO_ENV
+            used["url"] = self.HOSTS[env] + self.PATH
+            return self._transport("GET", used["url"], self.probe.headers_for(value), self._timeout)
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NO_ENV:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="no TEST_/PROD_ prefix and no tremendous_env tag -- not probed")
+        return LivenessResult(ref.name, self.provider, self.probe.classify(code), http_status=code,
+                              detail=f"GET {used['url']} -> {code}")
+
+
+register_liveness_adapter("tremendous", TremendousLivenessAdapter)
