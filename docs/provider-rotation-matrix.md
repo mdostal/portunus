@@ -509,6 +509,8 @@ Changing the admin password requires authenticating with the current password to
 
 These are startup configuration values, not provider-issued tokens. Rotating the encryption key requires decrypting all stored n8n credentials with the old key and re-encrypting with the new one before restart. No automated rotation path.
 
+Step-by-step procedure, and why basic auth is inert on n8n 1.0+: [n8n rotation runbook](n8n-rotation-runbook.md).
+
 ---
 
 ### JWT secret / symmetric signing key
