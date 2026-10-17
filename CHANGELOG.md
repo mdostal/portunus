@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Event-source API liveness, provider backfill and runbooks (PANT-1126, #203).** Liveness
+  probes for `eventbrite` (private token), `ticketmaster` (consumer key) and `seatgeek`
+  (client id), plus a `meetup` adapter that explains why nothing Meetup stores can be probed.
+  The new `CredentialKindLivenessAdapter` probes only the credential kinds that can be sent on
+  their own (`liveness_kind` tag, or the reference name's suffix). Client secrets and similar
+  read `unknown` with no request, and `liveness check --all` skips them. `HTTPProbe` gains
+  `query_param` for providers that take the key in the URL; the value never reaches a result.
+  `scripts/backfill_event_api_providers.py` sets the real `provider` on
+  `event-api-*-{meetup,eventbrite,ticketmaster,seatgeek}-*` (dry run by default). Ticketmaster
+  and SeatGeek move from `unknown` to `manual` in `provider-rotation-matrix.md`, and
+  `rotation.md` gains manual re-issue runbooks for all four.
 - **GCP service-account key storage formats (PANT-1124, #205).** `GCPServiceAccountKeyRotationAdapter`
   now reads `tags["gcp_key_format"]`: `json` (default, unchanged), `base64` (stores base64 of the
   key file and decodes it to find the old key id), or `private_key` (stores only the PEM, for split
@@ -24,6 +35,17 @@ All notable changes to Portunus are documented in this file.
   time window instead of audit-clock ticks. A bare number keeps its old meaning.
 - **`drop --keep-whitespace`**, implied by `--kind password`: only the final newline is removed,
   so a password with leading or trailing spaces is stored exactly.
+
+- **Liveness probes for long-tail single-key SaaS providers (PANT-1125, #204).** New built-in
+  probes for `browserbase`, `firecrawl`, `healthchecks`, `pexels`, `pixabay`, `serpapi`, `shippo`,
+  `tremendous` and `vercel-ai`, so `portunus liveness check --all` now finds dead keys for these
+  providers too. Each probe is one cheap authenticated read, and only an explicit credential
+  rejection reads `dead`. `HTTPProbe(query_param=...)` covers providers that only accept the key
+  in the query string (Pixabay, SerpAPI) and keeps it out of results. Tremendous picks the sandbox
+  or production host from the `TEST_`/`PROD_` key prefix or the `tremendous_env` tag. The default
+  liveness transport now sends a `portunus-liveness` User-Agent, because Pexels and Pixabay reject
+  urllib's default with 403. `docs/liveness.md` explains why Fly.io, stack-scoped Grafana Cloud,
+  Qdrant Cloud and Slack still have no probe.
 
 - **Neon Postgres liveness + role-password rotation (PANT-1120, #209).** New `neon` liveness probe
   connects with each stored connection string and runs `SELECT 1`. SQLSTATE class 28 (`28P01`
