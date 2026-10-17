@@ -6,6 +6,18 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Agent-triggered secure prompt (PANT-1119, #210).** `portunus prompt <name> <sm_name>`, the
+  `portunus_prompt` MCP tool and a `portunus-prompt` agent skill let an agent ask the human to
+  type a secret (a sudo password, a master credential) into a desktop password dialog
+  (`osascript`, `kdialog`, `zenity`, GUI `pinentry`) or a new terminal window, and store it
+  directly. The agent only gets metadata back (`{"name", "state", "stored": true}` or
+  `{"cancelled": true}`), never the value, its length or a hash. `--enable`/`--gate` set the
+  reference up for use in the same step; `--surface ui` opens the dashboard's fulfill page instead.
+- **Wall-clock approvals.** `portunus approve <name> --ttl 2h` (also `90s`, `30m`, `1d`) grants a
+  time window instead of audit-clock ticks. A bare number keeps its old meaning.
+- **`drop --keep-whitespace`**, implied by `--kind password`: only the final newline is removed,
+  so a password with leading or trailing spaces is stored exactly.
+
 - **Neon Postgres liveness + role-password rotation (PANT-1120, #209).** New `neon` liveness probe
   connects with each stored connection string and runs `SELECT 1`. SQLSTATE class 28 (`28P01`
   password authentication failed) reads `dead`, and network, TLS and endpoint errors read

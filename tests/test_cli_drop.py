@@ -298,3 +298,22 @@ def test_drop_interactive_eof_is_caught_cleanly_not_a_raw_traceback(home, monkey
 
     from portunus import Registry
     assert "shared-test" not in Registry()
+
+
+def test_drop_kind_password_keeps_surrounding_whitespace(home, monkeypatch, capsys):
+    """A password may really start/end with a space: --kind password (or
+    --keep-whitespace) removes only the line terminator (PANT-1119)."""
+    from portunus.localvault import LocalEncryptedBackend
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(f"  {SECRET} \r\n"))
+    assert main(["drop", "pw", "dostal-pw", "--kind", "password", "--stdin"]) == 0
+    assert LocalEncryptedBackend().access("dostal-pw") == f"  {SECRET} "
+
+
+def test_drop_keep_whitespace_flag_value_file(home, capsys):
+    from portunus.localvault import LocalEncryptedBackend
+
+    value_file = home / "value.txt"
+    value_file.write_text(f" {SECRET}\t\n")
+    assert main(["drop", "pw", "dostal-pw", "--keep-whitespace", "--value-file", str(value_file)]) == 0
+    assert LocalEncryptedBackend().access("dostal-pw") == f" {SECRET}\t"
