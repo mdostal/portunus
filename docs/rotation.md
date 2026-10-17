@@ -35,6 +35,7 @@ new one).
 | `github` (GitHub App user token, `ghu_`/`ghr_`) | Expiring user-to-server token | not applicable | Rotated by the OAuth refresh grant — store the bundle via `portunus oauth store` and the `oauth` adapter handles it. |
 | `github` (installation token, `ghs_`) | GitHub App installation token | not applicable | GitHub expires it after 1 hour; it's re-minted from the App's private key. Nothing to rotate. |
 | `github` (App private key) | GitHub App private key (PEM) | **manual** | Generate/delete is UI-only in the App's settings page. |
+| `neon` | Postgres connection string (role password) | **auto** | `NeonRotationAdapter`: reset the role password via the Neon API → store the connection string with only its password replaced → wait for Neon's operations → verify with a real connect + `SELECT 1`. A reset is destructive by design (no add-then-retire path), so it requires `--retire-old`. Needs `neon_project_id`, `neon_branch_id` and `neon_api_key_ref` tags; see [Neon Postgres connection strings](#neon-postgres-connection-strings). Liveness: the `neon` probe. |
 | `stripe` | API key | stub | Not yet implemented. |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
 | `resend` | API key (`re_...`) | **auto** | `ResendRotationAdapter`: create → verify (read-only `GET /api-keys`, sends no email) → store. `--retire-old` **deletes** the old key — Resend has no disable. Needs `tags["resend_api_key_id"]` for `--retire-old`; see [Resend API keys](#resend-api-keys) below. |
@@ -198,6 +199,17 @@ via `portunus rotation run <ref-name> [--retire-old]`. The reference must have:
 - `provider=gcp` in its registry entry
 - `tags["iam_account"]` set to the full service account email
   (e.g. `sa@project.iam.gserviceaccount.com`)
+- optionally `tags["gcp_key_format"]`, when the stored value isn't the raw key file:
+  - `json` (default) -- the whole key file, as gcloud writes it
+  - `base64` -- base64 of the whole key file (e.g. `*-service-account-base64` refs)
+  - `private_key` -- only the `private_key` PEM, for a key stored as split fields (a
+    `*-private-key` ref next to a `*-client-email` ref). Rotate the private-key ref only:
+    the client email belongs to the service account, so it doesn't change. A bare PEM has
+    no key id, so `tags["gcp_key_id"]` must hold the stored key's `private_key_id` for
+    `--retire-old`; the adapter rewrites it after each successful store.
+
+  Split refs stay split on purpose: their consumers read separate env vars, and merging them
+  into one JSON ref would break every consumer.
 
 Prefer Workload Identity Federation where possible -- WIF credentials require no rotation.
 
@@ -395,6 +407,48 @@ is revoked. A token that is already dead (`invalidToken: true`) cannot authentic
 call, so it can't rotate itself: point `vercel_admin_ref` at a different, valid token, or re-issue
 it by hand. Detecting dead tokens is liveness's job (`liveness.py`, GH #144). Setting
 `vercel_token_ttl_days` and rotating on a schedule keeps tokens from reaching that state.
+
+---
+
+## Neon Postgres connection strings
+
+`NeonRotationAdapter` (provider `neon`) rotates the password inside a stored Neon connection string
+(e.g. `shop-mdostal-database-url-dev`) via `portunus rotation run <ref-name> --retire-old`. API:
+[reset role password](https://api-docs.neon.tech/reference/resetprojectbranchrolepassword) and
+[get operation](https://api-docs.neon.tech/reference/getprojectoperation). Each Neon branch has its
+own roles and passwords, so a dev and a prod branch are separate references with separate tags.
+
+| Tag | Meaning |
+|---|---|
+| `neon_project_id` | **Required.** The Neon project id (Console: Settings → General). |
+| `neon_branch_id` | **Required.** The branch whose role is reset (`br-...`; Console: Branches). |
+| `neon_api_key_ref` | **Required.** Name of another reference holding a Neon API key with access to the project. The connection string itself can't call the Neon API. |
+| `neon_role_name` | Optional. Defaults to the connection string's user; if set it must match it, or the adapter refuses before resetting anything. |
+
+Phases:
+
+1. **reset**: `POST /projects/{project_id}/branches/{branch_id}/roles/{role}/reset_password`
+   with the API key. The response carries the new password once. `423 Locked` and `503`, which
+   Neon documents as safe to retry, are retried twice.
+2. **store**: the stored connection string with only the password replaced. Host (including a
+   `-pooler` suffix), database and query string (`sslmode`, `channel_binding`) are kept. It is
+   written to the local vault straight away, before verifying, because Neon retires the old
+   password as soon as it applies the reset.
+3. **wait**: every operation the reset returned is polled
+   (`GET /projects/{project_id}/operations/{id}`) until `finished`. Neon says the old password
+   "remains valid until last operation finishes" and the new one is ready only then.
+4. **verify**: a real connect + `SELECT 1` with the new string, retried for a few seconds.
+
+**`--retire-old` is required.** There is no way to add a second password and retire the old one
+later, so Portunus's non-destructive default can't hold. The flag acknowledges that every consumer
+holding the old string stops working once Neon applies the reset, and the reset also drops open
+connections to the branch. If a step after the reset fails, the error says the new string **is
+stored**: don't re-run blindly, check the branch in the Neon Console first. The reference must live
+in the local backend, which is checked before the reset.
+
+**Liveness.** A password Neon rotated server-side (the 2026-10-16 `shop-mdostal-database-url-dev`
+incident) is caught by the `neon` liveness probe, not by this adapter: `portunus liveness check`
+connects with the stored string and runs `SELECT 1`. See [liveness.md](liveness.md).
 
 ---
 

@@ -9,6 +9,7 @@ Portunus exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (M
 - Discovery and list tools return metadata only (name, description, state, tags).
 - Resolution tools return a **file path** (`portunus_resolve_to_tempfile`) or a **command result** (`portunus_resolve_exec`). The value flows into the command's argv or into a 0600 temp file — it never passes through the tool's return value.
 - `portunus_drop` is the one tool where a value flows *in* (storing a new secret). The return value is metadata only; the value is never echoed back.
+- `portunus_prompt` stores a secret the agent never sees: the human types it into a desktop dialog or terminal window and the tool returns metadata only. Prefer it over `portunus_drop` whenever the human hasn't already pasted the value.
 
 This means an LLM context reading a tool result cannot inadvertently capture or relay a secret.
 
@@ -33,7 +34,7 @@ Supported harnesses today: **Claude Code**, **Codex CLI**.
 **What it does:**
 
 - Registers the MCP server in each harness's MCP config (e.g. Claude Code's `mcpServers` in `settings.json`).
-- Installs Portunus-specific skills (e.g. `portunus-ask`, `portunus-drop`) into the harness's skills directory so agents can invoke them by name.
+- Installs Portunus-specific skills (e.g. `portunus-ask`, `portunus-drop`, `portunus-prompt`) into the harness's skills directory so agents can invoke them by name.
 - Idempotent — safe to re-run any time, including after installing a new harness.
 
 **Limit to one harness:**
@@ -111,6 +112,7 @@ Both tools accept dual addressing: exact `name` (from a prior list/search/previe
 | Tool | Key parameters | Description |
 |---|---|---|
 | `portunus_drop` | `name`, `sm_name`, `value`, `provider?`, `project?`, `env?`, `tags?`, … | Create a new local-vault secret. Lands at `state="dropped"`; call `portunus_state(name, "enabled")` to make it injectable. `value` is the one place a secret flows **in** — never echoed back. |
+| `portunus_prompt` | `name`, `sm_name`, `provider?`, `project?`, `description?`, `enable?`, `gate?`, `confirm?`, `surface?`, `timeout?`, … | Ask the **human** to type the value into a desktop dialog / terminal window; stored directly, never seen by the agent. Blocks until answered. Returns `{"name", "state", "stored": True, "gated", "surface"}`, `{"cancelled": True}` or `{"error"}`. `surface="ui"` opens the dashboard fulfill page and returns `{"pending": True}`. |
 | `portunus_drop_bulk` | `entries: List[dict]` | Create many secrets at once. Each entry takes the same fields as `portunus_drop`. Returns `{"created": [names], "failed": [{"name", "error"}]}`. |
 | `portunus_state` | `name: str`, `state: str` | Change a reference's lifecycle state. Valid states: `enabled`, `locked`, `dropped`, `revoked`, `requested`. |
 

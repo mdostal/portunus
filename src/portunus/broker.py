@@ -15,6 +15,7 @@ Every decision is written to the audit chain.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
@@ -176,13 +177,19 @@ class Broker:
         self.audit.append("gate", ref.sm_name, "required" if on else "off")
         return ref
 
-    def approve(self, name: str, ttl: int = 3, approver: Optional[str] = None) -> Path:
-        """Grant a time-boxed approval (measured in audit-clock ticks)."""
+    def approve(self, name: str, ttl: int = 3, approver: Optional[str] = None,
+                ttl_seconds: Optional[int] = None) -> Path:
+        """Grant a time-boxed approval. By default it lasts `ttl` audit-clock
+        ticks; pass `ttl_seconds` instead for a wall-clock window (e.g. a
+        two-hour sudo session), which isn't capped by access count."""
         ref = self.registry.require(name)
         approver = approver or os.environ.get("USER", "unknown")
-        now = self._clock_now()
         token = self.approvals_dir / name
-        token.write_text(f"approved_by={approver} exp={now + ttl}\n")
+        if ttl_seconds is not None:
+            expiry = f"exp_at={int(time.time()) + int(ttl_seconds)}"
+        else:
+            expiry = f"exp={self._clock_now() + ttl}"
+        token.write_text(f"approved_by={approver} {expiry}\n")
         os.chmod(token, 0o600)
         self.audit.append("approve", ref.sm_name, f"approved:{approver}")
         return token
@@ -192,13 +199,20 @@ class Broker:
         if not token.exists():
             return False
         exp = 0
+        exp_at = None
         for part in token.read_text().split():
-            if part.startswith("exp="):
-                try:
-                    exp = int(part[4:])
-                except ValueError:
-                    exp = 0
-        if exp >= self._clock_now():
+            key, _, raw = part.partition("=")
+            try:
+                if key == "exp":
+                    exp = int(raw)
+                elif key == "exp_at":
+                    exp_at = int(raw)
+            except ValueError:
+                pass
+        if exp_at is not None:
+            if time.time() <= exp_at:
+                return True
+        elif exp >= self._clock_now():
             return True
         token.unlink(missing_ok=True)
         return False

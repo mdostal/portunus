@@ -390,3 +390,115 @@ def test_cli_rotation_run_unknown_ref_exits_nonzero(home, capsys):
     from portunus.cli import main
     rc = main(["rotation", "run", "no-such-ref"])
     assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# tags["gcp_key_format"]: base64 and split private_key storage
+# ---------------------------------------------------------------------------
+
+class _FakeRegistry:
+    def __init__(self, name, tags):
+        self.tags = {name: dict(tags)}
+
+    def __contains__(self, name):
+        return name in self.tags
+
+    def retag(self, name, *, tags=None, **_):
+        self.tags[name] = dict(tags)
+
+
+def _b64(obj) -> str:
+    import base64
+    return base64.b64encode(json.dumps(obj).encode()).decode()
+
+
+def test_base64_format_stores_base64_of_key_file(home):
+    import base64
+    from portunus.localvault import LocalEncryptedBackend
+    local = LocalEncryptedBackend()
+    ref = _FakeRef()
+    ref.tags["gcp_key_format"] = "base64"
+
+    runner, _ = _make_runner()
+    GCPServiceAccountKeyRotationAdapter(runner=runner, local_backend=local).rotate(ref)
+
+    stored = local.access("ffe-cicd-sa-key")
+    assert json.loads(base64.b64decode(stored)) == FAKE_NEW_KEY
+
+
+def test_base64_format_retire_old_decodes_old_key_id(home):
+    from portunus.localvault import LocalEncryptedBackend
+    local = LocalEncryptedBackend()
+    local.store("ffe-cicd-sa-key", _b64(FAKE_OLD_KEY))
+    ref = _FakeRef()
+    ref.tags["gcp_key_format"] = "base64"
+
+    runner, calls = _make_runner()
+    result = GCPServiceAccountKeyRotationAdapter(runner=runner, local_backend=local).rotate(
+        ref, retire_old=True
+    )
+
+    disable_calls = [c for c in calls if "disable" in c]
+    assert len(disable_calls) == 1 and _FAKE_OLD_KEY_ID in disable_calls[0]
+    assert result.retired_old is True
+
+
+def test_private_key_format_stores_only_pem_and_records_key_id(home):
+    from portunus.localvault import LocalEncryptedBackend
+    local = LocalEncryptedBackend()
+    ref = _FakeRef(name="event-api-dev-firebase-private-key", sm_name="event-api-dev-firebase-private-key")
+    ref.tags["gcp_key_format"] = "private_key"
+    registry = _FakeRegistry(ref.name, ref.tags)
+
+    runner, calls = _make_runner()
+    GCPServiceAccountKeyRotationAdapter(
+        runner=runner, local_backend=local, registry=registry
+    ).rotate(ref)
+
+    assert local.access(ref.sm_name) == FAKE_NEW_KEY["private_key"]
+    assert registry.tags[ref.name]["gcp_key_id"] == _FAKE_NEW_KEY_ID
+    assert registry.tags[ref.name]["iam_account"] == SA_EMAIL
+    assert [c for c in calls if "disable" in c] == []
+
+
+def test_private_key_format_retire_old_uses_gcp_key_id_tag(home):
+    from portunus.localvault import LocalEncryptedBackend
+    local = LocalEncryptedBackend()
+    local.store("ffe-cicd-sa-key", FAKE_OLD_KEY["private_key"])
+    ref = _FakeRef()
+    ref.tags.update(gcp_key_format="private_key", gcp_key_id=_FAKE_OLD_KEY_ID)
+
+    runner, calls = _make_runner()
+    result = GCPServiceAccountKeyRotationAdapter(runner=runner, local_backend=local).rotate(
+        ref, retire_old=True
+    )
+
+    disable_calls = [c for c in calls if "disable" in c]
+    assert len(disable_calls) == 1 and _FAKE_OLD_KEY_ID in disable_calls[0]
+    assert result.retired_old is True
+
+
+def test_private_key_format_retire_old_without_key_id_refuses_before_gcloud(home):
+    from portunus.localvault import LocalEncryptedBackend
+    local = LocalEncryptedBackend()
+    local.store("ffe-cicd-sa-key", FAKE_OLD_KEY["private_key"])
+    ref = _FakeRef()
+    ref.tags["gcp_key_format"] = "private_key"
+
+    runner, calls = _make_runner()
+    with pytest.raises(RotationAdapterError, match="gcp_key_id"):
+        GCPServiceAccountKeyRotationAdapter(runner=runner, local_backend=local).rotate(
+            ref, retire_old=True
+        )
+    assert calls == []
+    assert local.access("ffe-cicd-sa-key") == FAKE_OLD_KEY["private_key"]
+
+
+def test_unknown_key_format_refuses_before_gcloud(home):
+    ref = _FakeRef()
+    ref.tags["gcp_key_format"] = "pkcs12"
+
+    runner, calls = _make_runner()
+    with pytest.raises(RotationAdapterError, match="gcp_key_format"):
+        GCPServiceAccountKeyRotationAdapter(runner=runner).rotate(ref)
+    assert calls == []

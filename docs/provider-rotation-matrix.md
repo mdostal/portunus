@@ -232,6 +232,47 @@ DELETE https://www.grafana.com/api/v1/tokens/{tokenId}?region={region}
 
 ---
 
+### Neon Postgres connection string (role password)
+
+**Added**: 2026-10-17 (PANT-1120). Neon was not in this vault when the matrix was first researched
+on 2026-09-14; it arrived with the `shop-mdostal-com` project.
+
+**Vault examples**: `shop-mdostal-database-url`, `shop-mdostal-database-url-dev` (one per Neon
+branch, `shop-mdostal-com` project)
+
+**Credential type**: A full `postgresql://role:password@ep-....neon.tech/db?sslmode=require` connection
+string. Only the role password rotates; it is per branch, so prod and dev rotate independently.
+
+**Source**: https://api-docs.neon.tech/reference/resetprojectbranchrolepassword,
+https://api-docs.neon.tech/reference/getprojectoperation
+
+**Concrete call sequence**:
+
+```bash
+# 1. Reset the role password (destructive: the old one stops working once
+#    the returned operations finish; open connections are dropped)
+POST https://console.neon.tech/api/v2/projects/{project_id}/branches/{branch_id}/roles/{role_name}/reset_password
+Authorization: Bearer <neon-api-key>
+# returns {role: {password, ...}, operations: [{id, status}, ...]}
+
+# 2. Store the connection string with the new password in ARCA
+
+# 3. Wait until every returned operation is "finished"
+GET https://console.neon.tech/api/v2/projects/{project_id}/operations/{operation_id}
+
+# 4. Verify: connect with the new string and run SELECT 1
+```
+
+There is no old-credential retirement step: the reset itself retires the old password. Portunus's
+`NeonRotationAdapter` therefore requires `--retire-old` as an acknowledgement, the same posture as a
+GitHub OAuth App token reset.
+
+**Liveness**: the `neon` liveness probe connects with each stored string and runs `SELECT 1`. A
+password changed server-side (the 2026-10-16 incident on `shop-mdostal-database-url-dev`) reads
+`dead` (SQLSTATE `28P01`).
+
+---
+
 ## `manual` — positively confirmed absence of any programmatic rotation path for this credential type
 
 ---

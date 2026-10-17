@@ -9,7 +9,8 @@ exercised them.
 ## Liveness checks
 
 A liveness adapter makes one cheap, authenticated, read-only call against
-the provider's own API and classifies the HTTP status:
+the provider's own API and classifies the HTTP status (the `neon` probe
+connects to the database instead; see the table below):
 
 | Verdict | Meaning |
 |---|---|
@@ -92,6 +93,7 @@ provider's API docs and a real key.
 | `ticketmaster` | `GET https://app.ticketmaster.com/discovery/v2/classifications.json?size=1&apikey=<key>` | 401 only | Probes `*-consumer-key` only. 403 can mean a working key without the Discovery product, so it's `unknown`. The consumer secret is never sent: `unknown`. |
 | `seatgeek` | `GET https://api.seatgeek.com/2/taxonomies?client_id=<id>` | 401, 403 | Probes `*-client-id` only. An invalid id gets 403 `Invalid client credentials` (code 40302). The secret is only valid next to its id: `unknown`. |
 | `meetup` | none | n/a | Every Meetup reference reads `unknown` with the reason, and sweeps skip them. API-key auth was retired on 2019-08-15. The GraphQL API answers a bad token with HTTP 200 (error only in the body, which liveness never reads). Client credentials only work inside an OAuth exchange. |
+| `neon` | connect + `SELECT 1` with the stored Postgres connection string | SQLSTATE class 28 (`28P01`, `28000`) | Not HTTP. Uses Portunus's own minimal Postgres client (`portunus.pgwire`, no driver to install): TLS with certificate and hostname verification, SCRAM-SHA-256 (with channel binding when offered) / MD5 / cleartext. Network/TLS errors, a suspended or deleted endpoint, or a missing database read `unknown`. Results show only `host/database` and the SQLSTATE, never the user, password or server message. Works for any Postgres URL; set `liveness_provider=neon` on a reference registered under another provider. Caught the 2026-10-16 server-side password rotation (PANT-1120). |
 
 The other provider sub-issues of #141 add their own: Vercel (#144), Autumn (#143), Clerk (#145)
 and Convex (#142).
