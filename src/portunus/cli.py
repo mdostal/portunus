@@ -19,13 +19,14 @@ import sys
 import tempfile
 import time
 import webbrowser
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import __version__
 from . import agent_setup
 from . import health as health_mod
+from . import prompt as prompt_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
@@ -885,6 +886,20 @@ def cmd_session_remove(args) -> int:
     return 0
 
 
+def _clean_value(raw: str, keep_whitespace: bool) -> str:
+    """Default: trim surrounding whitespace (pasted keys often carry a stray
+    space or newline). With keep_whitespace (--keep-whitespace, implied by
+    --kind password) only the single line terminator stdin/a file adds is
+    removed -- a password may really start or end with a space."""
+    if not keep_whitespace:
+        return raw.strip()
+    if raw.endswith("\r\n"):
+        return raw[:-2]
+    if raw.endswith("\n"):
+        return raw[:-1]
+    return raw
+
+
 def cmd_drop(args) -> int:
     """Put a secret INTO Arca. Harness-side only: the value never enters the
     LLM chat, ~/.claude, or a provider — it comes from stdin, a local file
@@ -902,11 +917,12 @@ def cmd_drop(args) -> int:
             "drop requires the local-encrypted backend "
             "(unset PORTUNUS_BACKEND or set it to unset/local)"
         )
+    keep = args.keep_whitespace or args.kind == "password"
     if args.stdin:
-        value = sys.stdin.readline().strip()
+        value = _clean_value(sys.stdin.readline(), keep)
     elif args.value_file:
         try:
-            value = Path(args.value_file).read_text().strip()
+            value = _clean_value(Path(args.value_file).read_text(), keep)
         except OSError as exc:
             return _err(f"cannot read --value-file: {exc}")
     else:
@@ -918,8 +934,8 @@ def cmd_drop(args) -> int:
         # twice, since masked input has zero visual feedback -- the same
         # reason passwd/ssh-keygen confirm twice.
         try:
-            value = getpass.getpass("value: ").strip()
-            confirm = getpass.getpass("value (confirm): ").strip()
+            value = _clean_value(getpass.getpass("value: "), keep)
+            confirm = _clean_value(getpass.getpass("value (confirm): "), keep)
         except EOFError:
             return _err(
                 "no interactive input available -- use --stdin or --value-file "
@@ -951,6 +967,43 @@ def cmd_drop(args) -> int:
         f"run `portunus state {ref.name} enabled` to allow injection)"
     )
     return 0
+
+
+def cmd_prompt(args) -> int:
+    """Ask the HUMAN for a secret through an out-of-band surface (desktop
+    password dialog, a fresh terminal window, pinentry, or the dashboard)
+    and store it directly -- built for agents, which can run this but never
+    see the value. Prints one JSON object of metadata only: {"name",
+    "state", "stored": true}, {"cancelled": true} or {"error"}. Exit codes:
+    0 stored (or pending, for --surface ui), 2 cancelled, 1 error."""
+    registry, _, broker, resolver = _build()
+    try:
+        tags = _parse_tags(args.tags) if args.tags else {}
+    except ValueError as exc:
+        return _err(str(exc))
+    req = prompt_mod.PromptRequest(
+        name=args.name, sm_name=args.sm_name, scope=args.scope, kind=args.kind,
+        org=args.org, provider=args.provider, project=args.project, env=args.env,
+        tags=tags, description=args.description, purpose=args.purpose,
+        group=args.group, repo=args.repo, enable=args.enable, gate=args.gate,
+        confirm=args.confirm,
+    )
+    result = prompt_mod.run_prompt(
+        req, registry, broker, resolver.backend, surface=args.surface,
+        open_ui=_open_ui, timeout=args.timeout,
+    )
+    print(json.dumps(result))
+    if "error" in result:
+        return 1
+    if result.get("cancelled"):
+        return 2
+    return 0
+
+
+def cmd_tty_entry(args) -> int:
+    """Internal: the masked prompt that `prompt` runs inside a spawned
+    terminal window. Not meant to be called directly."""
+    return prompt_mod.tty_entry(args.fifo, args.banner)
 
 
 def cmd_drop_bulk(args) -> int:
@@ -1088,13 +1141,39 @@ def cmd_gate(args) -> int:
     return 0
 
 
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_ttl(raw: str):
+    """`--ttl 3` keeps the original meaning (audit-clock ticks); `--ttl 90s`,
+    `30m`, `2h`, `1d` is wall-clock time. Returns ("ticks"|"seconds", n)."""
+    raw = raw.strip().lower()
+    if raw.isdigit():
+        return "ticks", int(raw)
+    if len(raw) >= 2 and raw[-1] in _DURATION_UNITS and raw[:-1].isdigit():
+        return "seconds", int(raw[:-1]) * _DURATION_UNITS[raw[-1]]
+    raise ValueError(f"invalid --ttl {raw!r}: use a tick count (3) or a duration (90s, 30m, 2h, 1d)")
+
+
 def cmd_approve(args) -> int:
     _, _, broker, _ = _build()
     try:
-        broker.approve(args.name, ttl=args.ttl)
+        unit, amount = _parse_ttl(str(args.ttl))
+    except ValueError as exc:
+        return _err(str(exc))
+    if amount <= 0:
+        return _err("--ttl must be positive")
+    try:
+        if unit == "seconds":
+            broker.approve(args.name, ttl_seconds=amount)
+        else:
+            broker.approve(args.name, ttl=amount)
     except KeyError:
         return _err(f"unknown reference: {args.name}")
-    print(f"approved {args.name} for the next {args.ttl} access(es)")
+    if unit == "seconds":
+        print(f"approved {args.name} for {args.ttl} (wall-clock)")
+    else:
+        print(f"approved {args.name} for the next {amount} access(es)")
     return 0
 
 
@@ -1926,9 +2005,6 @@ def cmd_ui_open(args) -> int:
     only ever constructs a URL and calls webbrowser.open() -- the deep
     link (?fulfill=<name>) points at Story 03's own pre-fill wiring in the
     dashboard, which is where a human would actually type the value."""
-    base_url = os.environ.get("PORTUNUS_UI_URL", _DEFAULT_UI_URL)
-    url = base_url
-
     if args.fulfill:
         registry, _, _, _ = _build()
         ref = registry.get(args.fulfill)
@@ -1938,17 +2014,25 @@ def cmd_ui_open(args) -> int:
             return _err(
                 f"{args.fulfill!r} is not a pending request (state={ref.state})"
             )
-        sep = "&" if "?" in url else "?"
-        url = f"{url}{sep}fulfill={args.fulfill}"
-
-    if not _ui_reachable(base_url):
-        return _err(
-            f"no local UI is running at {base_url} -- start one: cd ui && npm run dev"
-        )
-
-    webbrowser.open(url)
-    print(f"opened {url}")
+    result = _open_ui(args.fulfill or "")
+    if "error" in result:
+        return _err(result["error"])
+    print(f"opened {result['url']}")
     return 0
+
+
+def _open_ui(fulfill: str = "") -> dict:
+    """Open the dashboard (optionally at the ?fulfill=<name> deep link).
+    Returns {"url"} or {"error"}; shared by `ui open` and `prompt --surface ui`."""
+    base_url = os.environ.get("PORTUNUS_UI_URL", _DEFAULT_UI_URL)
+    url = base_url
+    if fulfill:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}fulfill={quote(fulfill)}"
+    if not _ui_reachable(base_url):
+        return {"error": f"no local UI is running at {base_url} -- start one: cd ui && npm run dev"}
+    webbrowser.open(url)
+    return {"url": url}
 
 
 def _view_to_dict(view) -> dict:
@@ -2750,6 +2834,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="override which backend this one reference uses (default: '' -- follow the "
              "project's VaultBinding/PORTUNUS_BACKEND as normal)",
     )
+    dr.add_argument(
+        "--keep-whitespace", action="store_true",
+        help="keep leading/trailing whitespace in the value (only the final newline is "
+             "removed); implied by --kind password",
+    )
     src = dr.add_mutually_exclusive_group(required=False)
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument(
@@ -2758,6 +2847,43 @@ def build_parser() -> argparse.ArgumentParser:
              "given: prompt interactively, masked, twice)",
     )
     dr.set_defaults(func=cmd_drop)
+
+    pr = sub.add_parser(
+        "prompt",
+        help="have the HUMAN enter a secret in a dialog/terminal window; the caller only "
+             "gets metadata back (for agents)",
+    )
+    pr.add_argument("name", help="reference name, e.g. sudo-password")
+    pr.add_argument("sm_name", help="vault key, e.g. dostal-sudo")
+    pr.add_argument("--scope", default="")
+    pr.add_argument("--kind", default="password",
+                    help="default password (leading/trailing whitespace is kept)")
+    pr.add_argument("--org", default="")
+    pr.add_argument("--provider", default="")
+    pr.add_argument("--project", default="")
+    pr.add_argument("--env", default="")
+    pr.add_argument("--tags", default="", help="comma-separated k=v pairs")
+    pr.add_argument("--description", default="", help="shown to the human in the prompt")
+    pr.add_argument("--purpose", default="")
+    pr.add_argument("--group", default="")
+    pr.add_argument("--repo", default="")
+    pr.add_argument("--enable", action="store_true",
+                    help="set state=enabled after storing (default: lands state=dropped)")
+    pr.add_argument("--gate", action="store_true",
+                    help="require `portunus approve` before each use")
+    pr.add_argument("--confirm", action="store_true",
+                    help="ask twice in dialog surfaces (terminal surfaces always ask twice)")
+    pr.add_argument("--surface", default="auto", choices=("auto",) + prompt_mod.SURFACES,
+                    help="input surface (default auto: first available desktop dialog, "
+                         "then a terminal window). ui opens the dashboard and returns pending")
+    pr.add_argument("--timeout", type=int, default=prompt_mod.DEFAULT_TIMEOUT,
+                    help="seconds to wait for the human (default %(default)s)")
+    pr.set_defaults(func=cmd_prompt)
+
+    tty = sub.add_parser("_tty-entry")
+    tty.add_argument("fifo")
+    tty.add_argument("--banner", default="")
+    tty.set_defaults(func=cmd_tty_entry)
 
     drb = sub.add_parser(
         "drop-bulk",
@@ -2781,7 +2907,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     ap = sub.add_parser("approve", help="grant a time-boxed approval for a gated reference")
     ap.add_argument("name")
-    ap.add_argument("--ttl", type=int, default=3)
+    ap.add_argument(
+        "--ttl", default="3",
+        help="a tick count (default 3: audit-clock ticks, roughly accesses) or a wall-clock "
+             "duration such as 90s, 30m, 2h, 1d",
+    )
     ap.set_defaults(func=cmd_approve)
 
     gr = sub.add_parser(
@@ -3238,7 +3368,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # write would be pointless at best, protocol-adjacent noise at worst);
     # `update` already does its own live check -- a stale passive notice on
     # top of it would be confusing, not helpful.
-    skip_notify = args.cmd in ("mcp", "update", "health")
+    skip_notify = args.cmd in ("mcp", "update", "health", "prompt", "_tty-entry")
     if not args.home:
         rc = args.func(args)
         if not skip_notify:

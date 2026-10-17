@@ -663,6 +663,59 @@ def portunus_drop(
 
 
 @mcp.tool()
+def portunus_prompt(
+    name: str,
+    sm_name: str,
+    provider: str = "",
+    project: str = "",
+    org: str = "",
+    env: str = "",
+    kind: str = "password",
+    tags: Optional[dict] = None,
+    description: str = "",
+    purpose: str = "",
+    group: str = "",
+    enable: bool = False,
+    gate: bool = False,
+    confirm: bool = False,
+    surface: str = "auto",
+    timeout: int = 300,
+) -> dict:
+    """Ask the HUMAN to type a secret into Portunus directly -- use this
+    instead of portunus_drop whenever the human hasn't already pasted the
+    value to you (a sudo password, a master credential). Opens a
+    human-facing surface on their desktop (password dialog, then a fresh
+    terminal window as fallback) and stores what they enter straight into
+    the local vault; the value never enters your context.
+
+    Blocks until the human answers, cancels, or `timeout` seconds pass.
+    Returns metadata only: {"name", "state", "stored": True, "gated",
+    "surface"}, {"cancelled": True} or {"error"} -- never the value, its
+    length or a hash. Lands state="dropped" unless enable=True; gate=True
+    additionally requires `portunus approve` before each use. `description`
+    is shown to the human in the prompt, so say what it's for.
+    surface="ui" instead opens the dashboard's fulfill deep link and
+    returns {"pending": True} immediately (the human finishes in the
+    browser). Fails with an error, not a hang, when there is no desktop
+    session to show a prompt on."""
+    from . import prompt as prompt_mod
+    from .cli import _open_ui
+
+    registry, _audit, broker, resolver = _build()
+    if surface != "auto" and surface not in prompt_mod.SURFACES:
+        return {"error": f"unknown surface: {surface}"}
+    req = prompt_mod.PromptRequest(
+        name=name, sm_name=sm_name, kind=kind, org=org, provider=provider,
+        project=project, env=env, tags=dict(tags or {}), description=description,
+        purpose=purpose, group=group, enable=enable, gate=gate, confirm=confirm,
+    )
+    return prompt_mod.run_prompt(
+        req, registry, broker, resolver.backend, surface=surface,
+        open_ui=_open_ui, timeout=timeout,
+    )
+
+
+@mcp.tool()
 def portunus_drop_bulk(entries: List[dict]) -> dict:
     """Create many LOCAL-VAULT secrets in one call -- the bulk counterpart
     to portunus_drop, for cases like importing ~100 candidate passwords/

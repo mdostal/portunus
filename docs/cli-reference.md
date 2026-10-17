@@ -60,11 +60,40 @@ portunus drop <name> <sm_name> [--stdin | --value-file <path>] [flags]
 | `--repo` | Git repo that consumes this secret |
 | `--source-files` | Comma-separated file paths in that repo |
 | `--backend` | Per-reference backend override (local/gcp/aws/…) |
+| `--keep-whitespace` | Keep leading/trailing whitespace (only the final newline is removed). Implied by `--kind password` |
 
 **Examples:**
 ```sh
 echo "sk-ant-..." | portunus drop anthropic-key dostal-anthropic --provider anthropic --project dostal --stdin
 portunus drop stripe-live dostal-stripe-live --value-file /tmp/stripe.txt --project dostal.com --env prod
+```
+
+---
+
+### `prompt`
+
+Have the **human** enter a secret through an out-of-band surface and store it directly. Built for agents: the caller can run it from a non-interactive tool channel but only ever gets metadata back, never the value, its length or a hash. Prints one JSON object.
+
+```
+portunus prompt <name> <sm_name> [--provider ..] [--project ..] [--kind password] [--enable] [--gate] [--confirm] [--surface auto|kdialog|zenity|osascript|pinentry|konsole|gnome-terminal|xterm|terminal-app|ui] [--timeout 300]
+```
+
+| Flag | Description |
+|---|---|
+| `--kind` | Default `password`, which keeps surrounding whitespace |
+| `--description` | Shown to the human in the prompt |
+| `--enable` | Set `state=enabled` after storing (default: lands `state=dropped`) |
+| `--gate` | Require `portunus approve` before each use |
+| `--confirm` | Ask twice in dialog surfaces (terminal windows always ask twice) |
+| `--surface` | `auto` (default) picks the first available: `osascript` on macOS; `kdialog`, `zenity`, GUI `pinentry`, then a terminal window on Linux (needs `DISPLAY`/`WAYLAND_DISPLAY`). `ui` creates a `requested` placeholder and opens the dashboard's fulfill page |
+| `--timeout` | Seconds to wait for the human |
+
+Plus the metadata flags from `drop` (`--org`, `--project`, `--env`, `--scope`, `--tags`, `--purpose`, `--group`, `--repo`).
+
+Results: `{"name", "state", "stored": true, "gated", "surface"}` (exit 0), `{"cancelled": true}` (exit 2), `{"error": ...}` (exit 1), or for `--surface ui` `{"name", "state": "requested", "stored": false, "pending": true, "url"}` (exit 0). A terminal window passes the value back to `prompt` over a FIFO in a private 0700 directory, never argv, env or a regular file. MCP form elicitation is not a surface, because most clients route the answer through the model.
+
+```sh
+portunus prompt sudo-pw dostal-sudo --provider linux --description "sudo on workstation" --enable --gate
 ```
 
 ---
@@ -389,10 +418,10 @@ portunus gate <name> [--off]
 Grant a time-boxed approval for a gated reference.
 
 ```
-portunus approve <name> [--ttl <N>]
+portunus approve <name> [--ttl <N | duration>]
 ```
 
-`--ttl` is the number of accesses to allow (default: 3).
+`--ttl` is either a number of audit-clock ticks (roughly accesses; default 3) or a wall-clock duration such as `90s`, `30m`, `2h` or `1d`. A duration isn't capped by access count, so `portunus approve sudo-pw --ttl 2h` gives a two-hour window.
 
 ---
 
