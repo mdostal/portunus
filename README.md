@@ -471,6 +471,37 @@ entry naming a reference outside the current result set is marked `(unresolved)`
 silently dropped. The Project Explorer UI tab renders the identical tree client-side from
 the same data.
 
+### `portunus impact` — what a rotation actually touches
+
+`tree` shows structure. `impact` answers "if I rotate this, what breaks?" for one reference. It
+follows `related` transitively in both directions and lists every reference it reaches, along with
+the projects, repos, `source_files`, envs and `injected_as` targets they're wired into:
+
+```bash
+$ portunus impact supabase-service-key
+rotating supabase-service-key touches 3 other references in 3 projects (edge-fns, project-y, worker)
+
+supabase-service-key
+    project=project-y  env=prod  repo=project-y-api  group=project-y/supabase/auth  state=enabled
+    injected_as prod=env:SUPABASE_SERVICE_KEY
+    file project-y-api:docker-compose.prod.yml
+  supabase-jwt-secret  (related)
+    edge-fn-key  (related)
+        file edge-fns:.env.production
+  worker-supabase-key  (lists supabase-service-key as related)
+      injected_as prod=file:/run/secrets/supabase
+...
+suggested related -- NOT linked, not walked above; ...
+  supabase-anon-key  [shared source file: docker-compose.prod.yml; shared group parent: project-y/supabase; same repo: project-y-api]
+```
+
+The traversal only follows the human-curated `related` list. The *suggested related* block is
+derived on read from a shared source file, group, group parent or repo. It is never written, never
+walked and never counted, so `related` stays a list a human chose. `rotation run` prints the same
+summary before it runs. When a real rotation reaches other references, it asks for confirmation
+(or needs `--yes` when there's no terminal). The UI detail drawer shows the same tree above the
+Rotate buttons.
+
 ### `repo`/`source_files` — which git repo (and file) actually consumes a secret
 
 A real gap, found by looking at the real data: `group` already captures a rough service/env
@@ -840,6 +871,7 @@ below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 | `portunus_health(shallow=False)` | Read-only deep self-check, same as `portunus health --json`; `shallow=True` is liveness only |
 | `portunus_list(project)` | Every reference's metadata for a project — never a value |
 | `portunus_tree(project="")` | Group hierarchy + related links, same shape as `portunus tree --json` |
+| `portunus_impact(name, max_depth=None, suggest=True)` | Blast radius of a reference (what a rotation touches), same shape as `portunus impact --json` — read-only, never a value |
 | `portunus_ask_preview(request)` | What a plain-language fetch request would resolve to — metadata only, previews, never injects |
 | `portunus_bindings_show(project="")` | Configured per-project vault bindings (backend/sync_mode/account/WIF audience) |
 | `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |

@@ -7,6 +7,7 @@ import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
 import LeakBadge from "./LeakBadge";
 import InjectControls from "./InjectControls";
+import ImpactPanel from "./ImpactPanel";
 
 /** {a: "1", b: "2"} -> "a=1,b=2" -- the same k=v,k2=v2 convention tags/
  * injected_as already use everywhere else (AddSecretForm, /api/retag). A
@@ -469,6 +470,10 @@ export default function DetailDrawer({
       )}
 
       <InjectControls reference={reference} />
+
+      {/* Blast radius right above Rotate…/Auto-rotate… (PANT-1122): what
+          else a rotation of this reference touches, before the click. */}
+      <ImpactPanel reference={reference} allRefs={allRefs} onSelect={onSelectRelated} />
 
       {/* Rotate falls back to the add-secret human-entry path rather than a
           hidden server-side regenerate shortcut -- no backend support for

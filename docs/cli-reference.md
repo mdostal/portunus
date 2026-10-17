@@ -194,6 +194,26 @@ portunus tree --project ffe-cicd --json
 
 ---
 
+### `impact`
+
+Show a reference's blast radius: what a rotation of it touches. Metadata only, never a value, never a write.
+
+```
+portunus impact <name> [--depth N] [--no-suggest] [--json]
+```
+
+Follows `related` transitively in both directions: references this one lists, and references that list it. For every reference it reaches it shows the `project`, `env`, `group`, `repo`, `source_files` and `injected_as` targets, then a flat summary of the projects, repos, files, envs and injection targets involved. A `related` name that is not in the registry is listed as unresolved. `--depth 1` stops at direct links.
+
+The command also lists **suggested related** references: ones that share a source file (same repo or project), the same group, a group parent at least two segments deep, or the same repo, but that aren't linked either way. They are shown with their reason. They are never walked, counted or written. To link one, edit `related` (`portunus retag <name> --related a,b,...` replaces the whole list).
+
+**Example:**
+```sh
+portunus impact supabase-service-key
+portunus impact supabase-service-key --depth 1 --json
+```
+
+---
+
 ### `inject`
 
 Resolve a reference by tags and inject its value at a boundary target.
@@ -499,8 +519,10 @@ portunus agent status [--json]
 Run a real rotation for a single reference: create → verify → store cycle. Only works for providers with an `auto` capability adapter.
 
 ```
-portunus rotation run <ref_name> [--retire-old]
+portunus rotation run <ref_name> [--retire-old] [--yes]
 ```
+
+Before anything runs, it prints the blast radius to stderr ("rotating X touches N other references in M projects", see [`impact`](#impact)). When a real (`auto`) rotation reaches other references through `related`, it prints the full tree and asks `continue? [y/N]`. If stdin is not a terminal it exits 1 without rotating. Pass `--yes` to skip the prompt. A reference with no `related` links in either direction never prompts.
 
 `--retire-old` retires the superseded credential after storing the new one. GCP keys are disabled, never deleted in the same call. Resend keys are deleted, because Resend has no disable (see [rotation.md](rotation.md#resend-api-keys)). Google Cloud API keys are deleted too, but Google can undelete them for 30 days (see [rotation.md](rotation.md#google-cloud-api-keys)).
 
