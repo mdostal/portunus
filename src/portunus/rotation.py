@@ -45,6 +45,11 @@ Real adapters:
   it, and (with --retire-old) DELETES the old token -- Vercel has no
   disable. All HTTP goes through the injected `transport` seam.
 
+- `NeonRotationAdapter` resets a Neon Postgres role password through the
+  Neon API, stores the connection string with the new password, waits for
+  Neon to apply it, and verifies it with a real connect + `SELECT 1`. A
+  reset is destructive by design, so it requires --retire-old.
+
 Stub adapters (`StripeRotationAdapter`) still raise unconditionally. A
 future real adapter would authenticate using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
@@ -2390,6 +2395,300 @@ class GitHubRotationAdapter:
         return auth_id
 
 
+# --- Neon Postgres ----------------------------------------------------------
+#
+# The stored credential is a whole connection string; only its password part
+# rotates. Neon's role password reset (researched 2026-10-17 against
+# api-docs.neon.tech, PANT-1120 / portunus#209):
+#   POST /projects/{project_id}/branches/{branch_id}/roles/{role_name}/reset_password
+#   -> {role: {name, password, ...}, operations: [{id, status, ...}]}
+# "The old password remains valid until last operation finishes"; the new one
+# is "ready to use when the last operation finishes" -- poll
+# GET /projects/{project_id}/operations/{operation_id}. The reset also drops
+# open connections to the branch's compute.
+
+NEON_API = "https://console.neon.tech/api/v2"
+_NEON_OP_DONE = ("finished", "skipped")
+_NEON_OP_FAILED = ("failed", "error", "cancelling", "cancelled")
+# Neon documents 423 Locked (another operation in progress) and 503 as
+# always safe to retry, even for a non-idempotent POST.
+_NEON_RETRYABLE = (423, 503)
+
+# (method, url, headers, json_body_or_None, timeout) -> (status, parsed_json_or_{})
+NeonTransport = Callable[[str, str, Dict[str, str], Optional[dict], float], Tuple[int, dict]]
+
+
+def _default_neon_transport(
+    method: str, url: str, headers: Dict[str, str], body: Optional[dict], timeout: float
+) -> Tuple[int, dict]:
+    return _json_http(method, url, headers, body, timeout, "Neon API")
+
+
+def _neon_connect(info, timeout: float) -> None:
+    from . import pgwire
+    pgwire.probe(info, timeout=timeout)
+
+
+class NeonRotationAdapter:
+    """Real Neon Postgres role-password rotation.
+
+    A reset replaces the role's password in place: the old one stops working
+    once Neon's operations finish, so there is no add-new-then-retire path.
+    Same posture as the GitHub OAuth App reset -- the adapter refuses unless
+    the caller passes ``retire_old=True`` (``--retire-old``) to acknowledge
+    it, and the new connection string is STORED FIRST and verified second.
+
+    Phases (in order):
+    1. reset   -- ``POST .../roles/{role}/reset_password`` with the Neon API
+                  key; the response carries the new password, once.
+    2. store   -- the stored connection string with only its password
+                  replaced (host, pooler suffix, database and query string
+                  kept), written to the local backend immediately.
+    3. wait    -- poll every returned operation until ``finished``.
+    4. verify  -- a real connect + ``SELECT 1`` with the new string
+                  (portunus.pgwire), retried briefly while the password
+                  propagates.
+
+    The ref's tags drive the adapter:
+    - ``neon_project_id`` / ``neon_branch_id`` -- required; the branch whose
+      role is reset (Console: Branches -> the branch -> its id ``br-...``).
+    - ``neon_api_key_ref`` -- required; name of another reference holding a
+      Neon API key with access to that project. The connection string itself
+      cannot authenticate to the Neon API.
+    - ``neon_role_name`` -- optional; defaults to the connection string's
+      user, and must match it when set (a reset for another role would store
+      a password that does not belong to the string's user).
+
+    The ref must live in the local backend, checked before the reset: a
+    reset with nowhere to put the result is a lockout. Neither the API key,
+    the password nor the connection string is ever returned, logged, or put
+    in an error message.
+    """
+
+    def __init__(
+        self,
+        transport: Optional[NeonTransport] = None,
+        connector: Optional[Callable[[object, float], None]] = None,
+        local_backend=None,
+        audit=None,
+        sleep: Callable[[float], None] = time.sleep,
+        timeout: float = 30.0,
+        operation_timeout: float = 120.0,
+        verify_attempts: int = 5,
+    ):
+        self._transport = transport or _default_neon_transport
+        self._connector = connector or _neon_connect
+        self._local_backend = local_backend
+        self._audit = audit
+        self._sleep = sleep
+        self._timeout = timeout
+        self._operation_timeout = operation_timeout
+        self._verify_attempts = max(1, verify_attempts)
+
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(self, ref, resolver=None, retire_old: bool = False) -> RotationResult:
+        if ref is None or not hasattr(ref, "sm_name"):
+            raise RotationAdapterError(
+                "Neon rotation needs a registry reference (with tags), not a bare name"
+            )
+        if resolver is None:
+            raise RotationAdapterError(
+                "Neon rotation needs a resolver to read the stored connection string"
+            )
+        ref_name = getattr(ref, "name", ref.sm_name)
+        tags = getattr(ref, "tags", None) or {}
+
+        project_id = tags.get("neon_project_id", "")
+        branch_id = tags.get("neon_branch_id", "")
+        api_key_ref = tags.get("neon_api_key_ref", "")
+        missing = [t for t, v in (("neon_project_id", project_id), ("neon_branch_id", branch_id),
+                                  ("neon_api_key_ref", api_key_ref)) if not v]
+        if missing:
+            raise RotationAdapterError(
+                f"Neon rotation for {ref_name!r} needs tags {', '.join(missing)} -- see "
+                "docs/rotation.md (Neon Postgres connection strings)"
+            )
+        if not retire_old:
+            raise RotationAdapterError(
+                f"Neon password reset for {ref_name!r} invalidates the current password as "
+                "soon as Neon applies it (there is no add-then-retire path) -- re-run with "
+                "--retire-old to acknowledge."
+            )
+        if getattr(ref, "backend", "") not in ("", "local"):
+            raise RotationAdapterError(
+                f"Neon rotation for {ref_name!r}: reference lives in backend {ref.backend!r}, "
+                "but this adapter can only store to the local vault -- refusing before reset, "
+                "which would otherwise leave no valid connection string stored."
+            )
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        role = resolver.resolve_call(
+            "{{secret:%s}}" % api_key_ref,
+            lambda api_key: resolver.resolve_call(
+                "{{secret:%s}}" % ref_name,
+                lambda old_url: self._reset_store_verify(
+                    ref, ref_name, tags, project_id, branch_id, api_key, old_url, local_backend
+                ),
+            ),
+        )
+        return RotationResult(
+            provider="neon",
+            ref_name=ref_name,
+            key_id=f"{branch_id}/{role}",
+            phase="verified",
+            retired_old=True,
+        )
+
+    # --- phases ---------------------------------------------------------------
+
+    def _reset_store_verify(self, ref, ref_name, tags, project_id, branch_id, api_key,
+                            old_url, local_backend) -> str:
+        from . import pgwire
+
+        try:
+            role = pgwire.parse_url(old_url).user
+        except ValueError as exc:
+            raise RotationAdapterError(
+                f"Neon rotation for {ref_name!r}: the stored value is not usable ({exc}) -- "
+                "nothing was reset"
+            ) from None
+        tagged_role = tags.get("neon_role_name", "")
+        if tagged_role and tagged_role != role:
+            raise RotationAdapterError(
+                f"Neon rotation for {ref_name!r}: tags['neon_role_name'] is {tagged_role!r} but "
+                "the stored connection string authenticates as a different role -- nothing "
+                "was reset"
+            )
+
+        # --- 1. RESET -----------------------------------------------------------
+        path = (f"/projects/{quote(project_id, safe='')}/branches/{quote(branch_id, safe='')}"
+                f"/roles/{quote(role, safe='')}/reset_password")
+        for attempt in range(3):
+            if attempt:
+                self._sleep(2.0)
+            status, body = self._api(api_key, "POST", path)
+            if status not in _NEON_RETRYABLE:
+                break
+        role_meta = body.get("role") if status == 200 else None
+        password = str(role_meta.get("password") or "") if isinstance(role_meta, dict) else ""
+        if not password:
+            self._audit_append(ref.sm_name, f"err:reset-{status}")
+            raise RotationAdapterError(
+                f"Neon reset_password failed for {ref_name!r}: {self._describe(status, body)} -- "
+                "nothing was changed on Portunus's side"
+            )
+        operations = [str(op.get("id")) for op in body.get("operations") or []
+                      if isinstance(op, dict) and op.get("id")]
+
+        # --- 2. STORE: the old password is going away -- store first ---------
+        try:
+            new_url = pgwire.replace_password(old_url, password)
+            local_backend.store(ref.sm_name, new_url)
+        except Exception as exc:
+            self._audit_append(ref.sm_name, "err:store-failed-after-reset")
+            raise RotationAdapterError(
+                f"Neon rotation for {ref_name!r}: Neon reset the password but storing the new "
+                f"connection string failed ({type(exc).__name__}) -- the old password stops "
+                "working once Neon applies the reset; reset it again from the Neon Console "
+                "(Roles -> Reset password) and re-store it."
+            ) from None
+        finally:
+            del password
+
+        # --- 3. WAIT for Neon to apply it --------------------------------------
+        try:
+            self._wait_operations(api_key, project_id, operations)
+        except RotationAdapterError as exc:
+            self._audit_append(ref.sm_name, "warn:operation-failed")
+            raise RotationAdapterError(
+                f"Neon rotation for {ref_name!r}: new connection string stored, but {exc} -- "
+                "check the branch's operations in the Neon Console before relying on it."
+            ) from None
+
+        # --- 4. VERIFY with a real connect --------------------------------------
+        sqlstate = self._verify(pgwire.parse_url(new_url))
+        del new_url
+        if sqlstate is not None:
+            self._audit_append(ref.sm_name, "warn:verify-failed")
+            raise RotationAdapterError(
+                f"Neon rotation for {ref_name!r}: new connection string stored, but connecting "
+                f"with it failed ({sqlstate}) -- investigate before relying on it."
+            )
+        self._audit_append(ref.sm_name, f"ok:role={role}")
+        return role
+
+    def _wait_operations(self, api_key, project_id, operations) -> None:
+        deadline = time.monotonic() + self._operation_timeout
+        pending = list(operations)
+        while pending:
+            op_id = pending[0]
+            status, body = self._api(
+                api_key, "GET",
+                f"/projects/{quote(project_id, safe='')}/operations/{quote(op_id, safe='')}",
+            )
+            op = body.get("operation") if status == 200 else None
+            op_status = str(op.get("status", "")) if isinstance(op, dict) else ""
+            if op_status in _NEON_OP_DONE:
+                pending.pop(0)
+                continue
+            if op_status in _NEON_OP_FAILED:
+                raise RotationAdapterError(f"Neon operation {op_id} ended {op_status!r}")
+            if status not in (200, 423, 429) and status < 500:
+                raise RotationAdapterError(
+                    f"polling Neon operation {op_id} failed: {self._describe(status, body)}"
+                )
+            if time.monotonic() >= deadline:
+                raise RotationAdapterError(
+                    f"Neon operation {op_id} still {op_status or 'pending'!r} after "
+                    f"{int(self._operation_timeout)}s"
+                )
+            self._sleep(1.0)
+
+    def _verify(self, info) -> Optional[str]:
+        """None when the new string connects, else a short reason (SQLSTATE
+        or error class) -- never server text."""
+        from . import pgwire
+
+        reason = ""
+        for attempt in range(self._verify_attempts):
+            if attempt:
+                self._sleep(2.0)
+            try:
+                self._connector(info, self._timeout)
+                return None
+            except pgwire.PgError as exc:
+                reason = f"SQLSTATE {exc.sqlstate}" if exc.sqlstate else str(exc)
+        return reason
+
+    # --- helpers --------------------------------------------------------------
+
+    def _api(self, api_key: str, method: str, path: str) -> Tuple[int, dict]:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "portunus-rotation",
+        }
+        return self._transport(method, NEON_API + path, headers, None, self._timeout)
+
+    def _audit_append(self, sm_name: str, result: str) -> None:
+        if self._audit:
+            self._audit.append("rotate:neon-role-password", sm_name, result)
+
+    @staticmethod
+    def _describe(status: int, resp: dict) -> str:
+        # Only Neon's GeneralError code/message -- never the body, which on
+        # success carries the new password.
+        code = str(resp.get("code", ""))[:60]
+        message = str(resp.get("message", ""))[:200]
+        return f"HTTP {status}" + (f" {code}: {message}" if code or message else "")
+
+
 class StripeRotationAdapter:
     """Stripe -- STUB. No real calls."""
 
@@ -2441,6 +2740,7 @@ _ADAPTERS = {
     "youtrack": YouTrackRotationAdapter,
     "vercel": VercelRotationAdapter,
     "github": GitHubRotationAdapter,
+    "neon": NeonRotationAdapter,
     "stripe": StripeRotationAdapter,
     "sentry": SentryRotationAdapter,
 }

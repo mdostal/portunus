@@ -13,6 +13,30 @@ All notable changes to Portunus are documented in this file.
   rewritten after each store). Before this, rotating a `*-base64` ref overwrote it with raw JSON, and
   `--retire-old` silently disabled nothing. An unknown format, or `private_key` with `--retire-old`
   but no `gcp_key_id`, is refused before any gcloud call.
+- **Agent-triggered secure prompt (PANT-1119, #210).** `portunus prompt <name> <sm_name>`, the
+  `portunus_prompt` MCP tool and a `portunus-prompt` agent skill let an agent ask the human to
+  type a secret (a sudo password, a master credential) into a desktop password dialog
+  (`osascript`, `kdialog`, `zenity`, GUI `pinentry`) or a new terminal window, and store it
+  directly. The agent only gets metadata back (`{"name", "state", "stored": true}` or
+  `{"cancelled": true}`), never the value, its length or a hash. `--enable`/`--gate` set the
+  reference up for use in the same step; `--surface ui` opens the dashboard's fulfill page instead.
+- **Wall-clock approvals.** `portunus approve <name> --ttl 2h` (also `90s`, `30m`, `1d`) grants a
+  time window instead of audit-clock ticks. A bare number keeps its old meaning.
+- **`drop --keep-whitespace`**, implied by `--kind password`: only the final newline is removed,
+  so a password with leading or trailing spaces is stored exactly.
+
+- **Neon Postgres liveness + role-password rotation (PANT-1120, #209).** New `neon` liveness probe
+  connects with each stored connection string and runs `SELECT 1`. SQLSTATE class 28 (`28P01`
+  password authentication failed) reads `dead`, and network, TLS and endpoint errors read
+  `unknown`. It would have caught the 2026-10-16 incident, where Neon's dev-branch password changed
+  server-side and `shop-mdostal-database-url-dev` sat broken. It uses a new driverless Postgres
+  client, `portunus.pgwire` (TLS with certificate verification, SCRAM-SHA-256 with channel binding,
+  MD5, cleartext), so there's no new dependency. New `NeonRotationAdapter` (provider `neon`) resets
+  the role password through the Neon API, stores the connection string with only its password
+  replaced, waits for Neon's operations to finish and verifies it with a real connect. A reset
+  retires the old password by design, so `--retire-old` is required. Neon is now in
+  `docs/rotation.md` and `docs/provider-rotation-matrix.md`.
+
 - **Google Cloud API key rotation (PANT-1136, #193).** New `GoogleCloudAPIKeyRotationAdapter`,
   registered as `google-api-key` (separate from `gcp`, which rotates service-account JSON keys).
   It runs via `portunus rotation run <ref> [--retire-old]`. It finds the old key (from
