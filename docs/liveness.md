@@ -9,7 +9,8 @@ exercised them.
 ## Liveness checks
 
 A liveness adapter makes one cheap, authenticated, read-only call against
-the provider's own API and classifies the HTTP status:
+the provider's own API and classifies the HTTP status (the `neon` probe
+connects to the database instead; see the table below):
 
 | Verdict | Meaning |
 |---|---|
@@ -79,6 +80,7 @@ provider's API docs and a real key.
 | Provider | Probe | Dead | Notes |
 |---|---|---|---|
 | `github` | `GET https://api.github.com/rate_limit` (Bearer) | 401 only | Doesn't count against the rate limit. GitHub's 403 can mean rate-limited, so it reads `unknown`. GitHub App private keys aren't bearer tokens: they read `unknown` without a request. A stored `ghs_` installation token reads `dead` after its 1-hour expiry. See [rotation.md](rotation.md#github-per-credential-subtype). |
+| `neon` | connect + `SELECT 1` with the stored Postgres connection string | SQLSTATE class 28 (`28P01`, `28000`) | Not HTTP. Uses Portunus's own minimal Postgres client (`portunus.pgwire`, no driver to install): TLS with certificate and hostname verification, SCRAM-SHA-256 (with channel binding when offered) / MD5 / cleartext. Network/TLS errors, a suspended or deleted endpoint, or a missing database read `unknown`. Results show only `host/database` and the SQLSTATE, never the user, password or server message. Works for any Postgres URL; set `liveness_provider=neon` on a reference registered under another provider. Caught the 2026-10-16 server-side password rotation (PANT-1120). |
 
 The other provider sub-issues of #141 add their own: Vercel (#144), Autumn (#143), Clerk (#145)
 and Convex (#142).

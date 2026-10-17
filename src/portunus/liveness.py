@@ -33,7 +33,8 @@ Parity:
   fingerprint that could be compared across runs.
 
 Built-in provider probes are registered at the bottom of this module by the
-provider sub-issues (GitHub, PANT-1141, is the first). See docs/liveness.md.
+provider sub-issues (GitHub, PANT-1141, is the first; Neon, PANT-1120, probes a
+Postgres connection string instead of an HTTP API). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -406,3 +407,55 @@ class GitHubLivenessAdapter(HTTPLivenessAdapter):
 
 
 register_liveness_adapter("github", GitHubLivenessAdapter)
+
+
+# connector(conninfo, timeout) -> None on success; raises pgwire.PgError.
+PgConnector = Callable[[object, float], None]
+
+
+class NeonLivenessAdapter:
+    """Neon Postgres (PANT-1120): the stored value is a connection string, so
+    the probe is a real connect + `SELECT 1` against it (portunus.pgwire, no
+    driver dependency) rather than an HTTP call. It is the only check that
+    catches the 2026-10-16 incident shape: Neon rotated a branch role's
+    password server-side and the stored string sat broken until someone
+    next used it.
+
+    SQLSTATE class 28 (`28P01` password authentication failed, `28000`) is
+    dead. Anything else -- network, TLS, a suspended or deleted endpoint, a
+    missing database, a value that is not a connection string -- is unknown.
+    Only the host and the SQLSTATE reach the result: never the user, the
+    password, the query string or server message text. `http_status` stays
+    None; this is not an HTTP probe.
+
+    Works for any Postgres connection string, not only Neon's."""
+
+    provider = "neon"
+
+    def __init__(self, connector: Optional[PgConnector] = None, timeout: float = _DEFAULT_TIMEOUT):
+        from . import pgwire
+        self._connector = connector or pgwire.probe
+        self._timeout = timeout
+
+    def check(self, ref, resolver) -> LivenessResult:
+        from . import pgwire
+
+        def boundary(value: str) -> Tuple[str, str]:
+            try:
+                info = pgwire.parse_url(value)
+            except ValueError as exc:
+                return UNKNOWN, f"stored value is not usable: {exc}"
+            target = f"{info.host}/{info.database}"
+            try:
+                self._connector(info, self._timeout)
+            except pgwire.PgError as exc:
+                status = DEAD if exc.auth_failed else UNKNOWN
+                code = f"SQLSTATE {exc.sqlstate}" if exc.sqlstate else str(exc)
+                return status, f"SELECT 1 @ {target} -> {code}"
+            return LIVE, f"SELECT 1 @ {target} -> ok"
+
+        status, detail = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        return LivenessResult(ref.name, self.provider, status, detail=detail)
+
+
+register_liveness_adapter("neon", NeonLivenessAdapter)
