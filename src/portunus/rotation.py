@@ -64,6 +64,7 @@ non-destructive-default rationale.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -367,6 +368,20 @@ class GCPServiceAccountKeyRotationAdapter:
     - ``tags["iam_account"]`` -- the service account email
       (e.g. ``sa@project.iam.gserviceaccount.com``)
     - ``project`` -- the GCP project (optional; passed to gcloud if set)
+    - ``tags["gcp_key_format"]`` -- optional; how the stored value is shaped.
+      The new key is always minted and verified as a full JSON key file; only
+      what gets written to ``sm_name`` changes:
+
+      - ``json`` (default) -- the whole key file, as gcloud writes it
+      - ``base64`` -- base64 of the whole key file (e.g. a
+        ``*-service-account-base64`` reference)
+      - ``private_key`` -- only the ``private_key`` PEM, for a key stored as
+        split fields (a ``*-private-key`` ref next to a ``*-client-email``
+        ref). Only the private-key ref is rotated: the client email belongs
+        to the service account, not the key, so it never changes. A bare PEM
+        carries no key id, so ``tags["gcp_key_id"]`` holds the stored key's
+        ``private_key_id`` -- required for ``--retire-old``, and rewritten
+        after each store when a registry is available.
 
     If a resolver is supplied, the adapter resolves its own admin credential
     via ``Resolver.resolve_call()`` through the normal boundary-only path
@@ -374,10 +389,17 @@ class GCPServiceAccountKeyRotationAdapter:
     directly (tests supply a fake runner that needs no real credential).
     """
 
-    def __init__(self, runner=None, local_backend=None, audit=None, admin_credential_ref=None):
+    KEY_FORMATS = ("json", "base64", "private_key")
+
+    def __init__(
+        self, runner=None, local_backend=None, audit=None, admin_credential_ref=None, registry=None
+    ):
         self._runner = runner or subprocess.run
         self._local_backend = local_backend
         self._audit = audit
+        # Only used by the private_key format, to record the new key id in
+        # tags["gcp_key_id"]. Falls back to resolver.registry when not injected.
+        self._registry = registry
         # When set, the adapter resolves its own admin GCP credential via
         # Resolver.resolve_call() before each gcloud invocation, passing the
         # minted token as --access-token-file. Leave None in tests (the fake
@@ -398,18 +420,31 @@ class GCPServiceAccountKeyRotationAdapter:
         if hasattr(ref, "sm_name"):
             sm_name = ref.sm_name
             ref_name = getattr(ref, "name", sm_name)
-            iam_account = (getattr(ref, "tags", None) or {}).get("iam_account", "")
+            tags = dict(getattr(ref, "tags", None) or {})
+            iam_account = tags.get("iam_account", "")
             project = getattr(ref, "project", "") or ""
         else:
             sm_name = str(ref)
             ref_name = sm_name
+            tags = {}
             iam_account = ""
             project = ""
+        key_format = tags.get("gcp_key_format", "") or "json"
 
         if not iam_account:
             raise RotationAdapterError(
                 f"GCPServiceAccountKeyRotationAdapter: ref {ref_name!r} has no "
                 "iam_account -- set tags['iam_account'] to the service account email"
+            )
+        if key_format not in self.KEY_FORMATS:
+            raise RotationAdapterError(
+                f"GCPServiceAccountKeyRotationAdapter: ref {ref_name!r} has unknown "
+                f"gcp_key_format {key_format!r} -- expected one of {', '.join(self.KEY_FORMATS)}"
+            )
+        if key_format == "private_key" and retire_old and not tags.get("gcp_key_id"):
+            raise RotationAdapterError(
+                f"GCPServiceAccountKeyRotationAdapter: --retire-old on ref {ref_name!r} "
+                "needs tags['gcp_key_id'] -- a stored private_key PEM carries no key id"
             )
 
         local_backend = self._local_backend
@@ -420,7 +455,10 @@ class GCPServiceAccountKeyRotationAdapter:
         # --- capture old key id before anything changes -----------------------
         old_key_id: Optional[str] = None
         if retire_old:
-            old_key_id = self._current_key_id(local_backend, sm_name, project)
+            if key_format == "private_key":
+                old_key_id = tags["gcp_key_id"]
+            else:
+                old_key_id = self._current_key_id(local_backend, sm_name, project, key_format)
 
         # --- 1. CREATE --------------------------------------------------------
         fd, key_path = tempfile.mkstemp(prefix="portunus-sa-key-", suffix=".json")
@@ -432,10 +470,12 @@ class GCPServiceAccountKeyRotationAdapter:
             self._gcloud_create_key(iam_account, project, key_path, resolver)
             raw = Path(key_path).read_text()
             try:
-                new_key_id = json.loads(raw).get("private_key_id", "")
+                key_json = json.loads(raw)
+                new_key_id = key_json.get("private_key_id", "")
             except (json.JSONDecodeError, AttributeError):
+                key_json = {}
                 new_key_id = ""
-            new_key_content = raw
+            new_key_content = self._encode(raw, key_json, key_format, ref_name)
 
             # --- 2. VERIFY ----------------------------------------------------
             verify_ok = self._gcloud_verify_key(key_path, project, resolver)
@@ -449,6 +489,8 @@ class GCPServiceAccountKeyRotationAdapter:
 
             # --- 3. STORE -----------------------------------------------------
             local_backend.store(sm_name, new_key_content)
+            if key_format == "private_key" and new_key_id:
+                self._record_key_id(resolver, ref_name, tags, new_key_id)
 
         finally:
             # Key material must not linger on disk longer than necessary.
@@ -553,13 +595,38 @@ class GCPServiceAccountKeyRotationAdapter:
                     f"gcloud {context} failed: {proc.stderr.strip()[:200]}"
                 )
 
-    def _current_key_id(self, local_backend, sm_name: str, project: str) -> Optional[str]:
+    def _current_key_id(
+        self, local_backend, sm_name: str, project: str, key_format: str = "json"
+    ) -> Optional[str]:
         """Read the currently stored SA key JSON and extract private_key_id."""
         try:
             current = local_backend.access(sm_name, project=project)
+            if key_format == "base64":
+                current = base64.b64decode(current.strip(), validate=True).decode()
             return json.loads(current).get("private_key_id") or None
         except Exception:
             return None
+
+    @staticmethod
+    def _encode(raw: str, key_json: dict, key_format: str, ref_name: str) -> str:
+        """Shape the minted key file into what the reference stores."""
+        if key_format == "base64":
+            return base64.b64encode(raw.encode()).decode()
+        if key_format == "private_key":
+            private_key = key_json.get("private_key", "") if isinstance(key_json, dict) else ""
+            if not private_key:
+                raise RotationAdapterError(
+                    f"GCP SA key for {ref_name!r} has no private_key field -- "
+                    "rotation aborted before store"
+                )
+            return private_key
+        return raw
+
+    def _record_key_id(self, resolver, ref_name: str, tags: dict, new_key_id: str) -> None:
+        registry = self._registry or getattr(resolver, "registry", None)
+        if registry is None or not hasattr(registry, "retag") or ref_name not in registry:
+            return
+        registry.retag(ref_name, tags={**tags, "gcp_key_id": new_key_id})
 
 
 _GRAFANA_CLOUD_API = "https://www.grafana.com/api/v1"

@@ -6,6 +6,13 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **GCP service-account key storage formats (PANT-1124, #205).** `GCPServiceAccountKeyRotationAdapter`
+  now reads `tags["gcp_key_format"]`: `json` (default, unchanged), `base64` (stores base64 of the
+  key file and decodes it to find the old key id), or `private_key` (stores only the PEM, for split
+  `*-private-key` / `*-client-email` refs; the old key id comes from `tags["gcp_key_id"]`, which is
+  rewritten after each store). Before this, rotating a `*-base64` ref overwrote it with raw JSON, and
+  `--retire-old` silently disabled nothing. An unknown format, or `private_key` with `--retire-old`
+  but no `gcp_key_id`, is refused before any gcloud call.
 - **Agent-triggered secure prompt (PANT-1119, #210).** `portunus prompt <name> <sm_name>`, the
   `portunus_prompt` MCP tool and a `portunus-prompt` agent skill let an agent ask the human to
   type a secret (a sudo password, a master credential) into a desktop password dialog

@@ -97,6 +97,17 @@ via `portunus rotation run <ref-name> [--retire-old]`. The reference must have:
 - `provider=gcp` in its registry entry
 - `tags["iam_account"]` set to the full service account email
   (e.g. `sa@project.iam.gserviceaccount.com`)
+- optionally `tags["gcp_key_format"]`, when the stored value isn't the raw key file:
+  - `json` (default) -- the whole key file, as gcloud writes it
+  - `base64` -- base64 of the whole key file (e.g. `*-service-account-base64` refs)
+  - `private_key` -- only the `private_key` PEM, for a key stored as split fields (a
+    `*-private-key` ref next to a `*-client-email` ref). Rotate the private-key ref only:
+    the client email belongs to the service account, so it doesn't change. A bare PEM has
+    no key id, so `tags["gcp_key_id"]` must hold the stored key's `private_key_id` for
+    `--retire-old`; the adapter rewrites it after each successful store.
+
+  Split refs stay split on purpose: their consumers read separate env vars, and merging them
+  into one JSON ref would break every consumer.
 
 Prefer Workload Identity Federation where possible -- WIF credentials require no rotation.
 
