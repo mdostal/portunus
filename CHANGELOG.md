@@ -6,6 +6,18 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Reference blast radius: `portunus impact` (PANT-1122, #207).** `portunus impact <name>` and the
+  `portunus_impact` MCP tool follow `related` transitively in both directions. They render every
+  reference reached, with its project, env, repo, group, `source_files` and `injected_as` targets,
+  plus a summary of the projects, repos, files and injection targets involved. Unresolved `related`
+  names are listed rather than failing. A separate *suggested related* list proposes unlinked
+  references that share a source file, group, group parent or repo, with the reason for each.
+  Suggestions are computed on read, never written to `related`, and never walked or counted.
+  `rotation run` now prints the blast radius to stderr before it runs. When a real rotation reaches
+  other references it asks `continue? [y/N]`. Without a terminal it refuses unless `--yes` is
+  passed. The UI detail drawer gains a blast-radius panel (tree plus summary) above the Rotate
+  buttons, served by `/api/impact`.
+
 - **Event-source API liveness, provider backfill and runbooks (PANT-1126, #203).** Liveness
   probes for `eventbrite` (private token), `ticketmaster` (consumer key) and `seatgeek`
   (client id), plus a `meetup` adapter that explains why nothing Meetup stores can be probed.

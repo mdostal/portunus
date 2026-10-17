@@ -20,6 +20,7 @@ from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotAuthorized, NotInjectable
 from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
 from .crawl import crawl_candidates
+from .impact import impact as impact_of
 from .health import run_health
 from .leakscan import (
     add_scan_path,
@@ -141,6 +142,23 @@ def portunus_tree(project: str = "", by: str = "group") -> dict:
         return {"ungrouped": [], "tree": {}, "refs": {}}
     ungrouped, tree, refs_meta = _build_tree(refs, key_fn=key_fn)
     return {"ungrouped": sorted(ungrouped), "tree": tree, "refs": refs_meta}
+
+
+@mcp.tool()
+def portunus_impact(name: str, max_depth: Optional[int] = None, suggest: bool = True) -> dict:
+    """Blast radius of one reference -- "if this rotates, what breaks?".
+    Walks `related` transitively in both directions and returns every
+    reached reference (nodes/edges) plus a summary of the projects, repos,
+    source files, envs and injection targets they're wired into. Same shape
+    as `portunus impact --json`. `suggested_related` lists references that
+    share a repo/source file/group with this one but aren't linked -- a
+    proposal for a human, never applied. Metadata only, never a value."""
+    if max_depth is not None and max_depth < 1:
+        return {"error": "max_depth must be at least 1"}
+    try:
+        return impact_of(Registry(), name, max_depth=max_depth, suggest=suggest)
+    except KeyError:
+        return {"error": f"no reference {name!r} in registry"}
 
 
 @mcp.tool()
