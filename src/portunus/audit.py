@@ -6,7 +6,11 @@ or deletion breaks the chain, which ``verify()`` detects. Ported from the
 hash-chain in ``bin/secrets``.
 
 A monotonic counter (a file in the state home) supplies ``seq`` so the chain
-is deterministic and testable without a wall clock.
+is deterministic and testable without a wall clock. ``seq`` stays the
+ordering authority (approval TTLs tick on it); each entry also carries a
+wall-clock ``ts`` (epoch seconds) so the log can be queried by time window
+(``portunus audit --since``, ``portunus diagnose``). ``ts`` is covered by the
+hash. Entries written before ``ts`` existed simply lack it and still verify.
 
 Crucially: an audit entry records the *reference name* and *SM name* only —
 never a secret value.
@@ -16,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -95,11 +100,9 @@ class AuditChain:
             max_seq, prev = self._scan()
             seq = self._tick(max_seq)
             # Fixed key order so verify() can recompute the body byte-for-byte.
-            body = json.dumps(
-                {"seq": seq, "actor": actor, "task": task, "action": action,
-                 "secret": secret, "result": result, "prev": prev},
-                separators=(",", ":"), sort_keys=False,
-            )
+            body = _body({"seq": seq, "ts": int(_now()), "actor": actor, "task": task,
+                          "action": action, "secret": secret, "result": result,
+                          "prev": prev})
             digest = hashlib.sha256((prev + body).encode()).hexdigest()
             entry = json.loads(body)
             entry["h"] = digest
@@ -124,6 +127,20 @@ class AuditChain:
 
 
 _CHAIN_FIELDS = ("seq", "actor", "task", "action", "secret", "result", "prev")
+# Hashed in this order when present. ``ts`` is absent on entries written
+# before wall-clock timestamps existed, which then hash exactly as they always
+# did; stripping or adding ``ts`` on an existing entry is a hash mismatch.
+_HASHED_ORDER = ("seq", "ts", "actor", "task", "action", "secret", "result", "prev")
+
+
+def _now() -> float:
+    """Wall clock for ``ts`` -- a seam so tests can pin it."""
+    return time.time()
+
+
+def _body(entry: dict) -> str:
+    return json.dumps({k: entry[k] for k in _HASHED_ORDER if k in entry},
+                      separators=(",", ":"), sort_keys=False)
 
 _Line = Tuple[int, Optional[dict], str]
 
@@ -157,8 +174,7 @@ def _entry_problem(entry: dict, prev: str) -> str:
         return "entry is missing chain fields"
     if entry["prev"] != prev:
         return "prev hash does not match the preceding entry"
-    body = json.dumps({k: entry[k] for k in _CHAIN_FIELDS},
-                      separators=(",", ":"), sort_keys=False)
+    body = _body(entry)
     calc = hashlib.sha256((entry["prev"] + body).encode()).hexdigest()
     if calc != entry.get("h"):
         return "hash mismatch (entry was modified)"

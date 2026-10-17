@@ -25,6 +25,7 @@ from typing import Dict, List, Optional
 
 from . import __version__
 from . import agent_setup
+from . import diagnose as diagnose_mod
 from . import health as health_mod
 from . import prompt as prompt_mod
 from . import update as update_mod
@@ -1213,22 +1214,124 @@ def cmd_status(args) -> int:
     return 0
 
 
+def _window_args(args):
+    """(since, until) epoch bounds from --since/--until, or raises ValueError.
+    A bare date for --until means the end of that day."""
+    since = diagnose_mod.parse_when(args.since) if args.since else None
+    until = diagnose_mod.parse_when(args.until, end_of_day=True) if args.until else None
+    if since is not None and until is not None and since > until:
+        raise ValueError("--since is after --until")
+    return since, until
+
+
+def _untimed_note(untimed: int) -> None:
+    if untimed:
+        print(f"note: {untimed} older audit entr{'y' if untimed == 1 else 'ies'} predate "
+              "timestamps and cannot be placed in a time window", file=sys.stderr)
+
+
 def cmd_audit(args) -> int:
+    try:
+        since, until = _window_args(args)
+    except ValueError as exc:
+        return _err(str(exc))
     audit = AuditChain()
     entries = audit.entries()
     if args.secret:
         entries = [e for e in entries if e.get("secret") == args.secret]
-    entries = entries[-args.n:]
+    if args.project:
+        names = set()
+        for ref in Registry():
+            if diagnose_mod.in_project(ref, args.project):
+                names.update(n for n in (ref.name, ref.sm_name) if n)
+        entries = [e for e in entries if e.get("secret") in names]
+    if args.changes:
+        entries = [e for e in entries if diagnose_mod.is_change(e)]
+    entries, untimed = diagnose_mod.in_window(entries, since, until)
+    # A window bounds the query on its own; the default tail of 25 only
+    # applies when no window was given or n was passed explicitly.
+    if args.n is not None or (since is None and until is None):
+        entries = entries[-(args.n if args.n is not None else 25):]
     if args.json:
-        import json
         print(json.dumps(entries, indent=2))
         return 0
-    print(f"{'seq':<4} {'actor':<14} {'action':<10} {'secret':<28} result")
+    print(f"{'seq':<4} {'when (UTC)':<17} {'actor':<14} {'action':<10} {'secret':<28} result")
     for e in entries:
-        print(f"{str(e.get('seq', '?')):<4} {str(e.get('actor', ''))[:14]:<14} "
+        print(f"{str(e.get('seq', '?')):<4} {diagnose_mod.format_ts(e.get('ts')):<17} "
+              f"{str(e.get('actor', ''))[:14]:<14} "
               f"{str(e.get('action', '')):<10} {str(e.get('secret', ''))[:28]:<28} "
               f"{e.get('result', '')}")
+    _untimed_note(untimed)
     return 0
+
+
+def cmd_diagnose(args) -> int:
+    """Reverse rotation diagnosis (GitHub #208): what changed in a time
+    window, ranked by proximity to the project that broke. --check re-runs
+    liveness on the nearest candidates. Metadata only, never a value."""
+    if not args.since:
+        return _err("--since is required (e.g. --since 2026-10-10 or --since 14d)")
+    try:
+        since, until = _window_args(args)
+    except ValueError as exc:
+        return _err(str(exc))
+    registry, audit, _broker, resolver = _build()
+    report = diagnose_mod.diagnose(audit.entries(), registry, since, until,
+                                   project=args.project, include_all=args.all_actions)
+
+    checks = {}
+    if args.check:
+        from . import liveness
+        tiers = ("project", "related") if args.project else diagnose_mod.TIERS
+        results = []
+        for cand in report["candidates"]:
+            ref = registry.get(cand["reference"]) if cand["reference"] else None
+            if ref is None or cand["tier"] not in tiers:
+                continue
+            result = liveness.check_reference(ref, resolver)
+            liveness.audit_liveness(audit, ref, result)
+            results.append(result)
+            checks[ref.name] = result
+            cand["liveness"] = result.to_dict()
+        liveness.record_results(results)
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 2 if any(r.status == "dead" for r in checks.values()) else 0
+
+    window = (f"{diagnose_mod.format_ts(since)} .. "
+              f"{diagnose_mod.format_ts(until) if until is not None else 'now'}")
+    scope = f" near project {args.project!r}" if args.project else ""
+    kind = "audit events" if args.all_actions else "changes"
+    if not report["candidates"]:
+        print(f"no {kind} recorded in {window}{scope}")
+        _untimed_note(report["untimed_entries"])
+        return 0
+    print(f"{kind} in {window}{scope}, most likely first:")
+    tier = None
+    for cand in report["candidates"]:
+        if args.project and cand["tier"] != tier:
+            tier = cand["tier"]
+            print({"project": f"\n  in {args.project}:",
+                   "related": "\n  related (linked or same group):",
+                   "elsewhere": "\n  elsewhere:"}[tier])
+        label = cand["reference"] or f"{cand['audit_name']} (no matching reference)"
+        noun = "event(s)" if args.all_actions else "change(s)"
+        print(f"    {label}  provider={cand['provider'] or '-'}  {len(cand['events'])} {noun}")
+        for ev in cand["events"]:
+            print(f"      #{ev['seq']} {diagnose_mod.format_ts(ev['ts'])}  "
+                  f"{ev['action']}  {ev['result']}  by {ev['actor']}")
+        result = checks.get(cand["reference"] or "")
+        if result is not None:
+            print(f"      liveness now: {result.status.upper()}  {result.detail}")
+            if result.status == "dead" and cand["injected_as"]:
+                targets = ", ".join(f"{k}={v}" for k, v in sorted(cand["injected_as"].items()))
+                print(f"      re-inject once fixed -> {targets}")
+    _untimed_note(report["untimed_entries"])
+    if not args.check:
+        print("\nre-verify the nearest candidates now with --check "
+              "(or `portunus liveness check <name>`)")
+    return 2 if any(r.status == "dead" for r in checks.values()) else 0
 
 
 def cmd_verify(args) -> int:
@@ -2971,10 +3074,35 @@ def build_parser() -> argparse.ArgumentParser:
     stat.set_defaults(func=cmd_status)
 
     au = sub.add_parser("audit", help="view the tamper-evident access log")
-    au.add_argument("n", nargs="?", type=int, default=25)
+    au.add_argument("n", nargs="?", type=int, default=None,
+                    help="show the last n matching entries (default 25; all of them "
+                         "inside a --since/--until window)")
     au.add_argument("--json", action="store_true", help="machine-readable output (UI consumer)")
     au.add_argument("--secret", default="", help="filter to one SM name (metadata only, never a value)")
+    au.add_argument("--since", default="",
+                    help="only entries at or after this time: 2026-10-15, 2026-10-15T09:30, "
+                         "epoch seconds, or an age like 36h / 14d")
+    au.add_argument("--until", default="", help="only entries at or before this time (same forms)")
+    au.add_argument("--project", default="",
+                    help="only entries for references in this project (project, repo or group root)")
+    au.add_argument("--changes", action="store_true",
+                    help="only events that change a credential (rotate, drop, store, remove, import)")
     au.set_defaults(func=cmd_audit)
+
+    dg = sub.add_parser(
+        "diagnose",
+        help="'this broke around time X' -- what changed in a window, ranked by proximity to a project",
+    )
+    dg.add_argument("--since", default="", help="window start (required): 2026-10-10, 14d, ...")
+    dg.add_argument("--until", default="", help="window end (default now)")
+    dg.add_argument("--project", default="",
+                    help="the project that broke -- its references rank first, then related ones")
+    dg.add_argument("--check", action="store_true",
+                    help="re-run liveness on the nearest candidates (exit 2 if any is dead)")
+    dg.add_argument("--all-actions", action="store_true",
+                    help="include reads/gates too, not just credential changes")
+    dg.add_argument("--json", action="store_true")
+    dg.set_defaults(func=cmd_diagnose)
 
     ve = sub.add_parser("verify", help="verify the audit hash chain")
     ve.set_defaults(func=cmd_verify)

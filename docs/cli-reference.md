@@ -734,14 +734,46 @@ portunus ui open --fulfill stripe-live
 View the tamper-evident access log. Entries are hash-chained; use `verify` to confirm integrity.
 
 ```
-portunus audit [N] [--secret <sm_name>] [--json]
+portunus audit [N] [--secret <sm_name>] [--since <when>] [--until <when>]
+               [--project <project>] [--changes] [--json]
 ```
 
-`N` is the number of most-recent entries to show (default: 25).
+`N` is the number of most-recent entries to show (default: 25, or every match inside a
+`--since`/`--until` window). `<when>` is a date (`2026-10-15`; a bare date for `--until`
+covers that whole day), a datetime (`2026-10-15T09:30`, UTC unless an offset is given), epoch
+seconds, or an age (`36h`, `14d`, `2w`). `--project` keeps entries for references whose
+project, repo or group root matches. `--changes` keeps only events that change a credential
+(`rotate*`, `drop`, `retag`, OAuth/session store and remove, vault imports).
 
 **Example:**
 ```sh
 portunus audit 50 --secret dostal-stripe-live
+portunus audit --since 2026-10-10 --until 2026-10-16 --project shop.mdostal.com --changes
+```
+
+---
+
+### `diagnose`
+
+Run the audit log backwards from a symptom: "this stopped working around time X, what
+changed near then?" Lists every credential change in the window, grouped by reference and
+ranked by proximity to `--project`: its own references first, then references linked to them
+through `related` or sharing their group root, then everything else. No secret name needed.
+
+```
+portunus diagnose --since <when> [--until <when>] [--project <project>] [--check]
+                  [--all-actions] [--json]
+```
+
+`--check` re-runs `liveness check` on the project and related candidates (all candidates
+when no `--project` is given). The run is recorded in the audit log and the liveness status
+file. For a candidate that comes back dead, it prints the `injected_as` targets where the
+fixed value has to be re-injected. Exit `2` if any re-checked candidate is dead, otherwise `0`.
+`--all-actions` includes reads and gates as well as changes.
+
+**Example:**
+```sh
+portunus diagnose --since 2026-10-10 --project shop.mdostal.com --check
 ```
 
 ---
