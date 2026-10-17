@@ -139,3 +139,39 @@ export interface AddSecretDraft {
   repo: string;
   source_files: string;
 }
+
+// `portunus impact <name> --json` / portunus_impact -- a reference's blast
+// radius: everything reachable through `related` (both directions) and what
+// those references are wired into. Metadata only, never a value (PANT-1122).
+export interface ImpactNode {
+  name: string;
+  depth: number;
+  via: string | null;
+  direction: "root" | "related" | "related-by";
+  state: string;
+  provider: string;
+  org: string;
+  project: string;
+  env: string;
+  group: string;
+  repo: string;
+  source_files: string[];
+  injected_as: Record<string, string>;
+}
+
+export interface ImpactResult {
+  root: string;
+  nodes: ImpactNode[];
+  edges: { from: string; to: string; direction: string }[];
+  unresolved: { from: string; name: string }[];
+  summary: {
+    other_references: number;
+    projects: string[];
+    repos: string[];
+    envs: string[];
+    groups: string[];
+    files: string[];
+    injection_targets: string[];
+  };
+  suggested_related: { name: string; reasons: string[] }[];
+}

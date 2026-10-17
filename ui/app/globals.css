@@ -653,3 +653,20 @@ h1, h3 { font-family: var(--font-display); text-transform: uppercase; letter-spa
   .console { flex-direction: column; }
   .console-rail { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--hair); }
 }
+
+/* Blast-radius panel (PANT-1122) -- ImpactPanel.tsx */
+.impact-panel { border: 1px solid var(--hair); border-radius: 4px; padding: 0.35rem 0.5rem; }
+.impact-panel.impact-touches { border-color: var(--brass); }
+.impact-summary { background: none; border: 0; padding: 0; font: inherit; font-size: 0.78rem; color: var(--ink-soft); cursor: pointer; text-align: left; }
+.impact-body { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.4rem; }
+.impact-tree, .impact-children { list-style: none; margin: 0; padding: 0; font-size: 0.78rem; }
+.impact-children { margin-left: 0.6rem; padding-left: 0.6rem; border-left: 1px solid var(--steel-faint); }
+.impact-node { margin: 0.2rem 0; }
+.impact-node-head { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.impact-facts, .impact-hint { color: var(--ink-soft); font-size: 0.72rem; }
+.impact-wiring { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.15rem 0 0 0.4rem; font-family: var(--font-mono); font-size: 0.7rem; }
+.impact-target::before { content: "inject "; color: var(--ink-soft); }
+.impact-file::before { content: "file "; color: var(--ink-soft); }
+.impact-suggested ul { list-style: none; margin: 0.2rem 0 0; padding: 0; }
+.chip-suggested { border-style: dashed; }
+.impact-error { color: var(--crit); }

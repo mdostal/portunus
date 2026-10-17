@@ -54,6 +54,7 @@ from .roles import (
     set_policy,
 )
 from .crawl import crawl_candidates, generate_report
+from . import impact as impact_mod
 from .leakscan import (
     add_scan_path,
     add_scan_repo,
@@ -1549,7 +1550,25 @@ def cmd_rotation_run(args) -> int:
         )
         return 1
 
+    # Blast-radius preview BEFORE anything runs (PANT-1122), on stderr so
+    # the "rotated ..." stdout line scripts parse stays unchanged. A real
+    # rotation that reaches other references needs a confirm (or --yes).
+    blast = impact_mod.impact(registry, ref.name, suggest=False)
     cap = getattr(adapter, "capability", lambda: "stub")()
+    if cap != "auto" or not blast["summary"]["other_references"] or args.yes:
+        print(impact_mod.summary_line(blast), file=sys.stderr)
+    else:
+        print(impact_mod.render_text(blast), file=sys.stderr)
+        if not sys.stdin.isatty():
+            _err(
+                f"rotating {ref.name!r} touches other references -- review "
+                f"`portunus impact {ref.name}` and re-run with --yes"
+            )
+            return 1
+        answer = input("continue? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            _err("rotation cancelled")
+            return 1
     if cap == "manual":
         # A manual adapter's rotate() only raises, carrying the human
         # re-issue instructions -- surface those rather than "stub".
@@ -2482,6 +2501,27 @@ def cmd_tree(args) -> int:
     return 0
 
 
+def cmd_impact(args) -> int:
+    """Blast radius of a reference: every reference reachable through
+    `related` (both directions), and every project/repo/file/env/injection
+    target those are wired into. Metadata only, never a value, never a
+    write -- suggested related links are shown, not applied."""
+    registry = Registry()
+    if args.depth is not None and args.depth < 1:
+        return _err("--depth must be at least 1")
+    try:
+        result = impact_mod.impact(
+            registry, args.name, max_depth=args.depth, suggest=not args.no_suggest,
+        )
+    except KeyError:
+        return _err(f"no reference {args.name!r} in registry")
+    if args.json:
+        print(json.dumps(result))
+        return 0
+    print(impact_mod.render_text(result))
+    return 0
+
+
 def cmd_mcp(args) -> int:
     """Start the Portunus MCP stdio server -- a third OSTIARIUS entry point
     (alongside this CLI and the UI's API routes) so other agents/harnesses
@@ -3011,6 +3051,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="retire the superseded credential after storing the new one (GCP: disable, never delete; Resend, YouTrack, Vercel: delete -- they have no disable)",
     )
+    rot_run_cmd.add_argument(
+        "--yes",
+        action="store_true",
+        default=False,
+        help="skip the confirm prompt shown when the rotation touches other references "
+             "(see `portunus impact`); required when stdin is not a terminal",
+    )
     rot_run_cmd.set_defaults(func=cmd_rotation_run)
     rot_audit = rot_sub.add_parser(
         "audit",
@@ -3300,6 +3347,19 @@ def build_parser() -> argparse.ArgumentParser:
                      help="which field to nest by (default: group, unchanged from before this flag existed)")
     tr.add_argument("--json", action="store_true", help="machine-readable output (UI/LLM consumer)")
     tr.set_defaults(func=cmd_tree)
+
+    im = sub.add_parser(
+        "impact",
+        help="what a reference touches -- related refs (transitively), projects, repos, files, "
+             "envs -- i.e. what breaks if it rotates (metadata only, never a value)",
+    )
+    im.add_argument("name")
+    im.add_argument("--depth", type=int, default=None,
+                    help="stop after this many related hops (default: walk everything reachable)")
+    im.add_argument("--no-suggest", action="store_true",
+                    help="omit auto-suggested related references (shared repo/file/group)")
+    im.add_argument("--json", action="store_true", help="machine-readable output (UI/LLM consumer)")
+    im.set_defaults(func=cmd_impact)
 
     mcp_p = sub.add_parser(
         "mcp", help="start the Portunus MCP stdio server (for other agents/harnesses)",
