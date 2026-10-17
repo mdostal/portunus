@@ -44,6 +44,7 @@ new one).
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 | `google-api-key` | Google Cloud API key (`AIza...`) | **auto** | `GoogleCloudAPIKeyRotationAdapter`: copies the old key's restrictions → create → verify (`keys:lookupKey`, plus an optional live probe) → store. `--retire-old` **deletes** the old key, which Google can undelete for 30 days. Refuses a stored value that is a service-account JSON key. Needs `apikeys.googleapis.com` enabled; see [Google Cloud API keys](#google-cloud-api-keys) below. |
 | `sentry` | User / org / internal-integration auth token | **manual** | Sentry's token endpoints accept session auth only and reject any bearer token, so no admin credential can mint or revoke a token. `SentryRotationAdapter` is registered so `rotation run` prints the human re-issue steps. See `provider-rotation-matrix.md`. |
+| `n8n` (self-hosted) | Encryption key (`N8N_ENCRYPTION_KEY`) / basic-auth user + password | **manual** | Startup config, not provider tokens. The encryption key protects every credential stored in n8n: rotate it only as a planned, attended operation (decrypt all → re-encrypt all → restart), never on a schedule. Basic auth is ignored on n8n 1.0+. See the [n8n rotation runbook](n8n-rotation-runbook.md). |
 
 > **Capability vocabulary:**
 > - `auto` — a programmatic rotation path exists and Portunus has a real adapter for this credential type.
@@ -88,6 +89,14 @@ programmatic rotation endpoint. If you store a Linear personal API key in Portun
 1. Generate a new key in your [Linear API settings](https://linear.app/settings/api).
 2. Re-store it: `portunus drop <name> <sm_name> --backend local` (or via the UI).
 3. Revoke the old key in Linear settings.
+
+### n8n (encryption key, basic auth)
+
+Both are startup configuration values with no provider API. The encryption key is the
+highest-blast-radius manual rotation here: rotated carelessly, every credential stored inside n8n
+becomes unreadable. Never put it on a schedule. Follow the
+[n8n rotation runbook](n8n-rotation-runbook.md), which also explains why the basic-auth values
+do nothing on n8n 1.0+.
 
 ### GCP service-account keys -- now auto
 
