@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Event-source API liveness, provider backfill and runbooks (PANT-1126, #203).** Liveness
+  probes for `eventbrite` (private token), `ticketmaster` (consumer key) and `seatgeek`
+  (client id), plus a `meetup` adapter that explains why nothing Meetup stores can be probed.
+  The new `CredentialKindLivenessAdapter` probes only the credential kinds that can be sent on
+  their own (`liveness_kind` tag, or the reference name's suffix). Client secrets and similar
+  read `unknown` with no request, and `liveness check --all` skips them. `HTTPProbe` gains
+  `query_param` for providers that take the key in the URL; the value never reaches a result.
+  `scripts/backfill_event_api_providers.py` sets the real `provider` on
+  `event-api-*-{meetup,eventbrite,ticketmaster,seatgeek}-*` (dry run by default). Ticketmaster
+  and SeatGeek move from `unknown` to `manual` in `provider-rotation-matrix.md`, and
+  `rotation.md` gains manual re-issue runbooks for all four.
 - **Google Cloud API key rotation (PANT-1136, #193).** New `GoogleCloudAPIKeyRotationAdapter`,
   registered as `google-api-key` (separate from `gcp`, which rotates service-account JSON keys).
   It runs via `portunus rotation run <ref> [--retire-old]`. It finds the old key (from
