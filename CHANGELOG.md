@@ -6,6 +6,13 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **GCP service-account key storage formats (PANT-1124, #205).** `GCPServiceAccountKeyRotationAdapter`
+  now reads `tags["gcp_key_format"]`: `json` (default, unchanged), `base64` (stores base64 of the
+  key file and decodes it to find the old key id), or `private_key` (stores only the PEM, for split
+  `*-private-key` / `*-client-email` refs; the old key id comes from `tags["gcp_key_id"]`, which is
+  rewritten after each store). Before this, rotating a `*-base64` ref overwrote it with raw JSON, and
+  `--retire-old` silently disabled nothing. An unknown format, or `private_key` with `--retire-old`
+  but no `gcp_key_id`, is refused before any gcloud call.
 - **Google Cloud API key rotation (PANT-1136, #193).** New `GoogleCloudAPIKeyRotationAdapter`,
   registered as `google-api-key` (separate from `gcp`, which rotates service-account JSON keys).
   It runs via `portunus rotation run <ref> [--retire-old]`. It finds the old key (from
