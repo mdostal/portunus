@@ -10,7 +10,8 @@ Every event recorded to the audit log follows this shape:
 
 | Field | Contents |
 |-------|----------|
-| `seq` | Monotonic sequence number (from a `.clock` file, never a wall clock) |
+| `seq` | Monotonic sequence number (from a `.clock` file, never a wall clock). The ordering authority. |
+| `ts` | Wall-clock time of the event, epoch seconds (UTC). Covered by the hash. Absent on entries written before timestamps were added; those still verify. |
 | `actor` | The identity making the request (`DOSTAL_AGENT` env var for agents, `USER` for humans) |
 | `task` | The task identifier (`DOSTAL_TASK` env var, if set) |
 | `action` | What happened: `resolve`, `drop`, `approve`, `gate`, `grant`, `retag`, `session_store`, `session_load`, etc. |
@@ -49,9 +50,36 @@ portunus audit --n 100
 
 # Output as JSON
 portunus audit --json
+
+# Everything in a time window, no secret name needed
+portunus audit --since 2026-10-10 --until 2026-10-16
+
+# Only credential changes for one project's references in the last two weeks
+portunus audit --since 14d --project shop.mdostal.com --changes
 ```
 
-Each line shows: sequence number, actor, action, secret name, and result.
+Each line shows: sequence number, time (UTC), actor, action, secret name, and result. Entries
+written before timestamps existed have no `ts`. A windowed query can't place them in time, so
+it skips them and prints a note with how many were skipped.
+
+---
+
+## Diagnosing "it stopped working around then"
+
+When something breaks and you don't know which credential is behind it, start from the time
+and the project, not the secret name:
+
+```bash
+portunus diagnose --since 2026-10-10 --project shop.mdostal.com
+```
+
+`diagnose` lists every credential change (rotations, re-stores, removals, imports) in the
+window, grouped by reference and ranked by proximity to the project. The project's own
+references come first (matched on project, repo or group root). Next come references linked
+to them through `related` or sharing their group root, then the rest of the vault. Within a
+tier, more changes rank higher, then the most recent. Add `--check` to re-run liveness on the
+nearest candidates. A candidate that comes back dead lists the `injected_as` targets the fixed
+value must be re-injected into. See [`diagnose`](cli-reference.md#diagnose).
 
 ---
 

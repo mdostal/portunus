@@ -6,6 +6,15 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Reverse rotation diagnosis (PANT-1121, #208).** Audit entries now carry a wall-clock `ts`
+  (epoch seconds, covered by the hash). Entries written before this have none and still verify.
+  `portunus audit` gains `--since`/`--until` (dates, datetimes, epoch seconds or ages like
+  `14d`), `--project` and `--changes`, so you can query the log by time window without knowing
+  which secret to filter on. The new `portunus diagnose --since <when> [--project P] [--check]`
+  groups the window's credential changes by reference and ranks them: the project's own
+  references, then `related`/same-group ones, then everything else. `--check` re-runs liveness
+  on the nearest candidates and, for dead ones, lists their `injected_as` re-injection targets.
+  The full re-inject-everywhere walk waits on the dependency graph (#207).
 - **Event-source API liveness, provider backfill and runbooks (PANT-1126, #203).** Liveness
   probes for `eventbrite` (private token), `ticketmaster` (consumer key) and `seatgeek`
   (client id), plus a `meetup` adapter that explains why nothing Meetup stores can be probed.
