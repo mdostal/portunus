@@ -44,6 +44,10 @@ new one).
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 | `google-api-key` | Google Cloud API key (`AIza...`) | **auto** | `GoogleCloudAPIKeyRotationAdapter`: copies the old key's restrictions → create → verify (`keys:lookupKey`, plus an optional live probe) → store. `--retire-old` **deletes** the old key, which Google can undelete for 30 days. Refuses a stored value that is a service-account JSON key. Needs `apikeys.googleapis.com` enabled; see [Google Cloud API keys](#google-cloud-api-keys) below. |
 | `sentry` | User / org / internal-integration auth token | **manual** | Sentry's token endpoints accept session auth only and reject any bearer token, so no admin credential can mint or revoke a token. `SentryRotationAdapter` is registered so `rotation run` prints the human re-issue steps. See `provider-rotation-matrix.md`. |
+| `meetup` | OAuth client id/secret; legacy API key | **manual** | OAuth clients are managed only in Meetup's web UI (Meetup Pro required). API-key auth was retired on 2019-08-15, so a stored key can't work. See [Meetup](#meetup-oauth-client-and-retired-api-key). |
+| `eventbrite` | Private token, API (client) key, OAuth client secret | **manual** | Developer portal only. See [Eventbrite](#eventbrite-private-token-and-oauth-app-credentials). |
+| `ticketmaster` | Consumer key / consumer secret | **manual** | Developer portal (*My Apps*) only; no developer-facing key API. See [Ticketmaster](#ticketmaster-consumer-key-and-secret). |
+| `seatgeek` | Client id / client secret | **manual** | seatgeek.com/account/develop only; the Platform API is read-only. See [SeatGeek](#seatgeek-client-credentials). |
 
 > **Capability vocabulary:**
 > - `auto` — a programmatic rotation path exists and Portunus has a real adapter for this credential type.
@@ -88,6 +92,104 @@ programmatic rotation endpoint. If you store a Linear personal API key in Portun
 1. Generate a new key in your [Linear API settings](https://linear.app/settings/api).
 2. Re-store it: `portunus drop <name> <sm_name> --backend local` (or via the UI).
 3. Revoke the old key in Linear settings.
+
+### Event-source APIs used by `event-api` (Meetup, Eventbrite, Ticketmaster, SeatGeek)
+
+`event-api` stores these in GCP Secret Manager (`ffe-cicd`) as
+`event-api-{dev,prod}-<provider>-*`. None of the four providers has an API
+for issuing or rotating these credentials (research:
+[provider-rotation-matrix.md](provider-rotation-matrix.md)), so rotating
+one is always a human re-issue. Portunus can't write a new value to a GCP
+backend, so step 3 of each runbook is a `gcloud` call made by a human.
+
+**Before the first rotation**, backfill the real provider. These references were
+imported as `provider=gcp` (the vault backend), which also makes
+`rotation run` pick the GCP service-account adapter for them:
+
+```sh
+python3 scripts/backfill_event_api_providers.py          # dry run: lists what changes
+python3 scripts/backfill_event_api_providers.py --apply  # sets provider only; tags/values untouched; audited as `retag`
+```
+
+Shared re-issue procedure (provider-specific steps below):
+
+1. Re-issue the credential in the provider's UI (below). Keep the old one working.
+2. Write the new value to a file with mode 0600. Don't paste it into a shell
+   argument or an agent chat.
+3. Add it as a new Secret Manager version (the old version stays as a rollback):
+   `gcloud secrets versions add <sm_name> --project=ffe-cicd --data-file=<file>`, then `shred -u <file>`.
+4. `portunus liveness check <name>` where the credential kind has a probe
+   (see [liveness.md](liveness.md#registered-providers)). It should read `live`.
+5. Redeploy or restart `event-api` so it reads the new version, and check it
+   (event ingestion for that source succeeds). This repo doesn't document how
+   `event-api` loads secrets; check its deploy config.
+6. Revoke the old credential in the provider's UI, then disable the previous
+   Secret Manager version: `gcloud secrets versions disable <old-version> --secret=<sm_name> --project=ffe-cicd`.
+7. Do `dev` before `prod`. Each env has its own references, and usually its own app registration.
+
+#### Meetup (OAuth client and retired API key)
+
+- **`event-api-*-meetup-key`**: Meetup retired API-key auth on 2019-08-15,
+  so this value can't authenticate any Meetup endpoint. Don't re-issue it.
+  Confirm `event-api` no longer reads it (grep its source and deploy config),
+  then retire the reference (`portunus state <name> revoked`) and delete the
+  secret from `ffe-cicd`. If `event-api` still reads it, that Meetup
+  integration is already broken and needs moving to OAuth.
+- **`event-api-*-meetup-client-{id,secret}`**: in Meetup's OAuth client
+  settings (meetup.com/graphql/oauth/list; needs the Meetup Pro account that
+  owns the client), reset the client secret, or create a new client if the page
+  doesn't offer a reset. A new client means a new `client-id` too, plus
+  re-registering the redirect URI. The client id isn't secret: it changes
+  only with a new client. Store the new value(s) using steps 2–6. Note: a
+  lapsed Pro subscription disables every client under it, which looks
+  exactly like a revoked secret.
+- Liveness: none possible. Meetup's GraphQL API answers an invalid token
+  with HTTP 200 and the error only in the body, and client credentials only
+  work inside an OAuth exchange. `liveness check` reports these as
+  `unknown` with the reason, and `--all` skips them.
+
+#### Eventbrite (private token and OAuth app credentials)
+
+Everything is on the Eventbrite account's *API Keys* page
+(eventbrite.com/platform/api-keys, or Account Settings > Developer Links > API Keys), per app:
+
+- **`*-eventbrite-private-token`** (personal OAuth token): regenerate it
+  there. Assume the old one stops working as soon as it's regenerated
+  (not verified: whether Eventbrite allows any overlap), so update Secret
+  Manager straight away (steps 2–5), or do it in a quiet window. The
+  liveness probe (`GET /v3/users/me/`) covers this one.
+- **`*-eventbrite-api-key`** (the app's client key) and
+  **`*-eventbrite-oauth-client-{id,secret}`**: there is no in-place reset.
+  Create a new API key / app on the same page, switch `event-api` to it
+  (steps 2–5), then delete the old app (step 6). Users who authorized the old
+  app via OAuth must re-authorize.
+- If a stored `*-eventbrite-api-key` is really a personal token, tag it
+  `liveness_kind=private-token` so liveness probes it. `retag --tags`
+  replaces the whole dict, so include any existing tags.
+
+#### Ticketmaster (consumer key and secret)
+
+- Developer portal: developer-account.ticketmaster.com, then *My Apps*, then the app
+  used by `event-api`. Regenerate the key if the app page offers it,
+  otherwise create a new app with the same API products. (Not verified
+  without a logged-in account: which of the two the portal offers.) A new app gets a new
+  key *and* secret, so update both references together.
+  `*-ticketmaster-callback-url` is config. Change it only if the new app's
+  redirect URL differs.
+- Liveness: `*-ticketmaster-consumer-key` is probed with
+  `GET /discovery/v2/classifications.json?size=1&apikey=…` (401 = dead).
+  The consumer secret isn't accepted on its own by any read endpoint, so it
+  reads `unknown`.
+
+#### SeatGeek (client credentials)
+
+- seatgeek.com/account/develop, then the client `event-api` uses. Regenerate the
+  secret if the page offers it, otherwise register a new client, which also
+  changes `*-seatgeek-client-id`. (Not verified without a logged-in
+  account: whether in-place secret regeneration exists.)
+- Liveness: `*-seatgeek-client-id` is probed with
+  `GET /2/taxonomies?client_id=…` (403 `Invalid client credentials` = dead).
+  The secret is only valid next to its id, so it reads `unknown`.
 
 ### GCP service-account keys -- now auto
 

@@ -397,6 +397,8 @@ Incoming webhook URLs are generated when an app configures a webhook for a works
 
 Personal API keys are managed in Meetup account settings. OAuth application client credentials are issued and managed through the Meetup developer settings UI. No Meetup API endpoint for programmatic management of OAuth app registrations (client_id/secret) or personal API keys.
 
+**Update 2026-10-17 (PANT-1126)**: Meetup retired API-key authentication on 2019-08-15; OAuth 2.0 is the only auth method, and creating OAuth consumers needs an active Meetup Pro subscription (https://help.meetup.com/hc/en-us/articles/41467209211917). The v3 REST endpoints that accepted `?key=` now return 404. A stored `*-meetup-key` therefore cannot authenticate anything. Confirm `event-api` no longer reads it, then drop it rather than re-issuing it. Re-issue runbook: [rotation.md, Meetup](rotation.md#meetup-oauth-client-and-retired-api-key).
+
 ---
 
 ### Eventbrite personal token and OAuth app credentials
@@ -408,6 +410,32 @@ Personal API keys are managed in Meetup account settings. OAuth application clie
 **Source**: https://www.eventbrite.com/platform/docs/authentication
 
 Eventbrite's personal API tokens (including `private_token`) and OAuth app credentials are managed exclusively through the Eventbrite developer portal. No Eventbrite API endpoint for programmatic issuance or rotation of personal tokens or OAuth app client credentials.
+
+Re-issue runbook: [rotation.md, Eventbrite](rotation.md#eventbrite-private-token-and-oauth-app-credentials).
+
+---
+
+### Ticketmaster consumer key and consumer secret
+
+**Vault examples**: `event-api-*-ticketmaster-consumer-key`, `event-api-*-ticketmaster-consumer-secret` (`*-ticketmaster-callback-url` is config)
+
+**Credential type**: Ticketmaster Developer app credentials. The consumer key is the `apikey` query parameter on the Discovery API. The consumer secret is issued with it.
+
+**Source**: https://developer.ticketmaster.com/products-and-docs/apis/getting-started/
+
+**Researched 2026-10-17 (PANT-1126)**: keys are issued per app on the developer portal (developer-account.ticketmaster.com > *My Apps*). Ticketmaster's developer docs document no endpoint to create, regenerate or revoke an app's keys. The API gateway is Apigee (an invalid key gets `401 {"fault":{"faultstring":"Invalid ApiKey","detail":{"errorcode":"oauth.v2.InvalidApiKey"}}}`, observed 2026-10-17). Apigee's key-pair APIs (`organizations.developers.apps.keys`) are management-plane APIs for the Apigee org owner, which is Ticketmaster, so app developers can't call them. Classified `manual`: this is a documented absence, not a provider statement that rotation is impossible. Reclassify if Ticketmaster publishes a developer key API. Runbook: [rotation.md, Ticketmaster](rotation.md#ticketmaster-consumer-key-and-secret).
+
+---
+
+### SeatGeek client id and client secret
+
+**Vault examples**: `event-api-*-seatgeek-client-id`, `event-api-*-seatgeek-client-secret`
+
+**Credential type**: SeatGeek Platform API client credentials. `client_id` is sent as a query parameter (or the HTTP Basic username). `client_secret` is optional on public reads.
+
+**Source**: https://developer.seatgeek.com/ (the API's own error points to the management page: `403 "Client is required - visit https://seatgeek.com/account/develop"`, observed 2026-10-17)
+
+**Researched 2026-10-17 (PANT-1126)**: clients are created and managed on the SeatGeek account's *Develop* page (seatgeek.com/account/develop). The Platform API (`api.seatgeek.com/2`) has read endpoints only (events, performers, venues, taxonomies, recommendations), with no client-management endpoint. An invalid `client_id` gets `403 "Invalid client credentials"` (code 40302). Classified `manual`. **Not verified** (needs a logged-in account): whether the Develop page can regenerate a secret in place or only create a new client. Runbook: [rotation.md, SeatGeek](rotation.md#seatgeek-client-credentials).
 
 ---
 
@@ -516,11 +544,9 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 | Pixabay | API key | `social-engine-dev-pixabay-api-key`, `social-engine-prod-pixabay-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
 | PostHog | Project API key / server API key | `*-posthog-api-key`, `*-posthog-server-key`, `*-posthog-key`, `*-posthog-host`, `*-posthog-tracking` | PostHog personal API keys (for personal developer access) ARE manageable via API (`/api/users/@me/personal_api_keys/`). The keys stored here appear to be project API keys (used by applications), which have a different management path. `*-posthog-tracking` and `*-posthog-host` are config values, not credentials. Project API key rotation not confirmed via API. |
 | Qdrant Cloud | Cloud API key | `qdrant-cloud-api-key`, `qdrant-cloud-url` | Qdrant Cloud management API exists; API key rotation specifics not confirmed; `qdrant-cloud-url` is a config value. |
-| SeatGeek | OAuth app client credentials | `*-seatgeek-client-id`, `*-seatgeek-client-secret` | Ticketing API; OAuth app credential management path not confirmed |
 | SerpAPI | API key | `*-serpapi-key` | Search API; key management via dashboard; rotation API not confirmed |
 | Shippo | API key / webhook secret | `game-library-dev-shippo-api-key`, `game-library-dev-shippo-webhook-secret` | Shipping API; key management endpoints not confirmed |
 | Slack OAuth app credentials | Client ID / client secret / signing secret | `monitoring-dev-slack-client-id`, `monitoring-dev-slack-client-secret`, `monitoring-dev-slack-signing-secret`, `monitoring-dev-slack-verification-token`, `monitoring-dev-slack-app-id` | Slack app-level credentials issued per app registration; rotation requires Slack app reconfiguration; programmatic path not confirmed. `monitoring-dev-slack-app-id` is a config value, not a credential. |
-| Ticketmaster | Consumer key / consumer secret | `*-ticketmaster-consumer-key`, `*-ticketmaster-consumer-secret`, `*-ticketmaster-callback-url` | Ticketmaster API developer credentials; rotation path not confirmed; `*-callback-url` is a config value. |
 | Tremendous | API key / webhook secret | `flayr-tremendous-api-key`, `social-engine-prod-tremendous-webhook-secret` | Rewards platform; key management via dashboard; rotation API not confirmed |
 | Upstash | Redis REST token / API key | `*-upstash-redis-rest-token`, `*-upstash-redis-rest-url`, `*-upstash-api-key`, `orchestration-dev-upstash-email` | Upstash management API (`/v2/redis`) exists with a `reset-password` endpoint; whether that covers the REST access token specifically is not confirmed. `*-upstash-redis-rest-url` is a config value. `orchestration-dev-upstash-email` is an account identifier, not a credential. |
 | Vercel AI | API key | `game-library-dev-vercel-ai-api-key` | Vercel AI is a distinct product from Vercel CI/CD (see `vercel-deploy-token` in `auto`); Vercel AI API key rotation endpoints not confirmed separately |
