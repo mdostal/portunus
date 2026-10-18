@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **APNs auth-key liveness and mobile credential runbook (PANT-1127, #202).** A new `apns`
+  liveness probe signs an ES256 provider JWT with the stored `.p8` and sends it to APNs over
+  HTTP/2. The push targets a device token that can't exist, as a silent `background` push with
+  `apns-expiration: 0`, so nothing is delivered. `403 InvalidProviderToken` reads `dead`, and a
+  device-token refusal (`400 BadDeviceToken`) reads `live`. Environment or topic mismatches,
+  429 and 5xx read `unknown`. It needs the `apns_team_id` tag and a key ID (the `apns_key_id`
+  tag, or the name suffix as in `apns-authkey-B9FVCQ4GB4`). It also needs the new optional
+  `pantheon-portunus[apns]` extra (`h2`). The new `docs/mobile-credentials-runbook.md` covers
+  the manual re-issue of APNs keys, App Store Connect API keys, Apple code-signing certificates
+  and profiles, and Android keystores. It's linked from the rotation matrix and `rotation.md`.
+  No rotation adapters: none of these has a provider API.
 - **Keyless GCP access for Secret Manager writes (PANT-1171, #231).** WIF bindings can now
   impersonate a least-privilege service account. After the STS exchange, `GCPWorkloadIdentityAuth`
   calls the IAM Credentials API `generateAccessToken` (`service_account=`), so writes need no
