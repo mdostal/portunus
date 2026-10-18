@@ -46,3 +46,46 @@ def test_auth_gcp_fails_closed_with_no_token(home, capsys):
     err = capsys.readouterr().err
     assert rc == 1
     assert "OIDC" in err
+
+
+def test_auth_gcp_uses_binding_service_account_and_reports_it(home, monkeypatch, capsys):
+    from portunus.backend import VaultBinding, save_vault_bindings
+    save_vault_bindings({"ffe-cicd": VaultBinding(
+        "ffe-cicd", wif_audience="aud",
+        impersonate_service_account="portunus@ffe-cicd.iam.gserviceaccount.com",
+    )})
+    monkeypatch.setenv("PORTUNUS_OIDC_TOKEN", "OIDC.JWT.TEST")
+
+    def fake_mint(self):
+        from portunus.auth import GCPAccessToken
+        return GCPAccessToken(
+            access_token="SA.SECRET.TOKEN", expires_at=1, identity="agent:hive",
+            scope=self.scope, service_account=self.service_account,
+        )
+    monkeypatch.setattr("portunus.cli.GCPWorkloadIdentityAuth.mint", fake_mint)
+
+    rc = main(["auth", "gcp", "--project", "ffe-cicd"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "service_account=portunus@ffe-cicd.iam.gserviceaccount.com" in captured.out
+    assert "SA.SECRET.TOKEN" not in captured.out + captured.err
+    assert "OIDC.JWT.TEST" not in captured.out + captured.err
+
+
+def test_auth_gcp_service_account_flag_overrides_binding(home, monkeypatch, capsys):
+    from portunus.backend import VaultBinding, save_vault_bindings
+    save_vault_bindings({"ffe-cicd": VaultBinding(
+        "ffe-cicd", wif_audience="aud", impersonate_service_account="old@p.iam.gserviceaccount.com",
+    )})
+    monkeypatch.setenv("PORTUNUS_OIDC_TOKEN", "OIDC.JWT.TEST")
+    seen = {}
+
+    def fake_mint(self):
+        seen["sa"] = self.service_account
+        from portunus.auth import GCPAccessToken
+        return GCPAccessToken(access_token="X", expires_at=1, identity="i", scope=self.scope)
+    monkeypatch.setattr("portunus.cli.GCPWorkloadIdentityAuth.mint", fake_mint)
+
+    assert main(["auth", "gcp", "--project", "ffe-cicd",
+                 "--service-account", "new@p.iam.gserviceaccount.com"]) == 0
+    assert seen["sa"] == "new@p.iam.gserviceaccount.com"

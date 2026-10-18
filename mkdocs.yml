@@ -51,12 +51,14 @@ nav:
   - Core Concepts: concepts.md
   - Architecture: architecture.md
   - Backends & Configuration: backends.md
+  - Keyless GCP Access: gcp-keyless.md
   - Security:
     - Access Control (Petitio): access-control.md
     - Audit Log: audit.md
   - Rotation: rotation.md
   - Provider Rotation Matrix: provider-rotation-matrix.md
   - n8n Rotation Runbook: n8n-rotation-runbook.md
+  - Mobile Credentials Runbook: mobile-credentials-runbook.md
   - Liveness & Parity: liveness.md
   - Reference:
     - CLI Reference: cli-reference.md

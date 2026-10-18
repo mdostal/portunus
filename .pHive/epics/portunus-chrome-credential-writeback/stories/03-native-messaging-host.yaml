@@ -1,0 +1,26 @@
+id: 03-native-messaging-host
+epic: portunus-chrome-credential-writeback
+title: "`portunus browser host` native-messaging host + install-host/uninstall-host"
+status: blocked   # build only if operator Q1 includes real profiles and Q2 = yes
+complexity: medium
+methodology: tdd
+depends_on: [02-writeback-plan-preflight]
+
+description: |
+  Chrome-launched stdio host speaking Chrome's native-messaging framing (uint32 little-endian
+  length prefix + UTF-8 JSON). The host manifest pins exactly one extension ID in allowed_origins.
+  Message types: `hello` (version handshake), `deliver` (the ONLY value-bearing message, host ->
+  extension, sent once per update), `outcome` (extension -> host: stored | dismissed | error:<code>).
+  Install/uninstall writes the per-platform manifest (macOS: ~/Library/Application Support/Google/
+  Chrome/NativeMessagingHosts/; Linux: ~/.config/google-chrome/NativeMessagingHosts/ -- confirm
+  paths against Chrome's docs in-story, not from this note).
+
+acceptance_criteria:
+  - "Given framed input, when the host reads/writes, then framing round-trips and oversize/short/garbage frames are rejected with a value-free error"
+  - "Given an unknown message type or an outcome carrying any field besides the enum, then the host rejects it"
+  - "Given a deliver message, when the host logs (any level), then the log contains no value -- test captures logging + stdout/stderr with a sentinel value and asserts absence"
+  - "Given install-host into a temp HOME, then the manifest has the pinned extension ID, an absolute host path, mode 0644, and uninstall-host removes it"
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "deliver frame is the single new sink; sentinel-leak test covers logs, exceptions, stdout"
