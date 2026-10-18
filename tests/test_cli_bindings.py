@@ -129,3 +129,33 @@ def test_bindings_show_json_includes_backend_and_sync_mode(home, capsys):
     data = json.loads(out)
     assert data["demo"]["backend"] == "local"
     assert data["demo"]["sync_mode"] == "cached"
+
+
+def test_bindings_set_writes_impersonate_service_account(home, capsys):
+    rc = main(["bindings", "set", "ffe-cicd",
+               "--impersonate-service-account", "portunus@ffe-cicd.iam.gserviceaccount.com"])
+    assert rc == 0
+    assert (load_vault_bindings()["ffe-cicd"].impersonate_service_account
+            == "portunus@ffe-cicd.iam.gserviceaccount.com")
+
+
+def test_bindings_set_preserves_impersonate_service_account_on_unrelated_update(home, capsys):
+    # Regression: `bindings set` used to rebuild VaultBinding without this
+    # field, silently wiping a hand-configured impersonation on any update.
+    main(["bindings", "set", "ffe-cicd",
+          "--impersonate-service-account", "portunus@ffe-cicd.iam.gserviceaccount.com"])
+    capsys.readouterr()
+    rc = main(["bindings", "set", "ffe-cicd", "--wif-audience", "//iam.googleapis.com/some/aud"])
+    assert rc == 0
+    b = load_vault_bindings()["ffe-cicd"]
+    assert b.wif_audience == "//iam.googleapis.com/some/aud"
+    assert b.impersonate_service_account == "portunus@ffe-cicd.iam.gserviceaccount.com"
+
+
+def test_bindings_show_includes_impersonate_service_account(home, capsys):
+    main(["bindings", "set", "ffe-cicd",
+          "--impersonate-service-account", "portunus@ffe-cicd.iam.gserviceaccount.com"])
+    capsys.readouterr()
+    main(["bindings", "show", "ffe-cicd", "--json"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["ffe-cicd"]["impersonate_service_account"] == "portunus@ffe-cicd.iam.gserviceaccount.com"
