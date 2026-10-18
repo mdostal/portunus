@@ -1169,6 +1169,39 @@ class ResendRotationAdapter:
             retired_old=retired,
         )
 
+    # --- hooks for `portunus rotation roll` (rollout.py) ----------------------
+
+    def old_key_id(self, ref) -> str:
+        return dict(getattr(ref, "tags", None) or {}).get("resend_api_key_id", "")
+
+    def delete_key(self, ref, resolver, key_id: str) -> bool:
+        """``DELETE /api-keys/{key_id}`` with the admin key. True when the key
+        is gone (404 counts: already the goal state)."""
+        tags = dict(getattr(ref, "tags", None) or {})
+        ref_name = getattr(ref, "name", str(ref))
+        admin_template = (
+            self._admin_credential_ref
+            or "{{secret:%s}}" % tags.get("resend_admin_ref", ref_name)
+        )
+        status, _ = self._admin_call(resolver, admin_template, "DELETE", f"/api-keys/{key_id}", None)
+        return status in (200, 204, 404)
+
+    def restore_key_id(self, ref, resolver) -> None:
+        """Undo the metadata half of rotate(): `ref` is the reference as it
+        was BEFORE the rotation, so its tags go back verbatim and its old key
+        id is no longer listed as superseded."""
+        tags = dict(getattr(ref, "tags", None) or {})
+        ref_name = getattr(ref, "name", str(ref))
+        registry = self._registry or getattr(resolver, "registry", None)
+        if registry is not None and hasattr(registry, "retag") and ref_name in registry:
+            registry.retag(ref_name, tags=tags)
+        key_id = tags.get("resend_api_key_id", "")
+        if key_id:
+            update_rotation_bindings(lambda b: _drop_superseded(b, "resend", key_id))
+
+    def mark_retired(self, key_id: str) -> None:
+        update_rotation_bindings(lambda b: _drop_superseded(b, "resend", key_id))
+
     # --- HTTP helpers (all calls go through self._transport) -----------------
 
     def _admin_call(self, resolver, admin_template, method, path, body):
