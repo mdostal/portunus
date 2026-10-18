@@ -18,7 +18,16 @@ All notable changes to Portunus are documented in this file.
   `portunus gcp add-version <project> <secret> --stdin|--value-file` writes a version through the
   binding after that preflight, passing the value to gcloud on stdin only. The new
   `docs/gcp-keyless.md` runbook covers setting this up.
-
+- **Vercel token liveness (PANT-1149, #144).** `portunus liveness check` now probes `vercel`
+  references with `GET https://api.vercel.com/v5/user/tokens/current`. This is the token's own
+  metadata, read-only and with no project or deployment data. Vercel answers every auth failure
+  with 403, including a request with no token, so only 401 or a 403 carrying
+  `error.invalidToken: true` reads `dead`. Any other 403 reads `unknown`. The Vercel transport
+  reads the response body only to pull out that flag and the token's `expiresAt`, and nothing
+  else from the body leaves it. A live token shows its expiry date. Within 14 days of expiry
+  the detail warns and names `portunus rotation run <name>`, because a Vercel token can only
+  be rotated while it still works. A deploy token stored under `gcp` needs the
+  `liveness_provider=vercel` tag.
 - **Reverse rotation diagnosis (PANT-1121, #208).** Audit entries now carry a wall-clock `ts`
   (epoch seconds, covered by the hash). Entries written before this have none and still verify.
   `portunus audit` gains `--since`/`--until` (dates, datetimes, epoch seconds or ages like
