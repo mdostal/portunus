@@ -23,8 +23,9 @@ checked without side effects. Liveness checks for the other three were deliberat
   matches Play without making a release. Checking it the wrong way could itself turn into a
   support ticket.
 
-These references live in GCP Secret Manager (`ffe-cicd`). Portunus can't write a new value to a
-GCP backend, so storing a new value is a human `gcloud` call.
+These references live in GCP Secret Manager (`ffe-cicd`). Store a new value as a new secret
+version with `portunus gcp add-version`, which goes through the project's binding
+([gcp-keyless.md](gcp-keyless.md)), or with plain `gcloud`.
 
 ## Shared procedure
 
@@ -32,7 +33,8 @@ GCP backend, so storing a new value is a human `gcloud` call.
 2. Write the new value to a file with mode 0600. Don't paste it into a shell argument, an agent
    chat or a PR. Binary files (`.p12`, `.jks`) are stored base64-encoded: `base64 -w0 in > out`.
 3. Add it as a new Secret Manager version. The old version stays as a rollback:
-   `gcloud secrets versions add <sm_name> --project=ffe-cicd --data-file=<file>`, then
+   `portunus gcp add-version ffe-cicd <sm_name> --value-file <file>`, or
+   `gcloud secrets versions add <sm_name> --project=ffe-cicd --data-file=<file>`. Then run
    `shred -u <file>`.
 4. Point the consumer at it: redeploy the push server, or re-run the CI signing job that reads
    it, and confirm it works (a push arrives, a build signs and uploads). This repo doesn't

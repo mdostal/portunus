@@ -104,8 +104,12 @@ class VaultBinding:
     which can expire and demand an interactive reauth Portunus cannot
     perform itself. Requires the `account` identity to hold
     `roles/iam.serviceAccountTokenCreator` on the target service account.
-    Mutually exclusive with a minted WIF token (same as `account`); empty
-    means "no impersonation." GCP-specific; ignored by other backend types.
+    When `wif_audience` is also set, no gcloud identity is involved at all:
+    the minted WIF federated token is exchanged for this service account's
+    short-lived token via the IAM Credentials API (the pool principal needs
+    `roles/iam.workloadIdentityUser` on it instead) -- the fully keyless,
+    no-human-login path. Empty means "no impersonation." GCP-specific;
+    ignored by other backend types.
     """
 
     project: str
@@ -235,6 +239,9 @@ class GcloudBackend:
                     audience=binding.wif_audience,
                     token_source=EnvOIDCTokenSource(),
                     audit=self._audit or AuditChain(),
+                    # With WIF the impersonation hop happens in-process via
+                    # the IAM Credentials API, not gcloud's flag.
+                    service_account=binding.impersonate_service_account,
                 )
 
     def _credential_provider_for(self, project: str) -> Optional[GCPWorkloadIdentityAuth]:
@@ -310,6 +317,46 @@ class GcloudBackend:
                 f"gcloud versions describe failed for {sm_name}: {proc.stderr.strip()[:200]}"
             )
         return json.loads(proc.stdout or "{}").get("createTime", "")
+
+    def add_version(self, sm_name: str, value: str, project: str = "") -> str:
+        """Write `value` as a new version of an existing secret, under the
+        same per-project identity selection as access(): WIF token file, or
+        --account [+ --impersonate-service-account], or ambient gcloud.
+
+        The value reaches gcloud only on stdin (`--data-file=-`), never argv,
+        so it can't show up in `ps` or a shell history. Returns gcloud's
+        version resource name/number (not secret); errors carry gcloud's
+        stderr, which never contains the value."""
+        if shutil.which("gcloud") is None:
+            raise BackendError("gcloud CLI not found on PATH")
+        if not value:
+            raise BackendError("refusing to add an empty secret version")
+        effective_project = project or self.project
+        provider = self._credential_provider_for(effective_project)
+        binding = self.bindings.get(effective_project)
+        with self._access_token_file(provider) as token_file:
+            cmd = ["gcloud"]
+            if token_file:
+                cmd.append(f"--access-token-file={token_file}")
+            elif binding and binding.account:
+                cmd.append(f"--account={binding.account}")
+                if binding.impersonate_service_account:
+                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+            cmd.extend(["secrets", "versions", "add", sm_name, "--data-file=-"])
+            if effective_project:
+                cmd.append(f"--project={effective_project}")
+            cmd.append("--format=value(name)")
+            try:
+                proc = self.runner(
+                    cmd, input=value, capture_output=True, text=True, timeout=self.timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise BackendError(f"gcloud timeout adding a version to {sm_name}") from exc
+        if proc.returncode != 0:
+            raise BackendError(
+                f"gcloud versions add failed for {sm_name}: {proc.stderr.strip()[:200]}"
+            )
+        return (proc.stdout or "").strip()
 
     @contextmanager
     def _access_token_file(self, provider: Optional[GCPWorkloadIdentityAuth]):

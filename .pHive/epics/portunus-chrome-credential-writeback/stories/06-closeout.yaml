@@ -1,0 +1,19 @@
+id: 06-closeout
+epic: portunus-chrome-credential-writeback
+title: live proof (digest-only or documented skip), docs, version bump, follow-ups
+status: blocked
+complexity: low
+methodology: tdd
+depends_on: [05-verify-audit-rotation-sink]
+
+description: |
+  Live proof on a throwaway profile with a dummy origin, digest-only, per platform actually
+  available; any platform not exercised is stated as not verified (precedent: read epic's Linux
+  gap). Update docs/backends.md (write-back section, driver scope, consent model) and
+  docs/rotation.md (Chrome sink). Version bump (minor). File follow-ups for anything deferred
+  (e.g. driver C if dropped, Windows still blocked per #181).
+
+acceptance_criteria:
+  - "Given the live proof runs, then its artifact contains only SHA-256 digests"
+  - "Given a platform could not be live-tested, then lessons-learned.md says so plainly"
+  - "Given the epic ships, then docs describe exactly which drivers exist and which Chrome-owned path each uses"
