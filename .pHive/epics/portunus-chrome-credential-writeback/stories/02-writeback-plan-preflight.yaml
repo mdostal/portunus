@@ -1,0 +1,36 @@
+id: 02-writeback-plan-preflight
+epic: portunus-chrome-credential-writeback
+title: chrome_writeback.plan() + `portunus browser update --dry-run` -- metadata-only preflight
+status: blocked
+complexity: medium
+methodology: tdd
+depends_on: [01-spike-chrome-write-paths]
+
+description: |
+  New module src/portunus/chrome_writeback.py. `plan(target_ref, source_ref, user_data_dir=None)
+  -> WritePlan` parses a `chrome:<profile>:<origin>:<username>` sm_name with the same
+  profile-first / username-last split ChromeBackend.access() uses (factor it into one shared
+  helper rather than duplicating it), confirms the row exists via chrome_discovery.list_logins(),
+  reports Chrome-running via chrome_discovery's process check, flags an account-store match, and
+  names the driver that would be used. It NEVER resolves source_ref and never imports chrome_crypto.
+
+acceptance_criteria:
+  - "Given chrome:Default:https://example.com:8443:user@example.com, when plan() parses it, then origin keeps its port (shared parser, also used by ChromeBackend)"
+  - "Given no matching row, when plan() runs, then it raises a specific 'no such saved login' error"
+  - "Given `portunus browser update <chrome-ref> --from <ref> --dry-run`, then it prints the plan (profile, origin, username, store, chrome running, driver) and zero password material"
+  - "Structural: chrome_writeback's plan path never imports chrome_crypto and never calls Resolver/backend .access() (AST check, same style as existing tests/ structural checks)"
+  - "Structural: no module in chrome_writeback opens 'Login Data*' for write or issues INSERT/UPDATE/DELETE against it (patch sqlite3.connect + set_trace_callback; sqlite3.Cursor.execute is immutable on 3.13)"
+
+files_to_modify:
+  - file: src/portunus/chrome_writeback.py
+    change: new
+  - file: src/portunus/backend.py
+    change: "ChromeBackend.access() uses the shared sm_name parser"
+  - file: src/portunus/cli.py
+    change: "browser update subcommand (dry-run only in this story)"
+  - file: tests/test_chrome_writeback_plan.py
+    change: new
+
+cross_cutting:
+  - concern: secret-boundary-invariant
+    action: "plan path is structurally value-free; proven by AST test"
