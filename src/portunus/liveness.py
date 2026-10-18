@@ -44,7 +44,8 @@ long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
 `invalidToken` flag and the token's expiry from its response; Convex, PANT-1151,
 probes a deploy key and reads deployment env vars for parity; PANT-1127 adds
 APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
-probes API keys only). See docs/liveness.md.
+probes API keys only; Clerk, PANT-1148, probes the instance secret key
+against the JWKS endpoint). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -1408,3 +1409,64 @@ class ZernioLivenessAdapter(CredentialKindLivenessAdapter):
 
 
 register_liveness_adapter("zernio", ZernioLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Clerk (PANT-1148, GH #145). Only the instance secret key authenticates the
+# Backend API; the publishable key is public and the webhook signing secret
+# is never sent to Clerk.
+# ---------------------------------------------------------------------------
+
+
+class ClerkLivenessAdapter(CredentialKindLivenessAdapter):
+    """Clerk: `GET https://api.clerk.com/v1/jwks` with the secret key as a
+    bearer token. The JWKS endpoint needs the secret key but returns only the
+    instance's public signing keys -- no users, sessions or settings. An
+    invalid or revoked key gets 401 `clerk_key_invalid` (checked with a bogus
+    key on 2026-10-18). A 403 would be an authorization problem on a key
+    Clerk accepted, so it stays unknown.
+
+    A value that is plainly not a secret key -- a `pk_` publishable key or a
+    `whsec_` webhook secret stored under a `secret-key` name -- reads unknown
+    without a request: Clerk would answer 401 and it would look dead."""
+
+    URL = "https://api.clerk.com/v1/jwks"
+    NOT_SECRET_KEY = -1  # boundary sentinel: never a real HTTP status
+    _NOT_SECRET_PREFIXES = ("pk_", "whsec_")
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__(
+            "clerk",
+            HTTPProbe(url=self.URL, dead_statuses=(401,)),
+            probe_kinds=("secret-key",),
+            not_probed={
+                "publishable-key": "the publishable key is public (it only names the Frontend API "
+                                   "host) and authenticates nothing",
+                "webhook-secret": "a webhook signing secret is never sent to Clerk's API; it only "
+                                  "verifies Svix signatures on incoming webhooks",
+            },
+            transport=transport, timeout=timeout,
+        )
+
+    def check(self, ref, resolver) -> LivenessResult:
+        if not self.can_probe(ref):
+            return super().check(ref, resolver)
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if value.startswith(self._NOT_SECRET_PREFIXES):
+                return self.NOT_SECRET_KEY
+            return self._transport(
+                self.probe.method, self.probe.url, self.probe.headers_for(value), self._timeout
+            )
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NOT_SECRET_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: stored value is not a Clerk secret key "
+                                         "(pk_/whsec_ prefix)")
+        return LivenessResult(ref.name, self.provider, self.probe.classify(code), http_status=code,
+                              detail=f"{self.probe.method} {self.probe.url} -> {code}")
+
+
+register_liveness_adapter("clerk", ClerkLivenessAdapter)

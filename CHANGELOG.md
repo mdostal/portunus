@@ -6,6 +6,12 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Clerk secret-key liveness (PANT-1148, #145).** New `clerk` liveness adapter. It sends the
+  instance secret key to `GET https://api.clerk.com/v1/jwks`, which returns only public signing
+  keys. A 401 (`clerk_key_invalid`) reads `dead` and anything else that isn't 2xx reads `unknown`.
+  Publishable keys and webhook secrets aren't probed, and a `pk_`/`whsec_` value filed under a
+  secret-key name is never sent. docs/liveness.md#clerk covers parity, and why auto-rotation
+  isn't built: instance-key rotation is only in Clerk's private-beta Platform API.
 - **Zernio rotation + roll-everywhere (PANT-1146, #174).** `portunus rotate zernio` rotates a Zernio
   webhook signing secret or API key and pushes the new value to every env-var target in one
   ordered flow, with `--dry-run`, `--push-only`, `--rollback` and `--retire-old`. Webhook secret:

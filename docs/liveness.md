@@ -108,6 +108,7 @@ provider's API docs and a real key.
 | `vercel-ai` | `GET https://ai-gateway.vercel.sh/v1/credits` (Bearer) | 401 only | Vercel AI Gateway API key, not the Vercel deploy token. |
 | `apns` | HTTP/2 `POST /3/device/<64 zeros>` to the APNs sandbox (or production) host with a JWT signed by the stored `.p8` | 403 `InvalidProviderToken` only | A push that can't be delivered. Needs the `apns_team_id` tag and the key ID. See [APNs auth keys](#apns-auth-keys). |
 | `zernio` | `GET https://zernio.com/api/v1/profiles` (Bearer) | 401 only | Probes `*-api-key` only. 401 (`invalid_credentials`) is an invalid, revoked or expired key. A 403 is a valid key with its `accounts` group switched off, so it reads `unknown`. The webhook signing secret is never sent to Zernio's API: it reads `unknown` with no request, and sweeps skip it. `portunus rotate zernio` verifies it with a test delivery instead (see [zernio-rotation.md](zernio-rotation.md)). Tag a key stored under `gcp` with `liveness_provider=zernio`. |
+| `clerk` | `GET https://api.clerk.com/v1/jwks` (Bearer) | 401 only | Probes `*-clerk-secret-key` only. JWKS needs the secret key but returns only the instance's public signing keys, with no users, sessions or settings. A bogus `sk_test_` key got 401 `clerk_key_invalid` on 2026-10-18. A 403 reads `unknown`. The publishable key is public and the webhook signing secret is never sent to Clerk, so both read `unknown` with no request and sweeps skip them. A `pk_`/`whsec_` value stored under a secret-key name is also not sent, since it would read as a false `dead`. The live 200 path hasn't been confirmed against a real key yet. Tag keys stored under `gcp` with `liveness_provider=clerk`. See [Clerk](#clerk). |
 
 Each of the long-tail probes above (PANT-1125, GH #204) returned its listed dead status for a
 bogus key when it was added. They haven't been confirmed against a real live key yet, so the
@@ -125,8 +126,8 @@ Long-tail providers with no probe yet. They read `unknown` (no adapter):
 | Slack incoming webhooks | The URL is the credential. The only call is a POST to it, and a valid payload posts a message. |
 | Slack OAuth app credentials | Client secret, signing secret and verification token don't authenticate any read-only call on their own. |
 
-The other provider sub-issues of #141 add their own: Autumn (#143) and Clerk (#145).
-Vercel (#144) and Convex (#142) are the `vercel` and `convex` rows above.
+The other provider sub-issue of #141 adds its own: Autumn (#143).
+Vercel (#144), Convex (#142) and Clerk (#145) are the `vercel`, `convex` and `clerk` rows above.
 
 The event-source probes (PANT-1126 / #203) pick their adapter from `provider`, so they only
 apply once the references carry their real provider rather than `gcp`. See
@@ -183,6 +184,36 @@ changes to one every 20 minutes *per connection*, so neither touches the product
 server's connections. A daily sweep is plenty: the key doesn't expire, it only gets revoked.
 
 Re-issue runbook: [mobile-credentials-runbook.md](mobile-credentials-runbook.md#apns-auth-key-p8).
+
+## Clerk
+
+Clerk (PANT-1148, GH #145) stores three kinds of value per instance:
+`*-clerk-secret-key`, `*-clerk-publishable-key` and `*-clerk-webhook-secret`.
+Only the secret key is a credential that authenticates a read-only call, so
+it's the only one probed (see the `clerk` row above):
+
+```sh
+portunus retag social-engine-prod-clerk-secret-key --tags liveness_provider=clerk
+portunus liveness check social-engine-prod-clerk-secret-key
+```
+
+**Parity.** The secret and publishable keys are both synced to Vercel
+(`CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`), so their copies can
+drift the way the Autumn key did. `portunus parity check` can compare the
+vault/`ref` copy with `gcp` and any `convex:` env var today. There's no
+`vercel:` parity target yet, so the Vercel copy can't be compared through
+Portunus. A dead Vercel copy only shows up as auth failures in the deployed
+app.
+
+**Rotation.** The Backend API has no endpoint for rotating the instance
+secret key. Its `rotate` endpoints cover machine secret keys, OAuth
+application secrets and SCIM directory keys only. The Clerk
+[Platform API](https://github.com/clerk/openapi-specs/blob/main/platform/beta.yml)
+does have `POST /v1/platform/applications/{id}/rotate_secret_keys` and a
+per-instance variant, with `delay_old_secrets_expiration_hours` for overlap.
+It's in private beta and needs a Platform API access token, not the instance
+secret key, so auto-rotation isn't built. Rotate in the Clerk Dashboard
+(**API keys**) and re-sync every copy.
 
 ## Parity
 
