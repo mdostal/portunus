@@ -104,6 +104,7 @@ provider's API docs and a real key.
 | `shippo` | `GET https://api.goshippo.com/addresses?results=1` (`ShippoToken`) | 401 only | Test and live tokens use the same host. |
 | `tremendous` | `GET {host}/api/v2/funding_sources` (Bearer) | 401 only | Sandbox (`testflight.tremendous.com`) and production (`api.tremendous.com`) keys only work on their own host, so the host comes from the key prefix (`TEST_` / `PROD_`). For an older key with no prefix, set the `tremendous_env` tag to `sandbox` or `production`. With neither, the key reads `unknown` and no request is sent. |
 | `vercel-ai` | `GET https://ai-gateway.vercel.sh/v1/credits` (Bearer) | 401 only | Vercel AI Gateway API key, not the Vercel deploy token. |
+| `zernio` | `GET https://zernio.com/api/v1/profiles` (Bearer) | 401 only | Probes `*-api-key` only. 401 (`invalid_credentials`) is an invalid, revoked or expired key. A 403 is a valid key with its `accounts` group switched off, so it reads `unknown`. The webhook signing secret is never sent to Zernio's API: it reads `unknown` with no request, and sweeps skip it. `portunus rotate zernio` verifies it with a test delivery instead (see [zernio-rotation.md](zernio-rotation.md)). Tag a key stored under `gcp` with `liveness_provider=zernio`. |
 
 Each of the long-tail probes above (PANT-1125, GH #204) returned its listed dead status for a
 bogus key when it was added. They haven't been confirmed against a real live key yet, so the

@@ -169,6 +169,35 @@ Authorization: Bearer <admin-token>
 
 ---
 
+### Zernio API key and webhook signing secret
+
+**Vault examples**: `social-engine-*-zernio-api-key`, `social-engine-*-zernio-webhook-secret`
+
+**Credential type**: Zernio (formerly Late, getlate.dev) API key (`sk_` + 64 hex; `zrk_` for a key with resource groups switched off), and the HMAC-SHA256 signing secret of one Zernio webhook.
+
+**Source**: https://docs.zernio.com/api/openapi (v1.291.0, read 2026-10-18), https://docs.zernio.com/webhooks
+
+**Implemented**: `ZernioRotationAdapter` and `portunus rotate zernio` (PANT-1146). An earlier pass of this matrix listed Zernio as `unknown` ("no rotation API found"). That was wrong: the OpenAPI spec has `/v1/api-keys` (list, create, delete), and `PUT /v1/webhooks/settings` takes a caller-chosen `secret`. Zernio never generates a webhook secret. `zrk_` keys can't manage keys. See [zernio-rotation.md](zernio-rotation.md).
+
+**Concrete call sequence**:
+
+```bash
+# API key
+POST   https://zernio.com/api/v1/api-keys        # {name, scope, profileIds, permission, disabledResourceGroups}
+                                                 # 201 {apiKey: {id, key, ...}} -- the key is returned once
+GET    https://zernio.com/api/v1/profiles        # verify with the NEW key: 200 (403 = valid, group off; 401 = invalid)
+# store, push to every env target, redeploy
+DELETE https://zernio.com/api/v1/api-keys/{old_id}
+
+# Webhook signing secret
+PUT    https://zernio.com/api/v1/webhooks/settings   # {webhookId, secret}
+POST   https://zernio.com/api/v1/webhooks/test       # {webhookId}
+GET    https://zernio.com/api/v1/webhooks/logs?webhookId=...   # delivery status + receiver response
+POST   https://zernio.com/api/v1/webhooks/logs/redeliver       # {webhookId, eventId}
+```
+
+---
+
 ### YouTrack personal permanent token (JetBrains Hub)
 
 **Vault examples**: `ffe-orchestration-dev-youtrack-api-key`
@@ -552,7 +581,6 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 | Tremendous | API key / webhook secret | `flayr-tremendous-api-key`, `social-engine-prod-tremendous-webhook-secret` | Rewards platform; key management via dashboard; rotation API not confirmed |
 | Upstash | Redis REST token / API key | `*-upstash-redis-rest-token`, `*-upstash-redis-rest-url`, `*-upstash-api-key`, `orchestration-dev-upstash-email` | Upstash management API (`/v2/redis`) exists with a `reset-password` endpoint; whether that covers the REST access token specifically is not confirmed. `*-upstash-redis-rest-url` is a config value. `orchestration-dev-upstash-email` is an account identifier, not a credential. |
 | Vercel AI | API key | `game-library-dev-vercel-ai-api-key` | Vercel AI is a distinct product from Vercel CI/CD (see `vercel-deploy-token` in `auto`); Vercel AI API key rotation endpoints not confirmed separately |
-| Zernio | API key / webhook secret | `social-engine-*-zernio-api-key`, `social-engine-*-zernio-webhook-secret` | Communications API; no rotation API found in public docs |
 
 ---
 

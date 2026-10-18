@@ -533,6 +533,25 @@ portunus rotation run ffe-cicd-sa-key --retire-old
 
 ---
 
+### `rotate zernio`
+
+Rotate a Zernio webhook signing secret or API key, and push the new value to every env-var target it is injected into (Vercel, Convex) in order: receivers first, Zernio last for a webhook secret; the old key retired last for an API key. See [zernio-rotation.md](zernio-rotation.md).
+
+```
+portunus rotate zernio [--webhook <id> | --webhook-secret | --api-key] [--ref <name>] [--env <e>]
+                       [--target <spec> ...] [--push-only | --rollback] [--dry-run] [--retire-old]
+                       [--no-redeploy] [--yes] [--json]
+```
+
+It always runs a read-only preflight first and prints the plan. Without `--yes` it asks before changing anything, and if stdin is not a terminal it exits 1. `--dry-run` stops after the plan. `--push-only` writes the local vault's current value to the targets and mints nothing. `--rollback` (webhook secret only) puts the stashed previous secret back everywhere. Targets come from the `zernio_targets` tag or `--target`: `convex:<deploy-key-ref>:<VAR>` or `vercel:<token-ref>:<project>[@<team>]:<VAR>[:<target>+...]`. A Vercel production target is redeployed and waited on. Any other Vercel target, or any Vercel target with `--no-redeploy`, needs you to confirm a manual redeploy.
+
+**Example:**
+```sh
+portunus rotate zernio --webhook 6a73653a0ce2dee3dc80b152 --dry-run
+```
+
+---
+
 ### `rotation audit`
 
 Inventory what is stored vs. what can actually be rotated: group by provider, report `auto`/`manual`/`unknown` capability with reference names and any un-retired superseded key IDs.

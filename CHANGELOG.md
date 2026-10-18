@@ -6,6 +6,21 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Zernio rotation + roll-everywhere (PANT-1146, #174).** `portunus rotate zernio` rotates a Zernio
+  webhook signing secret or API key and pushes the new value to every env-var target in one
+  ordered flow, with `--dry-run`, `--push-only`, `--rollback` and `--retire-old`. Webhook secret:
+  Portunus generates it, stashes the old one as `<sm_name>.previous`, writes the receivers first
+  (redeploying Vercel production and waiting for READY), then switches Zernio
+  (`PUT /v1/webhooks/settings`). A test delivery must then be accepted, and any delivery the
+  receivers rejected mid-switch is redelivered. A rejection counts even on a 2xx: flayr answers
+  a bad signature with 200 `invalid_signature`. API key: create (copying the old key's
+  scope/profiles/permission), verify, store, push, then opt-in delete of the old key. New
+  `envtargets.py` writes Vercel project env vars (update in place or upsert, plus production
+  redeploy) and Convex deployment env vars (Deployment API `update_environment_variables`).
+  Targets come from the `zernio_targets` tag or `--target`. The `zernio` provider is registered
+  for `portunus rotation run`, and the `zernio` liveness probe (`GET /v1/profiles`, 401 = dead)
+  joins the scheduled sweep for API keys. Runbook: docs/zernio-rotation.md. The provider matrix
+  had Zernio as "no rotation API found": the OpenAPI spec has `/v1/api-keys`, so it is now `auto`.
 - **Vercel token liveness (PANT-1149, #144).** `portunus liveness check` now probes `vercel`
   references with `GET https://api.vercel.com/v5/user/tokens/current`. This is the token's own
   metadata, read-only and with no project or deployment data. Vercel answers every auth failure
