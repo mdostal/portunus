@@ -1,0 +1,24 @@
+id: 04-delivery-drivers
+epic: portunus-chrome-credential-writeback
+title: delivery drivers -- companion MV3 extension and/or CDP test-profile driver
+status: blocked
+complexity: high
+methodology: tdd
+depends_on: [03-native-messaging-host]
+
+description: |
+  Scope set by operator Q1 and Story 01 results.
+  Driver A (real profiles): extensions/chrome-writeback/ MV3 extension -- permissions limited to
+  nativeMessaging, scripting, tabs; host permission requested per-origin at use time (never
+  <all_urls>). On `deliver`: open/focus the origin tab, call navigator.credentials.store in the
+  JS world Story 01 proved safe, reply with the outcome enum. No chrome.storage, no console output
+  of the value.
+  Driver B (Portunus-owned test profiles): launch Chrome with a Portunus-managed --user-data-dir +
+  remote debugging, navigate to the origin, call credentials.store via Runtime.evaluate, same
+  outcome enum. Refuses to run against Chrome's default user-data-dir.
+
+acceptance_criteria:
+  - "Given the extension's message handler under test, then it never echoes the value in any reply, log, or storage call (sentinel test)"
+  - "Given Story 01 found MAIN world required, then a test page that patches navigator.credentials.store cannot capture the sentinel; if that cannot be guaranteed, driver A does not ship (design-discussion §3)"
+  - "Given driver B pointed at the default user-data-dir, then it refuses with a clear error"
+  - "Given the user dismisses Chrome's update bubble, then the outcome is 'dismissed' and no retry loop runs"

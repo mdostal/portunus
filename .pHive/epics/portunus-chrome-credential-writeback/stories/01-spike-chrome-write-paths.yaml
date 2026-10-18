@@ -1,0 +1,27 @@
+id: 01-spike-chrome-write-paths
+epic: portunus-chrome-credential-writeback
+title: live spike on a throwaway profile -- credentials.store update semantics, JS world, gesture, store; CSV import conflicts; CDP bubble handling
+status: pending
+complexity: medium
+methodology: spike   # research output, no production code; feeds Stories 02-05
+
+description: |
+  Settle every UNVERIFIED item in docs/research-brief.md §1c-§1e by experiment, on a THROWAWAY
+  Chrome profile (custom --user-data-dir, or a fresh profile the operator explicitly OKs) with a
+  dummy local origin (http://localhost test server) and dummy credentials only. Never the
+  operator's real saved logins. Record results in docs/spike-results.md with Chrome version +
+  platform for each finding.
+
+acceptance_criteria:
+  - "Given an existing saved (origin, username) row, when navigator.credentials.store(new PasswordCredential({id, password})) runs on that origin, then spike-results.md records exactly what Chrome does (update prompt / duplicate / no-op) and the final row state, verified by re-reading through ChromeBackend and comparing SHA-256 digests only"
+  - "Given an extension content script in the ISOLATED world and a MAIN-world injection, when each calls credentials.store, then spike-results.md records which works, and for MAIN world whether a page script that patches navigator.credentials.store before/after document_start can capture the argument (a test page that tries to)"
+  - "Given no user activation in the tab, when credentials.store runs, then the gesture requirement is recorded"
+  - "Given a profile with both a local and an account-store (Login Data For Account) row, when an update lands, then which store changed is recorded"
+  - "Given Chrome stable's CSV import at chrome://password-manager/settings with a row matching an existing login, then the conflict behavior is recorded"
+  - "Given a Portunus-owned --user-data-dir under CDP, then whether the save/update bubble can be accepted without OS-level UI automation is recorded (check the current CDP protocol for any password/autofill domain)"
+  - "Given the spike completes, then design-discussion.md §3/§6 are updated with the results and every 'unverified' tag in research-brief.md is either resolved or explicitly carried forward"
+
+risks:
+  - severity: medium
+    description: "results may differ between macOS and Linux or between Chrome versions"
+    mitigation: "record platform + version per finding; any platform not exercised is listed as not verified"
