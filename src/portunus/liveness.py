@@ -40,8 +40,9 @@ provider sub-issues (GitHub, PANT-1141, is the first; Neon, PANT-1120, probes a
 Postgres connection string instead of an HTTP API; the event-api sources
 Eventbrite, Ticketmaster, SeatGeek and Meetup, PANT-1126, probe only the
 credential kinds that can be sent on their own; PANT-1125 adds the
-long-tail single-API-key SaaS providers; Convex, PANT-1151, probes a deploy key
-and reads deployment env vars for parity). See docs/liveness.md.
+long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
+`invalidToken` flag and the token's expiry from its response; Convex, PANT-1151,
+probes a deploy key and reads deployment env vars for parity). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -772,6 +773,118 @@ class TremendousLivenessAdapter(HTTPLivenessAdapter):
 
 
 register_liveness_adapter("tremendous", TremendousLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Vercel deploy/access tokens (PANT-1149, GH #144).
+# ---------------------------------------------------------------------------
+
+# transport(method, url, headers, timeout) -> (HTTP status, facts). `facts`
+# holds only the two non-secret fields the Vercel adapter reads from the
+# body -- {"invalid_token": bool, "expires_at": epoch-ms or None} -- never
+# the body itself.
+VercelTransport = Callable[[str, str, Mapping[str, str], float], Tuple[int, Dict[str, object]]]
+
+_VERCEL_BODY_LIMIT = 64 * 1024
+
+
+def _vercel_facts(raw: bytes) -> Dict[str, object]:
+    """The only two things the Vercel adapter needs from a response body.
+    The parsed body is dropped here; nothing else leaves this function."""
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        data = {}
+    err = data.get("error") if isinstance(data.get("error"), dict) else {}
+    token = data.get("token") if isinstance(data.get("token"), dict) else {}
+    expires_at = token.get("expiresAt")
+    return {
+        "invalid_token": err.get("invalidToken") is True,
+        "expires_at": expires_at if isinstance(expires_at, int) and not isinstance(expires_at, bool) else None,
+    }
+
+
+def _default_vercel_transport(method: str, url: str, headers: Mapping[str, str],
+                              timeout: float) -> Tuple[int, Dict[str, object]]:
+    """Like `_default_transport`, but reads the (bounded) body for the two
+    facts `_vercel_facts` extracts. Vercel's error body is a fixed
+    `{"error": {"code", "message", "invalidToken"}}` and its token metadata
+    has no secret in it, but only a bool and an int come out regardless."""
+    headers = {"User-Agent": "portunus-liveness", **headers}
+    req = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, _vercel_facts(resp.read(_VERCEL_BODY_LIMIT))
+    except urllib.error.HTTPError as exc:
+        try:
+            facts = _vercel_facts(exc.read(_VERCEL_BODY_LIMIT))
+        except OSError:
+            facts = _vercel_facts(b"")
+        finally:
+            exc.close()
+        return exc.code, facts
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise LivenessError(f"request failed: {type(reason).__name__}") from None
+
+
+class VercelLivenessAdapter(HTTPLivenessAdapter):
+    """Vercel (PANT-1149, GH #144): `GET /v5/user/tokens/current`, the
+    metadata of the token sending the request -- read-only, no project or
+    deployment data, the same call the rotation adapter verifies with.
+
+    Vercel answers every auth failure with 403, including a request with no
+    token at all (`missingToken`), so a bare 403 is not proof the token is
+    dead. Dead is 401, or 403 with `error.invalidToken: true` -- what the
+    dead `vercel-deploy-token` returned on 2026-09-13. Any other 403 is
+    unknown.
+
+    A live token's `expiresAt` goes into the result's detail, with a
+    warning once it is within `EXPIRY_WARN_DAYS`: a Vercel token can only
+    be rotated (`portunus rotation run`, VercelRotationAdapter) while it still
+    works, so expiry has to be acted on before it happens."""
+
+    URL = "https://api.vercel.com/v5/user/tokens/current"
+    EXPIRY_WARN_DAYS = 14
+
+    def __init__(self, transport: Optional[VercelTransport] = None, timeout: float = _DEFAULT_TIMEOUT,
+                 now: Callable[[], float] = time.time):
+        super().__init__("vercel", HTTPProbe(url=self.URL, dead_statuses=(401,)), timeout=timeout)
+        self._transport = transport or _default_vercel_transport
+        self._now = now
+
+    def check(self, ref, resolver) -> LivenessResult:
+        def boundary(value: str) -> Tuple[int, Dict[str, object]]:
+            return self._transport(
+                self.probe.method, self.probe.url, self.probe.headers_for(value.strip()), self._timeout
+            )
+
+        code, facts = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        detail = f"{self.probe.method} {self.probe.url} -> {code}"
+        status = self.probe.classify(code)
+        if code == 403:
+            if facts.get("invalid_token"):
+                status = DEAD
+                detail += " (invalidToken)"
+            else:
+                detail += " (no invalidToken flag; not proof the token is dead)"
+        elif status == LIVE and facts.get("expires_at"):
+            detail += "; " + self._expiry(int(facts["expires_at"]), ref.name)
+        return LivenessResult(ref.name, self.provider, status, http_status=code, detail=detail)
+
+    def _expiry(self, expires_at_ms: int, ref_name: str) -> str:
+        expires = expires_at_ms / 1000
+        day = time.strftime("%Y-%m-%d", time.gmtime(expires))
+        days = int((expires - self._now()) // 86400)
+        if days >= self.EXPIRY_WARN_DAYS:
+            return f"expires {day} (in {days}d)"
+        return (f"EXPIRES {day} (in {max(days, 0)}d) -- rotate before then: "
+                f"portunus rotation run {ref_name}")
+
+
+register_liveness_adapter("vercel", VercelLivenessAdapter)
 
 
 # ---------------------------------------------------------------------------
