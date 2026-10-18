@@ -34,13 +34,14 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote, urlencode
 
+# Shared with the Convex liveness probe / parity fetcher (PANT-1151).
+from .liveness import CONVEX_URL_TAG, convex_deployment_url  # noqa: F401 (re-exported)
+
 # (method, url, headers, json_body_or_None, timeout) -> (status, parsed_json_or_{})
 JSONTransport = Callable[[str, str, Dict[str, str], Optional[dict], float], Tuple[int, dict]]
 
 VERCEL_API = "https://api.vercel.com"
 VERCEL_TARGETS = ("production", "preview", "development")
-CONVEX_URL_TAG = "convex_url"
-_CONVEX_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
 _VERCEL_DONE = "READY"
 _VERCEL_FAILED = ("ERROR", "CANCELED")
 
@@ -111,31 +112,6 @@ def parse_targets(specs) -> List:
     if isinstance(specs, str):
         specs = re.split(r"[\s,;]+", specs)
     return [parse_target(s) for s in specs if s and s.strip()]
-
-
-def convex_deployment_url(value: str, override: str = "") -> str:
-    """The deployment URL a Convex key authenticates against, or "".
-
-    Called inside the resolver boundary. Only the part before `|` is read:
-    `prod:<name>|...` / `dev:<name>|...` deploy keys and `<name>|...` admin
-    keys name their deployment, which is public. `preview:` and `project:`
-    keys don't, so they need `override` (the `convex_url` tag). Same rule as
-    the Convex liveness probe (PANT-1151)."""
-    if override:
-        return override.rstrip("/")
-    head, sep, _ = value.strip().partition("|")
-    if not sep:
-        return ""
-    parts = head.split(":")
-    if len(parts) == 1:
-        name = parts[0]
-    elif len(parts) == 2 and parts[0] in ("prod", "dev"):
-        name = parts[1]
-    else:
-        return ""
-    if not name or not set(name) <= _CONVEX_NAME_CHARS:
-        return ""
-    return f"https://{name}.convex.cloud"
 
 
 def _default_transport(method, url, headers, body, timeout):

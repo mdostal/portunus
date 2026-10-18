@@ -478,6 +478,8 @@ Re-issue runbook: [rotation.md, Eventbrite](rotation.md#eventbrite-private-token
 
 Apple provides no public API for programmatic issuance or revocation of APNS auth keys. All management is through the Apple Developer Portal (Certificates, Identifiers & Profiles).
 
+Runbook: [mobile-credentials-runbook.md](mobile-credentials-runbook.md#apns-auth-key-p8). Liveness: the `apns` probe ([liveness.md](liveness.md#apns-auth-keys)) sends a JWT signed with the key to an undeliverable device token (PANT-1127).
+
 ---
 
 ### Apple App Store Connect API key
@@ -489,6 +491,8 @@ Apple provides no public API for programmatic issuance or revocation of APNS aut
 **Source**: https://developer.apple.com/documentation/appstoreconnectapi/creating_api_keys_for_app_store_connect_api
 
 App Store Connect API keys are issued through the App Store Connect web UI. The App Store Connect API authenticates using these keys but provides no endpoint for issuing or revoking them.
+
+Runbook: [mobile-credentials-runbook.md](mobile-credentials-runbook.md#app-store-connect-api-key).
 
 ---
 
@@ -502,6 +506,8 @@ App Store Connect API keys are issued through the App Store Connect web UI. The 
 
 Code-signing certificates are issued by Apple's Certificate Authority through the Developer Portal or Xcode. No public API for programmatic issuance or revocation.
 
+Runbook: [mobile-credentials-runbook.md](mobile-credentials-runbook.md#apple-code-signing-certificate-and-provisioning-profile).
+
 ---
 
 ### Android signing keystore
@@ -513,6 +519,8 @@ Code-signing certificates are issued by Apple's Certificate Authority through th
 **Source**: https://developer.android.com/studio/publish/app-signing
 
 Android app signing keystores are locally generated artifacts, not issued by a third-party service. Rotation requires generating a new keystore and updating the Google Play Developer account's upload-key registration — a process that requires explicit Google Play support action once an app is live. No programmatic rotation path.
+
+Runbook: [mobile-credentials-runbook.md](mobile-credentials-runbook.md#android-signing-keystore).
 
 ---
 

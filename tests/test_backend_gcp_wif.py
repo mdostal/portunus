@@ -330,3 +330,40 @@ def test_no_binding_and_no_credential_provider_falls_back_to_ambient_gcloud(home
     cmd = observed[0]
     assert "--project=legacy-project" in cmd
     assert not any(arg.startswith("--access-token-file=") for arg in cmd)
+
+
+def test_wif_binding_with_service_account_impersonates_in_process_not_via_gcloud(
+    home, monkeypatch, gcloud_on_path,
+):
+    """PANT-1171: WIF + impersonate_service_account = keyless SA token via the
+    IAM Credentials API; gcloud only ever sees --access-token-file, never
+    --account / --impersonate-service-account (no human login involved)."""
+    observed = []
+    token_contents = []
+
+    def runner(cmd, capture_output, text, timeout):
+        observed.append(cmd)
+        token_arg = next(a for a in cmd if a.startswith("--access-token-file="))
+        token_contents.append(open(token_arg.split("=", 1)[1]).read())
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    def transport(url, data, headers, timeout):
+        if "sts.googleapis.com" in url:
+            return {"access_token": "FEDERATED", "expires_in": 3600}
+        return {"accessToken": "SA.TOKEN", "expireTime": "2030-01-01T00:00:00Z"}
+
+    bindings = {"ffe-cicd": VaultBinding(
+        "ffe-cicd", wif_audience="aud", account="human@example.com",
+        impersonate_service_account="portunus@ffe-cicd.iam.gserviceaccount.com",
+    )}
+    backend = GcloudBackend(bindings=bindings, runner=runner, audit=AuditChain())
+    provider = backend._binding_providers["ffe-cicd"]
+    assert provider.service_account == "portunus@ffe-cicd.iam.gserviceaccount.com"
+    provider.transport = transport
+    provider.token_source = StaticOIDC()
+
+    backend.access("some-secret", project="ffe-cicd")
+    cmd = observed[0]
+    assert token_contents == ["SA.TOKEN"]
+    assert not any(a.startswith("--account=") for a in cmd)
+    assert not any(a.startswith("--impersonate-service-account=") for a in cmd)

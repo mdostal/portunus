@@ -1,0 +1,21 @@
+id: 05-verify-audit-rotation-sink
+epic: portunus-chrome-credential-writeback
+title: digest-only verify, chrome.writeback audit, end-to-end `portunus browser update`, optional rotation sink
+status: blocked
+complexity: medium
+methodology: tdd
+depends_on: [04-delivery-drivers]
+
+description: |
+  `portunus browser update <chrome-ref> --from <portunus-ref>` runs plan -> deliver -> verify ->
+  audit. Verify re-reads through ChromeBackend.access() and compares sha256 in-process; only a
+  boolean leaves the function. Audit: AuditChain.append(action="chrome.writeback",
+  secret=<chrome ref name>, result=stored|dismissed|verify_failed|error). Optional (operator Q4):
+  `--also-update-chrome <chrome-ref>` on rotation runs; a Chrome-sink failure never rolls back the
+  provider rotation and reports "Chrome copy stale" plus the exact retry command.
+
+acceptance_criteria:
+  - "Given a successful delivery, when verify runs, then digests match and the CLI reports success without printing either value"
+  - "Given Chrome kept the old value (dismissed / wrong store), then the result is verify_failed with which store was checked"
+  - "Given any outcome, then exactly one chrome.writeback audit entry exists and contains no value (sentinel test over the audit log file)"
+  - "Given a rotation with --also-update-chrome whose Chrome sink fails, then the rotation result is still success and the stale-copy warning names the retry command"

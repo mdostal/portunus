@@ -21,6 +21,40 @@ All notable changes to Portunus are documented in this file.
   for `portunus rotation run`, and the `zernio` liveness probe (`GET /v1/profiles`, 401 = dead)
   joins the scheduled sweep for API keys. Runbook: docs/zernio-rotation.md. The provider matrix
   had Zernio as "no rotation API found": the OpenAPI spec has `/v1/api-keys`, so it is now `auto`.
+- **Convex deploy-key liveness and a cross-system parity check (PANT-1151, #142).** A new
+  `convex` liveness probe sends a stored deploy key to `GET <deployment>/api/check_admin_key`,
+  which reads nothing from the deployment. A bad or deleted key gets 403 (`BadDeployKey`) and a
+  malformed one gets 401, both `dead`. The deployment comes from the key itself
+  (`prod:<name>|...`), or from the `convex_url` tag for preview/project keys. New
+  `portunus parity check` (and the `portunus_parity_check` MCP tool) compares one reference
+  across targets listed in its `parity_targets` tag or `--target`: `ref`, `gcp[:<project>]`,
+  `local`, and `convex:<deploy-key-ref>[:<VAR>]`, which reads the env var through the Deployment
+  Platform API with no `npx convex`. Values are digested inside the resolver boundary; the output
+  is target names grouped by agreement. Exits `2` on drift, so it can replace the per-repo
+  `check-env-parity.sh` in a scheduler. See `docs/liveness.md`.
+- **APNs auth-key liveness and mobile credential runbook (PANT-1127, #202).** A new `apns`
+  liveness probe signs an ES256 provider JWT with the stored `.p8` and sends it to APNs over
+  HTTP/2. The push targets a device token that can't exist, as a silent `background` push with
+  `apns-expiration: 0`, so nothing is delivered. `403 InvalidProviderToken` reads `dead`, and a
+  device-token refusal (`400 BadDeviceToken`) reads `live`. Environment or topic mismatches,
+  429 and 5xx read `unknown`. It needs the `apns_team_id` tag and a key ID (the `apns_key_id`
+  tag, or the name suffix as in `apns-authkey-B9FVCQ4GB4`). It also needs the new optional
+  `pantheon-portunus[apns]` extra (`h2`). The new `docs/mobile-credentials-runbook.md` covers
+  the manual re-issue of APNs keys, App Store Connect API keys, Apple code-signing certificates
+  and profiles, and Android keystores. It's linked from the rotation matrix and `rotation.md`.
+  No rotation adapters: none of these has a provider API.
+- **Keyless GCP access for Secret Manager writes (PANT-1171, #231).** WIF bindings can now
+  impersonate a least-privilege service account. After the STS exchange, `GCPWorkloadIdentityAuth`
+  calls the IAM Credentials API `generateAccessToken` (`service_account=`), so writes need no
+  interactive `gcloud` login and no key file. `bindings set` gains
+  `--impersonate-service-account`, and `auth gcp` gains `--service-account` and reports which
+  service account it minted for. `auth status` now probes each `account` binding with a real token
+  mint, so a listed account stuck behind a reauth wall shows `EXPIRED` along with the
+  `gcloud auth login <account> --no-activate` fix. WIF bindings report the readiness of the OIDC
+  token, and `--strict` exits 1 when anything is unusable. The new
+  `portunus gcp add-version <project> <secret> --stdin|--value-file` writes a version through the
+  binding after that preflight, passing the value to gcloud on stdin only. The new
+  `docs/gcp-keyless.md` runbook covers setting this up.
 - **Vercel token liveness (PANT-1149, #144).** `portunus liveness check` now probes `vercel`
   references with `GET https://api.vercel.com/v5/user/tokens/current`. This is the token's own
   metadata, read-only and with no project or deployment data. Vercel answers every auth failure
@@ -169,6 +203,9 @@ All notable changes to Portunus are documented in this file.
   the wrong endpoint (`users/me/tokens`). It now shows the documented `users/{id}/permanenttokens`.
 
 ### Fixed
+
+- `portunus bindings set` no longer wipes a binding's `impersonate_service_account` when it
+  updates another field, and `bindings show` now displays it.
 
 - **OAuth refresh now sends `Accept: application/json`.** GitHub's token endpoint returns
   form-urlencoded unless asked for JSON, so refreshing a GitHub App user token failed to parse.

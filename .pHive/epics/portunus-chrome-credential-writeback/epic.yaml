@@ -1,0 +1,66 @@
+name: portunus-chrome-credential-writeback
+title: Chrome saved-login write-back / rotate -- deliver a new value into Chrome's saved login through Chrome's OWN write path (never a raw Login Data write), verify by digest, audit
+target_codebase: portunus
+methodology: tdd
+version_bump: minor
+status: design   # awaiting operator decisions (docs/design-discussion.md §6) + Story 01 spike
+tracking:
+  github_issue: https://github.com/mdostal/portunus/issues/182
+  multica: PANT-1144
+parent_epic: portunus-chrome-credential-broker
+
+description: |
+  Follow-up to portunus-chrome-credential-broker (read-only, v0.34.0). Operator's framing:
+  "ideally we should be able to inject and whatnot long term ... that can probably be done
+  through APIs or something to roll/change the keys instead" -- i.e. not raw SQLite mutation.
+
+  Research (docs/research-brief.md) found:
+  - no extension API can write saved passwords on stable Chrome (chrome.passwordsPrivate is
+    trunk-channel + component-only -- verified against Chromium's _permission_features.json),
+    so a native-messaging host/extension can only be a CARRIER, not a writer;
+  - CDP cannot attach to the default user-data-dir since Chrome 136 (verified), so UI automation
+    of the operator's real profiles is out; it works for Portunus-owned --user-data-dir profiles;
+  - the Credential Management API (navigator.credentials.store) on the target origin is Chrome's
+    own consent-gated write path and the leading candidate -- but its update-existing-row and
+    isolated-vs-main-world behavior are UNVERIFIED and gated on Story 01's live spike.
+
+  Write-back is modeled as a rotation SINK (docs/design-discussion.md §1), not a new backend:
+  plan (metadata only) -> deliver via a Chrome-owned path -> verify via ChromeBackend read-back
+  SHA-256 digest -> audit. Site-side password change for arbitrary websites is out of scope.
+
+stories:
+  - id: 01-spike-chrome-write-paths
+    title: live spike on a throwaway profile -- does credentials.store update an existing row, from which JS world, with what gesture/store semantics; CSV import conflict behavior; CDP bubble handling
+    complexity: medium
+    depends_on: []
+    status: pending
+
+  - id: 02-writeback-plan-preflight
+    title: chrome_writeback.plan() + `portunus browser update --dry-run` -- metadata-only target/row/Chrome-running/account-store preflight, structural no-password + no-raw-write tests
+    complexity: medium
+    depends_on: [01-spike-chrome-write-paths]
+    status: blocked   # on operator decisions §6
+
+  - id: 03-native-messaging-host
+    title: "`portunus browser host` native-messaging host (stdio framing, pinned extension ID, single value-bearing message) + install-host/uninstall-host manifests (macOS/Linux)"
+    complexity: medium
+    depends_on: [02-writeback-plan-preflight]
+    status: blocked   # only if Q1 includes real profiles (a/c) and Q2 = yes
+
+  - id: 04-delivery-drivers
+    title: delivery drivers -- companion MV3 extension (credentials.store, outcome enum) and/or CDP driver for Portunus-owned test profiles, per Q1 and spike results
+    complexity: high
+    depends_on: [03-native-messaging-host]
+    status: blocked
+
+  - id: 05-verify-audit-rotation-sink
+    title: digest-only read-back verify, chrome.writeback audit entry, end-to-end `portunus browser update`, optional --also-update-chrome rotation sink (Q4)
+    complexity: medium
+    depends_on: [04-delivery-drivers]
+    status: blocked
+
+  - id: 06-closeout
+    title: live proof on a throwaway profile (digest-only, or documented skip per platform), docs/backends.md + docs/rotation.md, version bump, follow-ups filed
+    complexity: low
+    depends_on: [05-verify-audit-rotation-sink]
+    status: blocked

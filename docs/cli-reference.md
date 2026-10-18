@@ -407,11 +407,14 @@ portunus sync ffe-cicd
 Configure per-project vault bindings (which backend serves a project's secrets).
 
 ```
-portunus bindings set <project> [--backend local|gcp|aws|...] [--sync-mode direct|cached] [--account <email>] [--wif-audience <audience>]
+portunus bindings set <project> [--backend local|gcp|aws|...] [--sync-mode direct|cached] [--account <email>] [--wif-audience <audience>] [--impersonate-service-account <sa-email>]
 portunus bindings show [<project>] [--json]
 ```
 
 `sync-mode=cached` enables a pull-only local cache; `direct` (default) fetches live on every access.
+`--impersonate-service-account` makes every call act as that service account: through the IAM
+Credentials API after a WIF mint, or as gcloud's `--impersonate-service-account` alongside
+`--account`. See [Keyless GCP access](gcp-keyless.md).
 
 **Example:**
 ```sh
@@ -564,7 +567,7 @@ portunus rotation audit [--json]
 
 ### `liveness check`
 
-Probe stored credentials against their provider's own API with one cheap, read-only call. Registered providers today: `github` (`GET /rate_limit`). Exits `0` when all are live, `2` if any is dead, `1` if any check could not reach a verdict. Never prints a value or a response body. See [Liveness & Parity](liveness.md).
+Probe stored credentials against their provider's own API with one cheap, read-only call. See [Liveness & Parity](liveness.md#registered-providers) for the registered providers. Exits `0` when all are live, `2` if any is dead, `1` if any check could not reach a verdict. Never prints a value or a response body.
 
 ```
 portunus liveness check <name> [<name> ...] [--json]
@@ -580,6 +583,24 @@ Show the last recorded verdict per reference. `--failing` lists only non-live re
 ```
 portunus liveness status [--failing] [--json]
 ```
+
+---
+
+### `parity check`
+
+Compare a reference's value across the places it is supposed to live: its own resolved value,
+its copy in GCP Secret Manager or the local vault, an env var on a Convex deployment. Values are
+compared as per-call HMACs and never printed; the output says which targets agree. Targets come
+from the reference's `parity_targets` tag, or from `--target` (repeatable, replaces the tag).
+Exits `0` when every reference is in sync, `2` if any has drifted, `1` if a target could not be
+read. See [Liveness & Parity](liveness.md#parity).
+
+```
+portunus parity check <name> [<name> ...] [--target SPEC ...] [--json]
+portunus parity check --all [--json]
+```
+
+`SPEC` is `ref`, `gcp[:<project>]`, `local` or `convex:<deploy-key-ref>[:<VAR>]`.
 
 ---
 
@@ -684,9 +705,11 @@ portunus session remove <site> <account>
 ### `auth gcp`
 
 Mint a GCP Workload Identity Federation access token and report identity/scope/expiry — never the token.
+If the project's binding (or `--service-account`) names a service account, the federated token is
+then exchanged for that service account's token. No gcloud login and no key file are involved.
 
 ```
-portunus auth gcp [--project <p>] [--audience <audience>]
+portunus auth gcp [--project <p>] [--audience <audience>] [--service-account <sa-email>]
 ```
 
 ---
@@ -703,10 +726,34 @@ portunus auth login <email>
 
 ### `auth status`
 
-Cross-reference every configured GCP binding's account against `gcloud auth list`.
+Report for each configured GCP binding whether Portunus can get a credential for it right now.
+Modes:
+
+- `wif`: reports `ready`, or `no-oidc-token` / `oidc-expired` / `oidc-unreadable` for the
+  harness OIDC token. Checked locally, with no network call.
+- `account`: `ok`, `missing` (not in `gcloud auth list`), or `EXPIRED`. `EXPIRED` means the
+  account is listed but a real token mint fails, e.g. a reauth policy. The status output prints
+  the `gcloud auth login <account> --no-activate` fix.
+- `ambient`: no account configured, so nothing is checked.
+
+`--strict` exits 1 if any binding is unusable, so you can use it as a gate before a write. No
+token is ever printed.
 
 ```
-portunus auth status [--json]
+portunus auth status [--json] [--strict]
+```
+
+---
+
+### `gcp add-version`
+
+Add a new version of an existing Secret Manager secret through the project's binding (WIF →
+service account, or `--account` with optional impersonation). The binding's credential is
+checked first. The value is read from stdin or a file and passed to gcloud on stdin. It never
+appears in argv, output, or the audit log.
+
+```
+portunus gcp add-version <project> <secret> (--stdin | --value-file <path>) [--keep-whitespace] [--skip-preflight]
 ```
 
 ---

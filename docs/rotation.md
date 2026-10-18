@@ -50,6 +50,7 @@ new one).
 | `eventbrite` | Private token, API (client) key, OAuth client secret | **manual** | Developer portal only. See [Eventbrite](#eventbrite-private-token-and-oauth-app-credentials). |
 | `ticketmaster` | Consumer key / consumer secret | **manual** | Developer portal (*My Apps*) only; no developer-facing key API. See [Ticketmaster](#ticketmaster-consumer-key-and-secret). |
 | `seatgeek` | Client id / client secret | **manual** | seatgeek.com/account/develop only; the Platform API is read-only. See [SeatGeek](#seatgeek-client-credentials). |
+| `apns` / Apple / Android | APNs auth key, App Store Connect API key, code-signing certificate + profile, Android keystore | **manual** | Apple has no key/certificate API, and an Android keystore is self-generated. Only the APNs key has a liveness probe (`apns`). See [Mobile app signing & push credentials](#mobile-app-signing-push-credentials-apple-android). |
 
 > **Capability vocabulary:**
 > - `auto` — a programmatic rotation path exists and Portunus has a real adapter for this credential type.
@@ -200,6 +201,19 @@ Everything is on the Eventbrite account's *API Keys* page
 - Liveness: `*-seatgeek-client-id` is probed with
   `GET /2/taxonomies?client_id=…` (403 `Invalid client credentials` = dead).
   The secret is only valid next to its id, so it reads `unknown`.
+
+### Mobile app signing & push credentials (Apple, Android)
+
+APNs auth keys, App Store Connect API keys, Apple code-signing certificates (with their
+provisioning profiles) and Android signing keystores. Apple has no public API that issues or
+revokes any of them, and an Android keystore is a file you generate yourself. No adapter, by
+design (PANT-1127). Follow the
+[mobile credentials runbook](mobile-credentials-runbook.md). It covers each type, and the
+Android upload-key reset, which needs Google Play to act.
+
+The APNs key is the only one with a liveness probe: `apns` sends a JWT signed with the key to a
+device token that can't exist and reads APNs's answer
+([liveness.md](liveness.md#apns-auth-keys)).
 
 ### GCP service-account keys -- now auto
 

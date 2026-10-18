@@ -1360,25 +1360,35 @@ def cmd_health(args) -> int:
 
 
 def cmd_auth_gcp(args) -> int:
-    """Mint a GCP WIF access token and report identity/scope/expiry -- never the token."""
+    """Mint a GCP WIF access token and report identity/scope/expiry -- never the token.
+
+    When the project's binding (or --service-account) names a service
+    account, the federated token is exchanged for that account's token via
+    the IAM Credentials API -- the keyless, no-gcloud-login path."""
     audit = AuditChain()
     project = args.project or os.environ.get("PORTUNUS_GCP_PROJECT", "")
     bindings = load_vault_bindings()
+    binding = bindings.get(project)
     audience = args.audience
-    if not audience and project in bindings:
-        audience = bindings[project].wif_audience
+    if not audience and binding:
+        audience = binding.wif_audience
     if not audience:
         audience = os.environ.get("PORTUNUS_GCP_WIF_AUDIENCE", "")
+    service_account = args.service_account
+    if not service_account and binding:
+        service_account = binding.impersonate_service_account
     try:
         auth = GCPWorkloadIdentityAuth(
             audience=audience, token_source=EnvOIDCTokenSource(), audit=audit,
+            service_account=service_account,
         )
         minted = auth.mint()
     except AuthError as exc:
         return _err(str(exc))
+    sa_note = f" service_account={minted.service_account}" if minted.service_account else ""
     print(
         "gcp:wif ok "
-        f"identity={minted.identity} scope={minted.scope} expires_at={minted.expires_at}"
+        f"identity={minted.identity}{sa_note} scope={minted.scope} expires_at={minted.expires_at}"
     )
     return 0
 
@@ -1402,12 +1412,63 @@ def cmd_auth_login(args) -> int:
     return 0
 
 
+def _probe_gcloud_account(account: str, impersonate_service_account: str = "") -> bool:
+    """True iff gcloud can mint a token for `account` right now, without a
+    prompt. Being listed in `gcloud auth list` is not enough: a Workspace
+    account whose session hit its reauth policy is still listed but fails
+    every call. The minted token lands in proc.stdout and is dropped here --
+    only the exit code is used."""
+    cmd = ["gcloud", "auth", "print-access-token", f"--account={account}"]
+    if impersonate_service_account:
+        cmd.append(f"--impersonate-service-account={impersonate_service_account}")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return False
+    return proc.returncode == 0
+
+
+def _wif_credential_state() -> str:
+    """Local, no-network readiness of the harness OIDC token WIF mints from:
+    "ready", "no-oidc-token", "oidc-unreadable" or "oidc-expired". Never
+    reads more of the token than EnvOIDCTokenSource itself does."""
+    try:
+        EnvOIDCTokenSource().get()
+    except AuthError as exc:
+        msg = str(exc)
+        if "expired" in msg or "expiry" in msg:
+            return "oidc-expired"
+        if "not readable" in msg:
+            return "oidc-unreadable"
+        return "no-oidc-token"
+    return "ready"
+
+
+def _binding_credential_state(binding, credentialed=None):
+    """(mode, state) for one GCP vault binding -- see cmd_auth_status.
+    `credentialed` is `gcloud auth list`'s account set; None skips the
+    listed-or-not check and relies on the mint probe alone."""
+    if binding.wif_audience:
+        return "wif", _wif_credential_state()
+    if binding.account:
+        if credentialed is not None and binding.account not in credentialed:
+            return "account", "missing"
+        if _probe_gcloud_account(binding.account, binding.impersonate_service_account):
+            return "account", "ok"
+        return "account", "expired"
+    return "ambient", "unchecked"
+
+
 def cmd_auth_status(args) -> int:
-    """Cross-reference every configured GCP project binding's account
-    against gcloud's locally credentialed accounts (`gcloud auth list`) --
-    reports which bindings are authenticated vs. missing, per-binding. Not
-    automatic reauth -- a status report plus `auth login` above it. Account
-    emails and gcloud's own credential list are not secret values."""
+    """Report, per configured GCP binding, whether Portunus can get a
+    credential for it right now -- before a write is attempted, not after it
+    fails. Modes: `wif` (keyless: harness OIDC token -> STS [-> service
+    account]), `account` (a local gcloud identity, optionally impersonating a
+    service account; probed with a real token mint so an expired / reauth-
+    required session shows as EXPIRED, not authenticated), `ambient`
+    (whatever gcloud considers active -- unchecked). `--strict` exits 1 when
+    any binding isn't usable. Account emails, service account emails and
+    states are not secret values; no token is ever printed."""
     bindings = load_vault_bindings()
     if not bindings:
         if args.json:
@@ -1416,8 +1477,9 @@ def cmd_auth_status(args) -> int:
             print("no bindings configured")
         return 0
 
+    have_gcloud = shutil.which("gcloud") is not None
     credentialed = set()
-    if shutil.which("gcloud") is not None:
+    if have_gcloud and any(b.account and not b.wif_audience for b in bindings.values()):
         try:
             proc = subprocess.run(
                 ["gcloud", "auth", "list", "--format=json"], capture_output=True, text=True, timeout=30,
@@ -1427,16 +1489,87 @@ def cmd_auth_status(args) -> int:
         except (subprocess.TimeoutExpired, json.JSONDecodeError):
             credentialed = set()
 
-    report = {
-        project: {"account": binding.account, "authenticated": binding.account in credentialed}
-        for project, binding in bindings.items()
-    }
+    report = {}
+    for project, binding in bindings.items():
+        mode, state = _binding_credential_state(binding, credentialed)
+        report[project] = {
+            "account": binding.account,
+            "authenticated": state in ("ok", "ready"),
+            "mode": mode,
+            "state": state,
+            "impersonate_service_account": binding.impersonate_service_account,
+        }
+
+    unusable = [p for p, info in report.items() if info["state"] not in ("ok", "ready", "unchecked")]
     if args.json:
         print(json.dumps(report))
-        return 0
-    for project, info in report.items():
-        status = "authenticated" if info["authenticated"] else "MISSING"
-        print(f"{project}: {info['account'] or '(no account set)'} -- {status}")
+    else:
+        labels = {
+            "ok": "authenticated", "ready": "ready (keyless)", "missing": "MISSING",
+            "expired": "EXPIRED -- reauth required",
+            "no-oidc-token": "NO OIDC TOKEN", "oidc-unreadable": "OIDC TOKEN UNREADABLE",
+            "oidc-expired": "OIDC TOKEN EXPIRED", "unchecked": "ambient gcloud identity (unchecked)",
+        }
+        for project, info in report.items():
+            who = info["account"] or "(no account set)"
+            if info["mode"] == "wif":
+                who = "wif"
+            if info["impersonate_service_account"]:
+                who += f" -> {info['impersonate_service_account']}"
+            print(f"{project}: {who} -- {labels[info['state']]}")
+        for project in unusable:
+            info = report[project]
+            if info["state"] == "expired":
+                print(
+                    f"  fix: gcloud auth login {info['account']} --no-activate"
+                    "  (keeps your active account unchanged)"
+                )
+            elif info["state"] == "missing" and info["account"]:
+                print(f"  fix: gcloud auth login {info['account']} --no-activate")
+    if args.strict and unusable:
+        return 1
+    return 0
+
+
+def cmd_gcp_add_version(args) -> int:
+    """Write a new Secret Manager version through the project's binding
+    (WIF -> service account, or --account [+ impersonation]), after a
+    credential preflight -- so an expired login fails here with the fix,
+    not halfway through. The value comes from stdin or a file, never argv,
+    and is never printed or audited."""
+    if shutil.which("gcloud") is None:
+        return _err("gcloud CLI not found on PATH")
+    bindings = load_vault_bindings()
+    binding = bindings.get(args.project)
+    if binding is not None and binding.backend != "gcp":
+        return _err(f"{args.project} is bound to backend={binding.backend}, not gcp")
+    if binding is not None and not args.skip_preflight:
+        mode, state = _binding_credential_state(binding)
+        if state not in ("ok", "ready", "unchecked"):
+            hint = ""
+            if mode == "account":
+                hint = f" -- run `gcloud auth login {binding.account} --no-activate`"
+            return _err(f"credential preflight failed for {args.project}: {mode}/{state}{hint}")
+    if args.stdin:
+        value = _clean_value(sys.stdin.read(), args.keep_whitespace)
+    else:
+        try:
+            value = _clean_value(Path(args.value_file).read_text(), args.keep_whitespace)
+        except OSError as exc:
+            return _err(f"cannot read --value-file: {exc.strerror or 'unreadable'}")
+    if not value:
+        return _err("empty secret value; nothing written")
+    audit = AuditChain()
+    backend = GcloudBackend(project=args.project, bindings=bindings, audit=audit)
+    try:
+        version = backend.add_version(args.secret, value, project=args.project)
+    except (BackendError, AuthError) as exc:
+        del value
+        audit.append("gcp-add-version", args.secret, "error")
+        return _err(str(exc))
+    del value
+    audit.append("gcp-add-version", args.secret, "ok")
+    print(f"added version to {args.project}/{args.secret}: {version or '(created)'}")
     return 0
 
 
@@ -1555,16 +1688,22 @@ def cmd_bindings_set(args) -> int:
     wif_audience = (
         args.wif_audience if args.wif_audience else (existing.wif_audience if existing else "")
     )
+    impersonate_service_account = (
+        args.impersonate_service_account if args.impersonate_service_account
+        else (existing.impersonate_service_account if existing else "")
+    )
     backend = args.backend if args.backend else (existing.backend if existing else "gcp")
     sync_mode = args.sync_mode if args.sync_mode else (existing.sync_mode if existing else "direct")
     bindings[args.project] = VaultBinding(
         project=args.project, wif_audience=wif_audience, account=account,
+        impersonate_service_account=impersonate_service_account,
         backend=backend, sync_mode=sync_mode,
     )
     save_vault_bindings(bindings)
     print(
         f"binding set: {args.project} (backend={backend}, sync_mode={sync_mode}, "
-        f"account={account or '-'}, wif_audience={wif_audience or '-'})"
+        f"account={account or '-'}, wif_audience={wif_audience or '-'}, "
+        f"impersonate_service_account={impersonate_service_account or '-'})"
     )
     return 0
 
@@ -1879,6 +2018,84 @@ def cmd_liveness_status(args) -> int:
     return 0
 
 
+def _parity_backend(kind: str, audit):
+    """A backend for a `<backend>[:<project>]` parity target. KeyError for an
+    unknown kind (reported as a bad target spec)."""
+    if kind == "gcp":
+        return GcloudBackend(bindings=load_vault_bindings(), audit=audit)
+    if kind == "local":
+        return LocalEncryptedBackend()
+    raise KeyError(kind)
+
+
+def run_parity(names, all_refs: bool, targets) -> tuple:
+    """Shared by `portunus parity check` and the MCP tool. Returns
+    (results, error) -- error is set only for an unknown reference name.
+    Results carry target names only, never a value."""
+    from . import liveness
+
+    registry, audit, broker, resolver = _build()
+    if all_refs:
+        refs = liveness.parity_references(registry)
+    else:
+        refs = []
+        for name in names or []:
+            ref = registry.get(name)
+            if ref is None:
+                return [], f"no reference {name!r} in registry"
+            refs.append(ref)
+    results = []
+    for ref in refs:
+        specs = list(targets) if targets else liveness.parity_specs(ref)
+        try:
+            fetchers = liveness.parity_fetchers(
+                ref, specs, registry, broker, resolver, lambda kind: _parity_backend(kind, audit))
+        except liveness.ParityTargetError as exc:
+            # A bad spec is a finding about this reference, not a reason to
+            # stop an unattended sweep. Its text names targets, never values.
+            result = liveness.ParityResult(ref.name, (), {"targets": f"ParityTargetError: {exc}"})
+            liveness.audit_parity(audit, ref, result)
+            results.append(result)
+            continue
+        result = liveness.parity_check(ref.name, fetchers)
+        liveness.audit_parity(audit, ref, result)
+        results.append(result)
+    return results, ""
+
+
+def cmd_parity_check(args) -> int:
+    """Compare a reference's value across its targets (GCP, the local vault,
+    a Convex deployment, ...). Exit 0 when every reference is in sync, 2 if
+    any has drifted, 1 if a target could not be read. Never prints a value
+    or a fingerprint -- only which targets agree."""
+    from . import liveness
+
+    if not args.all and not args.names:
+        return _err("name a reference to check, or pass --all")
+    results, error = run_parity(args.names, args.all, args.target)
+    if error:
+        return _err(error)
+    if args.all and not results:
+        print(f"(no references with a {liveness.PARITY_TAG!r} tag)")
+        return 0
+
+    if args.json:
+        print(json.dumps({"results": [r.to_dict() for r in results]}))
+    else:
+        for r in results:
+            state = "IN SYNC" if r.in_sync else ("DRIFT" if len(r.groups) > 1 else "ERROR")
+            groups = "  |  ".join(", ".join(g) for g in r.groups) or "-"
+            print(f"  {state:8} {r.ref_name}  agree: {groups}")
+            for target, exc in sorted(r.errors.items()):
+                print(f"           unreadable: {target} ({exc})")
+
+    if any(len(r.groups) > 1 for r in results):
+        return 2
+    if any(not r.in_sync for r in results):
+        return 1
+    return 0
+
+
 def cmd_rotation_audit(args) -> int:
     """Walk everything Portunus knows about -- registry references, vault
     bindings, and list_oauth_credentials() -- group by provider, join to
@@ -1964,6 +2181,7 @@ def cmd_bindings_show(args) -> int:
         print(json.dumps({
             proj: {
                 "account": b.account, "wif_audience": b.wif_audience,
+                "impersonate_service_account": b.impersonate_service_account,
                 "backend": b.backend, "sync_mode": b.sync_mode,
             }
             for proj, b in bindings.items()
@@ -1975,7 +2193,8 @@ def cmd_bindings_show(args) -> int:
     for proj, b in bindings.items():
         print(
             f"  {proj}  backend={b.backend}  sync_mode={b.sync_mode}  "
-            f"account={b.account or '-'}  wif_audience={b.wif_audience or '-'}"
+            f"account={b.account or '-'}  wif_audience={b.wif_audience or '-'}  "
+            f"impersonate_service_account={b.impersonate_service_account or '-'}"
         )
     return 0
 
@@ -3219,15 +3438,37 @@ def build_parser() -> argparse.ArgumentParser:
     auth_gcp = auth_sub.add_parser("gcp", help="mint a GCP WIF access token without printing it")
     auth_gcp.add_argument("--project", default="")
     auth_gcp.add_argument("--audience", default="")
+    auth_gcp.add_argument("--service-account", default="",
+                          help="service account to impersonate after the STS exchange "
+                               "(default: the binding's impersonate_service_account)")
     auth_gcp.set_defaults(func=cmd_auth_gcp)
     auth_login = auth_sub.add_parser("login", help="wrap `gcloud auth login <email>` -- the one command to remember")
     auth_login.add_argument("email")
     auth_login.set_defaults(func=cmd_auth_login)
     auth_status = auth_sub.add_parser(
-        "status", help="cross-reference configured bindings against gcloud's credentialed accounts",
+        "status", help="per binding: can Portunus get a GCP credential right now (wif/account/ambient)",
     )
     auth_status.add_argument("--json", action="store_true")
+    auth_status.add_argument("--strict", action="store_true",
+                             help="exit 1 if any binding's credential is missing or expired")
     auth_status.set_defaults(func=cmd_auth_status)
+
+    gcp_p = sub.add_parser("gcp", help="write to GCP Secret Manager through a project's binding")
+    gcp_sub = gcp_p.add_subparsers(dest="action", required=True)
+    gcp_add = gcp_sub.add_parser(
+        "add-version",
+        help="add a new version of an existing secret (value from stdin/file, never argv)",
+    )
+    gcp_add.add_argument("project")
+    gcp_add.add_argument("secret", help="Secret Manager secret id")
+    gcp_src = gcp_add.add_mutually_exclusive_group(required=True)
+    gcp_src.add_argument("--stdin", action="store_true", help="read the value from stdin")
+    gcp_src.add_argument("--value-file", default="", help="read the value from this file")
+    gcp_add.add_argument("--keep-whitespace", action="store_true",
+                         help="only drop the trailing line terminator, not all surrounding whitespace")
+    gcp_add.add_argument("--skip-preflight", action="store_true",
+                         help="don't check the binding's credential before writing")
+    gcp_add.set_defaults(func=cmd_gcp_add_version)
 
     disc = sub.add_parser(
         "discover",
@@ -3256,6 +3497,9 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_set.add_argument("--account", default="",
                           help="local gcloud CLI identity to use for this project, e.g. user@example.com")
     bnd_set.add_argument("--wif-audience", default="", help="WIF provider resource name")
+    bnd_set.add_argument("--impersonate-service-account", default="",
+                          help="service account email to act as: via the IAM Credentials API "
+                               "after a WIF mint, or gcloud --impersonate-service-account with --account")
     bnd_set.set_defaults(func=cmd_bindings_set)
     bnd_show = bnd_sub.add_parser("show", help="show one or all bindings (real values, not presence-only)")
     bnd_show.add_argument("project", nargs="?", default="")
@@ -3346,6 +3590,25 @@ def build_parser() -> argparse.ArgumentParser:
                            help="only references whose last check was not live, oldest failure first")
     lv_status.add_argument("--json", action="store_true")
     lv_status.set_defaults(func=cmd_liveness_status)
+
+    par = sub.add_parser(
+        "parity",
+        help="compare a reference's value across GCP / the vault / Convex (hash-only)",
+    )
+    par_sub = par.add_subparsers(dest="parity_action", required=True)
+    par_check = par_sub.add_parser(
+        "check", help="exit 0 all in sync, 2 any drift, 1 any target unreadable",
+    )
+    par_check.add_argument("names", nargs="*", help="reference names to compare")
+    par_check.add_argument("--all", action="store_true",
+                           help="every reference with a parity_targets tag")
+    par_check.add_argument(
+        "--target", action="append", default=[],
+        help="target spec, repeatable; replaces the parity_targets tag: ref | gcp[:<project>] "
+             "| local | convex:<deploy-key-ref>[:<VAR>]",
+    )
+    par_check.add_argument("--json", action="store_true")
+    par_check.set_defaults(func=cmd_parity_check)
 
     rbnd = sub.add_parser(
         "rotation-bindings",

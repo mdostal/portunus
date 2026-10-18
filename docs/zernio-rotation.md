@@ -118,4 +118,4 @@ portunus rotate zernio --webhook 6a73653a0ce2dee3dc80b152 --dry-run
 
 The Vercel token reference needs permission to read and write the project's env and to create deployments. The Convex deploy key must belong to the target deployment.
 
-Values are written to the **local** vault, as every rotation adapter does. If a reference is routed to GCP Secret Manager (`ffe-cicd/social-engine/*`), add the new version there by hand afterwards. (PANT-1151's `portunus parity check`, not merged yet, will flag that drift.)
+Values are written to the **local** vault, as every rotation adapter does. If a reference is routed to GCP Secret Manager (`ffe-cicd/social-engine/*`), add the new version there by hand afterwards. `portunus parity check <name> --target local --target gcp` (PANT-1151) shows the drift until you do.

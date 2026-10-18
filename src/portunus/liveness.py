@@ -30,7 +30,10 @@ Parity:
   target is a zero-arg fetcher. Values are compared via HMAC under a fresh
   random per-call key and dropped immediately, so the result carries only
   target names grouped by equality -- never a value, and never a
-  fingerprint that could be compared across runs.
+  fingerprint that could be compared across runs. A `digesting` fetcher
+  digests inside a resolver boundary instead, so the value never comes back
+  up the stack; `parity_fetchers()` builds them from target specs
+  (`ref`, `gcp`, `convex:<deploy-key-ref>:<VAR>`, ...) for `portunus parity`.
 
 Built-in provider probes are registered at the bottom of this module by the
 provider sub-issues (GitHub, PANT-1141, is the first; Neon, PANT-1120, probes a
@@ -38,7 +41,9 @@ Postgres connection string instead of an HTTP API; the event-api sources
 Eventbrite, Ticketmaster, SeatGeek and Meetup, PANT-1126, probe only the
 credential kinds that can be sent on their own; PANT-1125 adds the
 long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
-`invalidToken` flag and the token's expiry from its response; Zernio, PANT-1146,
+`invalidToken` flag and the token's expiry from its response; Convex, PANT-1151,
+probes a deploy key and reads deployment env vars for parity; PANT-1127 adds
+APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
 probes API keys only). See docs/liveness.md.
 """
 from __future__ import annotations
@@ -46,6 +51,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 import urllib.error
@@ -353,23 +359,43 @@ class ParityResult:
                 "groups": [list(g) for g in self.groups], "errors": dict(self.errors)}
 
 
-def parity_check(ref_name: str, fetchers: Mapping[str, Callable[[], str]]) -> ParityResult:
+def digesting(fetch: Callable[[Callable[[str], bytes]], bytes]) -> Callable:
+    """Mark `fetch` as a digesting fetcher: `parity_check` calls it with the
+    per-call `digest(value) -> bytes` function and it returns the digest
+    itself. That lets the value be digested inside a resolver boundary, so
+    the plaintext never comes back up the stack at all."""
+    fetch.parity_digest = True
+    return fetch
+
+
+def parity_check(ref_name: str, fetchers: Mapping[str, Callable]) -> ParityResult:
     """Fetch `ref_name` from every target and group targets by equality.
 
-    Each fetcher returns the target's live value; it is HMAC'd under a key
-    generated for this call alone and the plaintext reference is dropped
-    before the next fetch."""
+    A plain fetcher returns the target's live value; it is HMAC'd under a
+    key generated for this call alone and the plaintext reference is dropped
+    before the next fetch. A `digesting` fetcher is handed that HMAC and
+    returns the digest instead of the value."""
     key = secrets.token_bytes(32)
+
+    def digest(value: str) -> bytes:
+        return hmac.new(key, value.encode(), hashlib.sha256).digest()
+
     digests: Dict[str, bytes] = {}
     errors: Dict[str, str] = {}
     for target, fetch in fetchers.items():
         try:
-            value = fetch()
+            if getattr(fetch, "parity_digest", False):
+                got = fetch(digest)
+                if not isinstance(got, bytes) or len(got) != hashlib.sha256().digest_size:
+                    raise TypeError("digesting fetcher did not return a digest")
+                digests[target] = got
+            else:
+                value = fetch()
+                digests[target] = digest(value)
+                del value
         except Exception as exc:  # any target failure is reported, never fatal
             errors[target] = type(exc).__name__
             continue
-        digests[target] = hmac.new(key, value.encode(), hashlib.sha256).digest()
-        del value
 
     groups: List[List[str]] = []
     group_digests: List[bytes] = []
@@ -388,6 +414,31 @@ def parity_check(ref_name: str, fetchers: Mapping[str, Callable[[], str]]) -> Pa
 def backend_fetcher(backend, sm_name: str, project: str = "") -> Callable[[], str]:
     """Fetcher for any Portunus SecretBackend (local vault, GCP, ...)."""
     return lambda: backend.access(sm_name, project=project)
+
+
+def reference_fetcher(resolver, ref_name: str) -> Callable:
+    """Digesting fetcher for a reference's own value, through the resolver:
+    broker policy runs first (a gated or dropped reference is an error, not
+    a read) and the value is digested inside the boundary."""
+    return digesting(lambda digest: resolver.resolve_call("{{secret:%s}}" % ref_name, digest))
+
+
+def policy_backend_fetcher(broker, backend, ref, project: str = "") -> Callable:
+    """Digesting fetcher for `ref`'s copy in one specific backend (say GCP
+    Secret Manager when the reference normally resolves from the local
+    vault). The broker's policy check runs first, as it does for a resolve,
+    so parity can't be used to read around a gate."""
+    from .broker import Identity
+
+    def fetch(digest):
+        checked = broker.check_injectable(ref.name, requester=Identity.from_env())
+        value = backend.access(checked.sm_name, project=project or checked.project)
+        try:
+            return digest(value)
+        finally:
+            del value
+
+    return digesting(fetch)
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +778,247 @@ register_liveness_adapter("tremendous", TremendousLivenessAdapter)
 
 
 # ---------------------------------------------------------------------------
+# Apple Push Notification service auth keys (PANT-1127, GH #202).
+# ---------------------------------------------------------------------------
+
+# apns_transport(host, path, headers, body, timeout) -> (HTTP status, APNs reason)
+ApnsTransport = Callable[[str, str, Mapping[str, str], bytes, float], Tuple[int, str]]
+
+# Every `reason` in Apple's "Handling notification responses from APNs" table
+# (checked 2026-10-18), plus `BadEnvironmentKeyInToken`, the spelling seen in
+# Apple developer-forum reports. Only these ever reach a result: anything
+# else in the response body is dropped as "(unrecognised)".
+APNS_REASONS = frozenset({
+    "BadCollapseId", "BadDeviceToken", "BadExpirationDate", "BadMessageId", "BadPriority",
+    "BadTopic", "DeviceTokenNotForTopic", "DuplicateHeaders", "IdleTimeout", "InvalidPushType",
+    "MissingDeviceToken", "MissingTopic", "PayloadEmpty", "TopicDisallowed", "BadCertificate",
+    "BadCertificateEnvironment", "ExpiredProviderToken", "Forbidden", "InvalidProviderToken",
+    "MissingProviderToken", "UnrelatedKeyIdInToken", "BadEnvironmentKeyIdInToken", "BadPath",
+    "BadEnvironmentKeyInToken", "MethodNotAllowed", "ExpiredToken", "Unregistered", "PayloadTooLarge",
+    "TooManyProviderTokenUpdates", "TooManyRequests", "InternalServerError",
+    "ServiceUnavailable", "Shutdown",
+})
+
+
+def _apns_reason(body: bytes) -> str:
+    try:
+        reason = json.loads(body.decode("utf-8")).get("reason", "")
+    except (ValueError, AttributeError, UnicodeDecodeError):
+        return ""
+    return reason if reason in APNS_REASONS else "(unrecognised)"
+
+
+def _apns_default_transport(host: str, path: str, headers: Mapping[str, str], body: bytes,
+                            timeout: float) -> Tuple[int, str]:
+    """One HTTP/2 POST (APNs speaks nothing else) using the optional `h2`
+    package. Returns the status and the allowlisted APNs `reason` -- never
+    the raw body. TLS verifies Apple's certificate and hostname."""
+    try:
+        import h2.config
+        import h2.connection
+        import h2.events
+        import h2.exceptions
+    except ImportError:
+        raise LivenessError("the APNs probe needs the h2 package: "
+                            "pip install 'pantheon-portunus[apns]'") from None
+    import socket
+    import ssl
+
+    ctx = ssl.create_default_context()
+    ctx.set_alpn_protocols(["h2"])
+    try:
+        with socket.create_connection((host, 443), timeout=timeout) as raw, \
+                ctx.wrap_socket(raw, server_hostname=host) as sock:
+            if sock.selected_alpn_protocol() != "h2":
+                raise LivenessError(f"{host} did not negotiate HTTP/2")
+            conn = h2.connection.H2Connection(h2.config.H2Configuration(client_side=True))
+            conn.initiate_connection()
+            conn.send_headers(1, [(":method", "POST"), (":scheme", "https"), (":authority", host),
+                                  (":path", path), *headers.items()])
+            conn.send_data(1, body, end_stream=True)
+            sock.sendall(conn.data_to_send())
+            status, data = 0, b""
+            while True:
+                chunk = sock.recv(65535)
+                if not chunk:
+                    break
+                ended = False
+                for event in conn.receive_data(chunk):
+                    if isinstance(event, h2.events.ResponseReceived):
+                        status = int(dict(event.headers).get(b":status", b"0"))
+                    elif isinstance(event, h2.events.DataReceived):
+                        data = (data + event.data)[:4096]
+                        conn.acknowledge_received_data(event.flow_controlled_length, event.stream_id)
+                    elif isinstance(event, (h2.events.StreamEnded, h2.events.StreamReset,
+                                            h2.events.ConnectionTerminated)):
+                        ended = True
+                sock.sendall(conn.data_to_send())
+                if ended:
+                    break
+    except (OSError, h2.exceptions.ProtocolError) as exc:
+        raise LivenessError(f"request failed: {type(exc).__name__}") from None
+    if not status:
+        raise LivenessError(f"{host} closed the connection without a response")
+    return status, _apns_reason(data)
+
+
+def _b64url(raw: bytes) -> str:
+    import base64
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _load_p8(value: str):
+    """The EC P-256 private key in a stored `.p8` value (PEM, or PEM that was
+    base64-encoded for transport), or None."""
+    import base64
+    import binascii
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    pem = value.strip()
+    if not pem.startswith("-----BEGIN"):
+        try:
+            pem = base64.b64decode(pem, validate=False).decode("ascii").strip()
+        except (binascii.Error, ValueError):
+            return None
+        if not pem.startswith("-----BEGIN"):
+            return None
+    try:
+        key = serialization.load_pem_private_key(pem.encode("ascii"), password=None)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(key, ec.EllipticCurvePrivateKey) or key.curve.name != "secp256r1":
+        return None
+    return key
+
+
+def apns_provider_token(value: str, key_id: str, team_id: str, issued_at: int) -> Optional[str]:
+    """The ES256 provider-authentication JWT APNs expects, signed with the
+    stored `.p8` key, or None if the value is not one. Only ever called
+    inside the resolver boundary: the token is itself a credential for an
+    hour and goes nowhere but the `authorization` header."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+    key = _load_p8(value)
+    if key is None:
+        return None
+    header = _b64url(json.dumps({"alg": "ES256", "kid": key_id}, separators=(",", ":")).encode())
+    claims = _b64url(json.dumps({"iss": team_id, "iat": issued_at}, separators=(",", ":")).encode())
+    signing_input = f"{header}.{claims}".encode("ascii")
+    r, s = decode_dss_signature(key.sign(signing_input, ec.ECDSA(hashes.SHA256())))
+    return f"{header}.{claims}.{_b64url(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))}"
+
+
+class ApnsLivenessAdapter:
+    """APNs token auth keys (`.p8`). APNs has no read-only endpoint, so the
+    probe is a push that cannot be delivered: a provider token signed with
+    the stored key, sent to a made-up device token (64 zeros) as a silent
+    background push with `apns-expiration: 0`, so nothing is stored or
+    retried either.
+
+    APNs checks the provider token before the device token. A key it doesn't
+    accept gets 403 `InvalidProviderToken` (observed 2026-10-18 on both hosts
+    with a freshly generated key). A key it accepts gets past
+    authentication and the request is then refused for the device token
+    (400 `BadDeviceToken`), which reads live.
+
+    Like the Vercel probe, this one reads the response body, because APNs
+    puts the reason there and the status alone can't tell a revoked key
+    (`InvalidProviderToken`) from a key that only works in the other
+    environment (`BadEnvironmentKeyIdInToken`) or for another app
+    (`UnrelatedKeyIdInToken`). Only a reason on the `APNS_REASONS` allowlist
+    reaches the result. The body is a fixed JSON object that never echoes
+    the token.
+
+    Needs the key id and team id, which the `.p8` doesn't contain: the
+    `apns_key_id` tag (else a 10-character key id at the end of the
+    reference name, `apns-authkey-B9FVCQ4GB4`) and the `apns_team_id` tag.
+    Without both the key reads unknown with no request, and sweeps skip it.
+    Optional tags: `apns_topic` (the app's bundle id) and `apns_env`
+    (`sandbox`, the default, or `production`). Needs the optional `h2`
+    package (`pantheon-portunus[apns]`); without it every check is unknown."""
+
+    provider = "apns"
+    HOSTS = {"sandbox": "api.sandbox.push.apple.com", "production": "api.push.apple.com"}
+    PATH = "/3/device/" + "0" * 64
+    BODY = b'{"aps":{"content-available":1}}'
+    LIVE_REASONS = frozenset({"BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered",
+                              "MissingTopic", "BadTopic", "TopicDisallowed"})
+    DEAD_REASONS = frozenset({"InvalidProviderToken"})
+    NOT_A_KEY = (-1, "")  # boundary sentinel: never a real HTTP status
+
+    def __init__(self, transport: Optional[ApnsTransport] = None, timeout: float = _DEFAULT_TIMEOUT,
+                 clock: Callable[[], float] = time.time):
+        self._transport = transport or _apns_default_transport
+        self._timeout = timeout
+        self._clock = clock
+
+    @staticmethod
+    def _tags(ref) -> Mapping[str, str]:
+        return getattr(ref, "tags", None) or {}
+
+    def key_id(self, ref) -> str:
+        tagged = self._tags(ref).get("apns_key_id", "")
+        if tagged:
+            return tagged
+        suffix = ref.name.rsplit("-", 1)[-1]
+        return suffix if re.fullmatch(r"[A-Z0-9]{10}", suffix) else ""
+
+    def missing(self, ref) -> List[str]:
+        missing = []
+        if not self.key_id(ref):
+            missing.append("apns_key_id")
+        if not self._tags(ref).get("apns_team_id"):
+            missing.append("apns_team_id")
+        env = self._tags(ref).get("apns_env", "sandbox")
+        if env not in self.HOSTS:
+            missing.append("apns_env (sandbox or production)")
+        return missing
+
+    def can_probe(self, ref) -> bool:
+        return not self.missing(ref)
+
+    def check(self, ref, resolver) -> LivenessResult:
+        missing = self.missing(ref)
+        if missing:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"not probed: set the {', '.join(missing)} tag(s)")
+        tags = self._tags(ref)
+        host = self.HOSTS[tags.get("apns_env", "sandbox")]
+        key_id, team_id, topic = self.key_id(ref), tags["apns_team_id"], tags.get("apns_topic", "")
+
+        def boundary(value: str) -> Tuple[int, str]:
+            token = apns_provider_token(value, key_id, team_id, int(self._clock()))
+            if token is None:
+                return self.NOT_A_KEY
+            headers = {"authorization": f"bearer {token}", "apns-push-type": "background",
+                       "apns-priority": "5", "apns-expiration": "0"}
+            if topic:
+                headers["apns-topic"] = topic
+            return self._transport(host, self.PATH, headers, self.BODY, self._timeout)
+
+        code, reason = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if (code, reason) == self.NOT_A_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="stored value is not an EC P-256 .p8 key -- not probed")
+        if 200 <= code < 300 or reason in self.LIVE_REASONS:
+            status = LIVE
+        elif code == 403 and reason in self.DEAD_REASONS:
+            status = DEAD
+        else:
+            status = UNKNOWN
+        return LivenessResult(ref.name, self.provider, status, http_status=code,
+                              detail=f"POST https://{host}/3/device/<none> (key {key_id}) -> "
+                                     f"{code} {reason or '(no reason)'}")
+
+
+register_liveness_adapter("apns", ApnsLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
 # Vercel deploy/access tokens (PANT-1149, GH #144).
 # ---------------------------------------------------------------------------
 
@@ -836,6 +1128,254 @@ class VercelLivenessAdapter(HTTPLivenessAdapter):
 
 
 register_liveness_adapter("vercel", VercelLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Convex (PANT-1151, GH #142): deploy-key liveness and a parity fetcher for
+# the env vars a Convex deployment holds. Both talk to the deployment's own
+# HTTP API with `Authorization: Convex <deploy key>`, the auth the Convex CLI
+# and the Deployment Platform API use. No `npx convex` subprocess.
+# ---------------------------------------------------------------------------
+
+# Reference tag on a deploy-key reference: the deployment URL, for keys that
+# don't name their deployment (preview / project keys) or a deployment that
+# is not at the default `https://<name>.convex.cloud`.
+CONVEX_URL_TAG = "convex_url"
+
+_CONVEX_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
+
+
+def convex_deployment_url(value: str, override: str = "") -> str:
+    """The deployment URL a Convex key authenticates against, or "".
+
+    Called inside the resolver boundary. Only the part before `|` is read:
+    `prod:<name>|...` and `dev:<name>|...` deploy keys and `<name>|...`
+    admin keys name their deployment, which is public (it is the client's
+    CONVEX_URL). `preview:` and `project:` keys name a team and project, not
+    a deployment, so they need `override` (the `convex_url` tag)."""
+    if override:
+        return override.rstrip("/")
+    head, sep, _ = value.strip().partition("|")
+    if not sep:
+        return ""
+    parts = head.split(":")
+    if len(parts) == 1:
+        name = parts[0]
+    elif len(parts) == 2 and parts[0] in ("prod", "dev"):
+        name = parts[1]
+    else:
+        return ""
+    if not name or not set(name) <= _CONVEX_NAME_CHARS:
+        return ""
+    return f"https://{name}.convex.cloud"
+
+
+def _convex_headers(value: str) -> Dict[str, str]:
+    return {"Authorization": f"Convex {value.strip()}"}
+
+
+class ConvexLivenessAdapter(CredentialKindLivenessAdapter):
+    """Convex: `GET <deployment>/api/check_admin_key` with the stored deploy
+    key. It is the endpoint the dashboard uses to validate a key: it reads
+    nothing from the deployment (no data, no env vars) and answers a valid
+    key of any permission level with 200. A key for another deployment, or
+    a deleted one, gets 403 `BadDeployKey`; a malformed one gets 401.
+
+    Only `*-deploy-key` / `*-admin-key` references are probed (or a
+    `liveness_kind` tag). The deployment comes from the key itself, or from
+    the `convex_url` tag. With neither (a preview or project key with no
+    tag) nothing is sent: a request to the wrong deployment would read as a
+    false dead."""
+
+    PATH = "/api/check_admin_key"
+    NO_URL = -1  # boundary sentinel: never a real HTTP status
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__(
+            "convex",
+            HTTPProbe(url="https://<deployment>.convex.cloud" + self.PATH, header="Authorization",
+                      scheme="Convex", dead_statuses=(401, 403)),
+            probe_kinds=("deploy-key", "admin-key"),
+            not_probed={
+                "url": "deployment URL -- config, not a credential",
+                "deployment": "deployment name -- config, not a credential",
+            },
+            transport=transport, timeout=timeout,
+        )
+
+    def check(self, ref, resolver) -> LivenessResult:
+        if not self.can_probe(ref):
+            return super().check(ref, resolver)
+        override = (getattr(ref, "tags", None) or {}).get(CONVEX_URL_TAG, "")
+        used = {}
+
+        def boundary(value: str) -> int:
+            base = convex_deployment_url(value, override)
+            if not base:
+                return self.NO_URL
+            used["url"] = base + self.PATH
+            return self._transport("GET", used["url"], _convex_headers(value), self._timeout)
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NO_URL:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"key names no deployment and no {CONVEX_URL_TAG!r} tag -- not probed")
+        return LivenessResult(ref.name, self.provider, self.probe.classify(code), http_status=code,
+                              detail=f"GET {used['url']} -> {code}")
+
+
+register_liveness_adapter("convex", ConvexLivenessAdapter)
+
+
+class ConvexEnvError(RuntimeError):
+    """Reading a Convex deployment's env vars failed. Carries the HTTP status
+    at most -- never a key, a value or a response body."""
+
+
+class ConvexEnvVarMissing(ConvexEnvError):
+    """The deployment has no env var of that name."""
+
+
+# json_transport(method, url, headers, timeout) -> (status, body). The body
+# is only read for a 2xx; an error body is never read.
+JSONTransport = Callable[[str, str, Mapping[str, str], float], Tuple[int, bytes]]
+
+
+def _default_json_transport(method: str, url: str, headers: Mapping[str, str],
+                            timeout: float) -> Tuple[int, bytes]:
+    headers = {"User-Agent": "portunus-liveness", **headers}
+    req = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+        exc.close()
+        return code, b""
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise ConvexEnvError(f"request failed: {type(reason).__name__}") from None
+
+
+def convex_env_fetcher(resolver, deploy_key_ref, var: str,
+                       transport: Optional[JSONTransport] = None,
+                       timeout: float = _DEFAULT_TIMEOUT) -> Callable:
+    """Digesting parity fetcher for env var `var` on the Convex deployment
+    that `deploy_key_ref` (a registered deploy key) authenticates against.
+
+    Uses the Deployment Platform API's `GET /api/v1/list_environment_variables`
+    (Convex has no single-variable read on that API). Everything happens
+    inside the deploy key's resolver boundary: the response is parsed there,
+    `var` is digested there, and the rest of the response is dropped. Only
+    the digest leaves. A non-200 raises with the status code alone."""
+    send = transport or _default_json_transport
+    override = (getattr(deploy_key_ref, "tags", None) or {}).get(CONVEX_URL_TAG, "")
+
+    def fetch(digest):
+        def boundary(key: str) -> bytes:
+            base = convex_deployment_url(key, override)
+            if not base:
+                raise ConvexEnvError(f"deploy key names no deployment and no {CONVEX_URL_TAG!r} tag")
+            code, body = send("GET", base + "/api/v1/list_environment_variables",
+                              _convex_headers(key), timeout)
+            if code != 200:
+                raise ConvexEnvError(f"list_environment_variables -> {code}")
+            try:
+                env = json.loads(body)["environmentVariables"]
+            except (ValueError, KeyError, TypeError):
+                raise ConvexEnvError("unexpected list_environment_variables response") from None
+            finally:
+                del body
+            value = env.get(var) if isinstance(env, dict) else None
+            del env
+            if not isinstance(value, str):
+                raise ConvexEnvVarMissing(f"no env var {var!r} on the deployment")
+            try:
+                return digest(value)
+            finally:
+                del value
+
+        return resolver.resolve_call("{{secret:%s}}" % deploy_key_ref.name, boundary)
+
+    return digesting(fetch)
+
+
+# ---------------------------------------------------------------------------
+# Parity targets: where else a reference's value is supposed to live.
+# ---------------------------------------------------------------------------
+
+# Reference tag listing a reference's parity targets, separated by spaces
+# (`--tags` splits on commas, so a comma can't be set from the CLI; commas
+# and semicolons are accepted too), e.g.
+# `gcp convex:social-engine-prod-convex-deploy-key:AUTUMN_SECRET_KEY`.
+PARITY_TAG = "parity_targets"
+_SPEC_SEP = re.compile(r"[\s,;]+")
+
+
+class ParityTargetError(ValueError):
+    """A parity target spec is malformed or names something unknown."""
+
+
+def parity_specs(ref) -> List[str]:
+    raw = (getattr(ref, "tags", None) or {}).get(PARITY_TAG, "")
+    return [s for s in _SPEC_SEP.split(raw) if s]
+
+
+def parity_references(registry) -> List:
+    """References a parity sweep covers: a `parity_targets` tag, not
+    dropped/revoked."""
+    return [ref for ref in registry
+            if parity_specs(ref) and ref.state not in ("dropped", "revoked")]
+
+
+def _convex_var_for(ref) -> str:
+    """The env var name a reference is injected as, when there is exactly one."""
+    names = list((getattr(ref, "injected_as", None) or {}).keys())
+    return names[0] if len(names) == 1 else ""
+
+
+def parity_fetchers(ref, specs: Iterable[str], registry, broker, resolver,
+                    backend_for_kind: Callable[[str], object],
+                    convex_transport: Optional[JSONTransport] = None) -> Dict[str, Callable]:
+    """Build one fetcher per target spec. Specs:
+
+    - `ref` -- the reference's own value, resolved as normal (its routed backend)
+    - `<backend>[:<project>]` -- its copy in that backend (`gcp`, `local`, ...);
+      the project defaults to the reference's own
+    - `convex:<deploy-key-ref>[:<VAR>]` -- env var VAR on the Convex deployment
+      that deploy key belongs to; VAR defaults to the reference's single
+      `injected_as` name
+
+    Raises ParityTargetError for a malformed spec, so a typo is reported
+    rather than read as drift."""
+    fetchers: Dict[str, Callable] = {}
+    for spec in specs:
+        kind, _, rest = spec.partition(":")
+        if spec == "ref":
+            fetchers[spec] = reference_fetcher(resolver, ref.name)
+        elif kind == "convex":
+            key_name, _, var = rest.partition(":")
+            key_ref = registry.get(key_name) if key_name else None
+            if key_ref is None:
+                raise ParityTargetError(f"{spec!r}: no deploy-key reference {key_name!r} in registry")
+            var = var or _convex_var_for(ref)
+            if not var:
+                raise ParityTargetError(f"{spec!r}: name the env var (convex:<deploy-key-ref>:<VAR>)")
+            fetchers[spec] = convex_env_fetcher(resolver, key_ref, var, transport=convex_transport)
+        else:
+            try:
+                backend = backend_for_kind(kind)
+            except KeyError:
+                raise ParityTargetError(f"{spec!r}: unknown target kind {kind!r}") from None
+            fetchers[spec] = policy_backend_fetcher(broker, backend, ref, project=rest)
+    if len(fetchers) < 2:
+        raise ParityTargetError(f"{ref.name}: parity needs at least two targets, got {len(fetchers)}")
+    return fetchers
+
+
+def audit_parity(audit, ref, result: ParityResult) -> None:
+    tag = "in_sync" if result.in_sync else ("drift" if len(result.groups) > 1 else "error")
+    audit.append("parity", ref.sm_name, tag)
 
 
 # ---------------------------------------------------------------------------
