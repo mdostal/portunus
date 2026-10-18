@@ -45,6 +45,10 @@ Real adapters:
   it, and (with --retire-old) DELETES the old token -- Vercel has no
   disable. All HTTP goes through the injected `transport` seam.
 
+- `ZernioRotationAdapter` (zernio.py, PANT-1146) rotates a Zernio webhook
+  signing secret or API key AND pushes it to every env-var target it is
+  injected into (Vercel, Convex -- envtargets.py), in one ordered flow.
+
 - `NeonRotationAdapter` resets a Neon Postgres role password through the
   Neon API, stores the connection string with the new password, waits for
   Neon to apply it, and verifies it with a real connect + `SELECT 1`. A
@@ -2764,6 +2768,12 @@ class SentryRotationAdapter:
         )
 
 
+def _zernio_adapter():
+    # Lazy: zernio.py builds on this module (and envtargets.py).
+    from .zernio import ZernioRotationAdapter
+    return ZernioRotationAdapter()
+
+
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
     "gcp": GCPServiceAccountKeyRotationAdapter,
@@ -2776,6 +2786,7 @@ _ADAPTERS = {
     "neon": NeonRotationAdapter,
     "stripe": StripeRotationAdapter,
     "sentry": SentryRotationAdapter,
+    "zernio": _zernio_adapter,
 }
 
 

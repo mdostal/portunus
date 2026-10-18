@@ -43,7 +43,8 @@ credential kinds that can be sent on their own; PANT-1125 adds the
 long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
 `invalidToken` flag and the token's expiry from its response; Convex, PANT-1151,
 probes a deploy key and reads deployment env vars for parity; PANT-1127 adds
-APNs auth keys, probed with an undeliverable HTTP/2 push). See docs/liveness.md.
+APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
+probes API keys only). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -1375,3 +1376,35 @@ def parity_fetchers(ref, specs: Iterable[str], registry, broker, resolver,
 def audit_parity(audit, ref, result: ParityResult) -> None:
     tag = "in_sync" if result.in_sync else ("drift" if len(result.groups) > 1 else "error")
     audit.append("parity", ref.sm_name, tag)
+
+
+# ---------------------------------------------------------------------------
+# Zernio (PANT-1146, GH #174). Only the API key can be sent on its own; the
+# webhook signing secret is never accepted as a credential.
+# ---------------------------------------------------------------------------
+
+
+class ZernioLivenessAdapter(CredentialKindLivenessAdapter):
+    """Zernio: `GET /api/v1/profiles` with the API key as a bearer token.
+    Zernio answers an invalid, revoked or expired key with 401
+    (`invalid_credentials`). A 403 is a valid key whose `accounts` resource
+    group is switched off, so it stays unknown rather than dead.
+
+    The webhook signing secret is not probed: Zernio never accepts it as a
+    credential, and receivers answer a bad signature with 2xx. It is
+    verified end to end by `portunus rotate zernio` (a test delivery)."""
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__(
+            "zernio",
+            HTTPProbe(url="https://zernio.com/api/v1/profiles", dead_statuses=(401,)),
+            probe_kinds=("api-key",),
+            not_probed={
+                "webhook-secret": "a webhook signing secret is never sent to Zernio's API; "
+                                  "`portunus rotate zernio` verifies it with a test delivery",
+            },
+            transport=transport, timeout=timeout,
+        )
+
+
+register_liveness_adapter("zernio", ZernioLivenessAdapter)

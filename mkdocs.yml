@@ -59,6 +59,7 @@ nav:
   - Provider Rotation Matrix: provider-rotation-matrix.md
   - n8n Rotation Runbook: n8n-rotation-runbook.md
   - Mobile Credentials Runbook: mobile-credentials-runbook.md
+  - Zernio Rotation Runbook: zernio-rotation.md
   - Liveness & Parity: liveness.md
   - Reference:
     - CLI Reference: cli-reference.md
