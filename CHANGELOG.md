@@ -6,6 +6,16 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Roll a credential everywhere: `portunus rotation roll` (#230).** Rotates a Resend key, then
+  pushes the new value to every target in the reference's `rotation_targets` tag:
+  `convex:<deploy-key-ref>[:<VAR>]` (Deployment Platform API),
+  `vercel:<token-ref>:<project>[:<VAR>]` (env upsert, plus the `vercel_deploy_hook_ref`
+  redeploy), and `gcp:<project>[:<secret>]` (a new Secret Manager version). It reads back every
+  readable target and runs any `rotation_verify` check (`convex-fn:<deploy-key-ref>:<fn>`). Only
+  then does it delete the old key. A failed push or check rolls everything back: the targets,
+  the vault, the key-id tag and the new key. Has `--dry-run`, `--keep-old` and `--skip-target`.
+  See `docs/rotation.md`.
+
 - **Convex deploy-key liveness and a cross-system parity check (PANT-1151, #142).** A new
   `convex` liveness probe sends a stored deploy key to `GET <deployment>/api/check_admin_key`,
   which reads nothing from the deployment. A bad or deleted key gets 403 (`BadDeployKey`) and a
@@ -188,6 +198,10 @@ All notable changes to Portunus are documented in this file.
   the wrong endpoint (`users/me/tokens`). It now shows the documented `users/{id}/permanenttokens`.
 
 ### Fixed
+
+- **`portunus resolve --stdin` piped into another command (#230).** `resolve` prints the temp
+  file's path, not the value, so `... | portunus resolve --stdin | vercel env add` stored the
+  path. When stdout is not a terminal, `resolve` now says so on stderr and points at `--exec`.
 
 - `portunus bindings set` no longer wipes a binding's `impersonate_service_account` when it
   updates another field, and `bindings show` now displays it.

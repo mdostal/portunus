@@ -351,6 +351,68 @@ Phases:
    Without it, the old key id is added to the `resend` binding's `superseded_key_ids`, and
    `portunus rotation audit` lists it until it is retired.
 
+### Roll everywhere: `portunus rotation roll`
+
+`rotation run` only updates the vault. `portunus rotation roll <ref-name>` also pushes the new key
+to every place that holds a copy, checks each copy, and only then deletes the old key
+(GH #230, `src/portunus/rollout.py`):
+
+1. **rotate**: create, verify and store, as above.
+2. **push**: write the new value to every target in the `rotation_targets` tag, then POST the
+   Vercel deploy hook so the new env takes effect.
+3. **verify**: read back every target that can be read and check it holds the new value
+   (compared in-process, never printed), then run each `rotation_verify` check.
+4. **retire**: delete the old key at Resend. Pass `--keep-old` to skip this.
+
+If step 2 or 3 fails, everything is rolled back. The targets already written get the old value
+back, the vault gets the old value, the `resend_api_key_id` tag is restored, the new key is
+deleted at Resend and the deploy hook fires again. Anything that could not be undone is named in
+the error (`ROLLBACK INCOMPLETE, fix by hand: ...`). The old key is never touched before every
+check passes.
+
+| Tag | Meaning |
+|---|---|
+| `rotation_targets` | Space-separated target specs (below). |
+| `rotation_verify` | Space-separated verify specs (below). Optional. |
+| `rotation_verify_args` | JSON object passed as the verify function's args. Default `{}`. `portunus retag --tags` splits on commas, so from the CLI this can only be an object with a single key, such as `{"to":"ops@example.com"}`. |
+| `rotation_verify_expect` | If the verify function returns an object with a `status` field, it must equal this value. Default `sent`. |
+| `vercel_deploy_hook_ref` | A reference holding a Vercel deploy hook URL, POSTed after the Vercel push. |
+| `vercel_team_id` | Team for the Vercel env upsert (`?teamId=`). |
+| `vercel_env_target` | Vercel environment to write. Default `production`. |
+
+| Target spec | Writes | Read back? |
+|---|---|---|
+| `convex:<deploy-key-ref>[:<VAR>]` | `POST /api/v1/update_environment_variables` on the deployment the deploy key names (`convex_url` tag on the key overrides) | yes, `list_environment_variables` |
+| `vercel:<token-ref>:<project>[:<VAR>]` | `POST /v10/projects/<project>/env?upsert=true` as an `encrypted` var | no, Vercel doesn't return encrypted values |
+| `gcp:<project>[:<secret>]` | a new Secret Manager version, through the project's vault binding (same path as `portunus gcp add-version`); the secret defaults to the reference's sm_name | yes |
+
+`VAR` defaults to the reference's single `injected_as` name.
+
+| Verify spec | Passes when |
+|---|---|
+| `convex-fn:<deploy-key-ref>:<module:function>` | Convex runs the function as admin (`POST /api/function`) with `status: success`, and any returned `status` field equals `rotation_verify_expect` |
+
+Example for `flayr-resend-api-key`:
+
+```sh
+# --tags REPLACES every tag, so repeat the ones already set (resend_api_key_id, resend_admin_ref, ...)
+portunus retag flayr-resend-api-key --tags \
+  'resend_api_key_id=<current id>,rotation_targets=convex:flayr-convex-prod-deploy-key:RESEND_API_KEY vercel:ffe-vercel-token:social-engine:RESEND_API_KEY gcp:ffe-cicd:social-engine-prod-resend-api-key,vercel_deploy_hook_ref=social-engine-deploy-hook'
+portunus rotation roll flayr-resend-api-key --dry-run      # prints the plan, touches nothing
+portunus rotation roll flayr-resend-api-key --yes
+portunus rotation roll flayr-resend-api-key --yes --skip-target gcp:ffe-cicd:social-engine-prod-resend-api-key
+```
+
+`--skip-target` leaves a target out. Use it while a target's credential is unusable, for example
+an expired gcloud login. Otherwise its write fails and the whole roll is rolled back.
+
+The verify function has to send through the new key, without a user session, and return
+`{status: "sent"}` once Resend accepts the email. flayr's `emailSend:sendTest` doesn't fit:
+it is a `superAdminMutation` that needs a signed-in user, and it only schedules
+`internal.emailSend.runTest`, so it never reports a send result. Until flayr has a function like
+that, leave `rotation_verify` unset. The Convex and GCP read-backs plus Resend's own key check
+still run.
+
 ---
 
 ## Google Cloud API keys
