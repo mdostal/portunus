@@ -545,7 +545,7 @@ portunus rotation audit [--json]
 
 ### `liveness check`
 
-Probe stored credentials against their provider's own API with one cheap, read-only call. Registered providers today: `github` (`GET /rate_limit`). Exits `0` when all are live, `2` if any is dead, `1` if any check could not reach a verdict. Never prints a value or a response body. See [Liveness & Parity](liveness.md).
+Probe stored credentials against their provider's own API with one cheap, read-only call. See [Liveness & Parity](liveness.md#registered-providers) for the registered providers. Exits `0` when all are live, `2` if any is dead, `1` if any check could not reach a verdict. Never prints a value or a response body.
 
 ```
 portunus liveness check <name> [<name> ...] [--json]
@@ -561,6 +561,24 @@ Show the last recorded verdict per reference. `--failing` lists only non-live re
 ```
 portunus liveness status [--failing] [--json]
 ```
+
+---
+
+### `parity check`
+
+Compare a reference's value across the places it is supposed to live: its own resolved value,
+its copy in GCP Secret Manager or the local vault, an env var on a Convex deployment. Values are
+compared as per-call HMACs and never printed; the output says which targets agree. Targets come
+from the reference's `parity_targets` tag, or from `--target` (repeatable, replaces the tag).
+Exits `0` when every reference is in sync, `2` if any has drifted, `1` if a target could not be
+read. See [Liveness & Parity](liveness.md#parity).
+
+```
+portunus parity check <name> [<name> ...] [--target SPEC ...] [--json]
+portunus parity check --all [--json]
+```
+
+`SPEC` is `ref`, `gcp[:<project>]`, `local` or `convex:<deploy-key-ref>[:<VAR>]`.
 
 ---
 

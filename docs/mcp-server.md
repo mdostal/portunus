@@ -126,6 +126,7 @@ Both tools accept dual addressing: exact `name` (from a prior list/search/previe
 | `portunus_rotation_audit` | — | Inventory all references and OAuth credentials by provider; report auto/manual/unknown capability with reference names and superseded key IDs. |
 | `portunus_liveness_check` | `names?: list[str]`, `all?: bool` | Probe stored credentials against their provider's API; live/dead/unknown per reference. Value only reaches the request header. |
 | `portunus_liveness_status` | `failing?: bool` | Last recorded liveness verdict per reference, with how long a failing one has been failing. |
+| `portunus_parity_check` | `names?: list[str]`, `all?: bool`, `targets?: list[str]` | Compare a reference's value across its targets (GCP, the vault, a Convex deployment); returns which targets agree, never a value. |
 
 ### GCP discovery
 

@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Convex deploy-key liveness and a cross-system parity check (PANT-1151, #142).** A new
+  `convex` liveness probe sends a stored deploy key to `GET <deployment>/api/check_admin_key`,
+  which reads nothing from the deployment. A bad or deleted key gets 403 (`BadDeployKey`) and a
+  malformed one gets 401, both `dead`. The deployment comes from the key itself
+  (`prod:<name>|...`), or from the `convex_url` tag for preview/project keys. New
+  `portunus parity check` (and the `portunus_parity_check` MCP tool) compares one reference
+  across targets listed in its `parity_targets` tag or `--target`: `ref`, `gcp[:<project>]`,
+  `local`, and `convex:<deploy-key-ref>[:<VAR>]`, which reads the env var through the Deployment
+  Platform API with no `npx convex`. Values are digested inside the resolver boundary; the output
+  is target names grouped by agreement. Exits `2` on drift, so it can replace the per-repo
+  `check-env-parity.sh` in a scheduler. See `docs/liveness.md`.
 - **Reverse rotation diagnosis (PANT-1121, #208).** Audit entries now carry a wall-clock `ts`
   (epoch seconds, covered by the hash). Entries written before this have none and still verify.
   `portunus audit` gains `--since`/`--until` (dates, datetimes, epoch seconds or ages like

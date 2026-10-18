@@ -1780,6 +1780,84 @@ def cmd_liveness_status(args) -> int:
     return 0
 
 
+def _parity_backend(kind: str, audit):
+    """A backend for a `<backend>[:<project>]` parity target. KeyError for an
+    unknown kind (reported as a bad target spec)."""
+    if kind == "gcp":
+        return GcloudBackend(bindings=load_vault_bindings(), audit=audit)
+    if kind == "local":
+        return LocalEncryptedBackend()
+    raise KeyError(kind)
+
+
+def run_parity(names, all_refs: bool, targets) -> tuple:
+    """Shared by `portunus parity check` and the MCP tool. Returns
+    (results, error) -- error is set only for an unknown reference name.
+    Results carry target names only, never a value."""
+    from . import liveness
+
+    registry, audit, broker, resolver = _build()
+    if all_refs:
+        refs = liveness.parity_references(registry)
+    else:
+        refs = []
+        for name in names or []:
+            ref = registry.get(name)
+            if ref is None:
+                return [], f"no reference {name!r} in registry"
+            refs.append(ref)
+    results = []
+    for ref in refs:
+        specs = list(targets) if targets else liveness.parity_specs(ref)
+        try:
+            fetchers = liveness.parity_fetchers(
+                ref, specs, registry, broker, resolver, lambda kind: _parity_backend(kind, audit))
+        except liveness.ParityTargetError as exc:
+            # A bad spec is a finding about this reference, not a reason to
+            # stop an unattended sweep. Its text names targets, never values.
+            result = liveness.ParityResult(ref.name, (), {"targets": f"ParityTargetError: {exc}"})
+            liveness.audit_parity(audit, ref, result)
+            results.append(result)
+            continue
+        result = liveness.parity_check(ref.name, fetchers)
+        liveness.audit_parity(audit, ref, result)
+        results.append(result)
+    return results, ""
+
+
+def cmd_parity_check(args) -> int:
+    """Compare a reference's value across its targets (GCP, the local vault,
+    a Convex deployment, ...). Exit 0 when every reference is in sync, 2 if
+    any has drifted, 1 if a target could not be read. Never prints a value
+    or a fingerprint -- only which targets agree."""
+    from . import liveness
+
+    if not args.all and not args.names:
+        return _err("name a reference to check, or pass --all")
+    results, error = run_parity(args.names, args.all, args.target)
+    if error:
+        return _err(error)
+    if args.all and not results:
+        print(f"(no references with a {liveness.PARITY_TAG!r} tag)")
+        return 0
+
+    if args.json:
+        print(json.dumps({"results": [r.to_dict() for r in results]}))
+    else:
+        for r in results:
+            state = "IN SYNC" if r.in_sync else ("DRIFT" if len(r.groups) > 1 else "ERROR")
+            groups = "  |  ".join(", ".join(g) for g in r.groups) or "-"
+            print(f"  {state:8} {r.ref_name}  agree: {groups}")
+            for target, exc in sorted(r.errors.items()):
+                print(f"           unreadable: {target} ({exc})")
+
+    if any(len(r.groups) > 1 for r in results):
+        return 2
+    if any(not r.in_sync for r in results):
+        return 1
+    return 0
+
+
 def cmd_rotation_audit(args) -> int:
     """Walk everything Portunus knows about -- registry references, vault
     bindings, and list_oauth_credentials() -- group by provider, join to
@@ -3212,6 +3290,25 @@ def build_parser() -> argparse.ArgumentParser:
                            help="only references whose last check was not live, oldest failure first")
     lv_status.add_argument("--json", action="store_true")
     lv_status.set_defaults(func=cmd_liveness_status)
+
+    par = sub.add_parser(
+        "parity",
+        help="compare a reference's value across GCP / the vault / Convex (hash-only)",
+    )
+    par_sub = par.add_subparsers(dest="parity_action", required=True)
+    par_check = par_sub.add_parser(
+        "check", help="exit 0 all in sync, 2 any drift, 1 any target unreadable",
+    )
+    par_check.add_argument("names", nargs="*", help="reference names to compare")
+    par_check.add_argument("--all", action="store_true",
+                           help="every reference with a parity_targets tag")
+    par_check.add_argument(
+        "--target", action="append", default=[],
+        help="target spec, repeatable; replaces the parity_targets tag: ref | gcp[:<project>] "
+             "| local | convex:<deploy-key-ref>[:<VAR>]",
+    )
+    par_check.add_argument("--json", action="store_true")
+    par_check.set_defaults(func=cmd_parity_check)
 
     rbnd = sub.add_parser(
         "rotation-bindings",
