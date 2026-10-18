@@ -581,7 +581,8 @@ portunus parity check <name> [<name> ...] [--target SPEC ...] [--json]
 portunus parity check --all [--json]
 ```
 
-`SPEC` is `ref`, `gcp[:<project>]`, `local` or `convex:<deploy-key-ref>[:<VAR>]`.
+`SPEC` is `ref`, `gcp[:<project>]`, `local`, `convex:<deploy-key-ref>[:<VAR>]` or
+`vercel:<token-ref>:<project>[:<VAR>[:<target>]]`.
 
 ---
 

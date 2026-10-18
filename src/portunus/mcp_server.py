@@ -320,7 +320,8 @@ def portunus_parity_check(names: Optional[List[str]] = None, all: bool = False,
     unreadable target); values are compared as per-call HMACs inside the
     resolver boundary, so no value or reusable fingerprint is ever returned.
     Targets come from the reference's `parity_targets` tag, or `targets`:
-    `ref`, `gcp[:<project>]`, `local`, `convex:<deploy-key-ref>[:<VAR>]`.
+    `ref`, `gcp[:<project>]`, `local`, `convex:<deploy-key-ref>[:<VAR>]`,
+    `vercel:<token-ref>:<project>[:<VAR>[:<target>]]`.
     Pass `names`, or `all=True` for every reference with that tag."""
     from .cli import run_parity
 

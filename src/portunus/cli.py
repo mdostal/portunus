@@ -3471,7 +3471,8 @@ def build_parser() -> argparse.ArgumentParser:
     par_check.add_argument(
         "--target", action="append", default=[],
         help="target spec, repeatable; replaces the parity_targets tag: ref | gcp[:<project>] "
-             "| local | convex:<deploy-key-ref>[:<VAR>]",
+             "| local | convex:<deploy-key-ref>[:<VAR>] "
+             "| vercel:<token-ref>:<project>[:<VAR>[:<target>]]",
     )
     par_check.add_argument("--json", action="store_true")
     par_check.set_defaults(func=cmd_parity_check)

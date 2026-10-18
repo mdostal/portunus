@@ -6,6 +6,19 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Clerk secret-key liveness and a Vercel env parity target (PANT-1148, #145).** A new `clerk`
+  liveness probe sends a stored instance secret key to `GET https://api.clerk.com/v1/jwks`. That
+  call returns only the instance's public signing keys, with no user data. An invalid key gets
+  401 `clerk_key_invalid` and reads `dead`. Only `*-secret-key` references holding an
+  `sk_test_`/`sk_live_` value are sent. Publishable keys, webhook secrets and misfiled values read
+  `unknown` with no request. New parity target `vercel:<token-ref>:<project>[:<VAR>[:<target>]]`
+  reads one env var from a Vercel project (`GET /v10/projects/<p>/env?decrypt=true`, the call
+  flayr's `check-env-parity.sh` makes) and digests it inside the Vercel token's boundary. This
+  covers the GCP -> Vercel copies of `CLERK_SECRET_KEY` (and `AUTUMN_SECRET_KEY`) that
+  `setup-vercel-env.sh` pushes. A `sensitive` Vercel variable can't be read back, so it reads as
+  an error, not as drift. Clerk instance-key rotation exists only in the private-beta Platform API
+  (`POST /v1/platform/applications/{id}/instances/{env}/rotate_secret_keys`) and is not built.
+  See `docs/liveness.md#clerk`.
 - **Convex deploy-key liveness and a cross-system parity check (PANT-1151, #142).** A new
   `convex` liveness probe sends a stored deploy key to `GET <deployment>/api/check_admin_key`,
   which reads nothing from the deployment. A bad or deleted key gets 403 (`BadDeployKey`) and a

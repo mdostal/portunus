@@ -96,6 +96,7 @@ provider's API docs and a real key.
 | `neon` | connect + `SELECT 1` with the stored Postgres connection string | SQLSTATE class 28 (`28P01`, `28000`) | Not HTTP. Uses Portunus's own minimal Postgres client (`portunus.pgwire`, no driver to install): TLS with certificate and hostname verification, SCRAM-SHA-256 (with channel binding when offered) / MD5 / cleartext. Network/TLS errors, a suspended or deleted endpoint, or a missing database read `unknown`. Results show only `host/database` and the SQLSTATE, never the user, password or server message. Works for any Postgres URL; set `liveness_provider=neon` on a reference registered under another provider. Caught the 2026-10-16 server-side password rotation (PANT-1120). |
 | `convex` | `GET <deployment>/api/check_admin_key` (`Authorization: Convex <key>`) | 401, 403 | Probes `*-deploy-key` / `*-admin-key` only. Reads nothing from the deployment. 403 is `BadDeployKey` (deleted, or for another deployment); 401 is a malformed key. The deployment URL comes from the key (`prod:<name>\|…`, `dev:<name>\|…`, admin `<name>\|…` → `https://<name>.convex.cloud`) or the `convex_url` tag. Preview and project keys don't name a deployment: without the tag they read `unknown` and nothing is sent. See [Convex](#convex). |
 | `vercel` | `GET https://api.vercel.com/v5/user/tokens/current` (Bearer) | 401, or 403 with `invalidToken: true` | The token's own metadata, with no project or deployment data. Vercel uses 403 for every auth failure, including a missing token (`missingToken`), so a 403 without `invalidToken` reads `unknown`. This adapter reads the response body, but only to extract that flag and `expiresAt`. A live result shows the expiry date, and within 14 days of it the detail warns and names `portunus rotation run <name>`. A dead token can't mint its successor, so rotate before expiry: set `vercel_token_ttl_days` and rotate on a schedule shorter than that (see [rotation.md](rotation.md)). Tag a deploy token stored under `gcp` with `liveness_provider=vercel`. The dead-token response was confirmed live on 2026-09-13 and again with a bogus token on 2026-10-18. The live 200 path hasn't been confirmed against a real token yet. Not the AI Gateway key, which is `vercel-ai`. |
+| `clerk` | `GET https://api.clerk.com/v1/jwks` (Bearer) | 401 only | Probes `*-secret-key` only, and only a value starting `sk_` (`sk_test_` / `sk_live_`, same host for both). Returns the instance's public signing keys, with no users or settings. An invalid key gets 401 `clerk_key_invalid` (confirmed with a bogus key on 2026-10-18). A 403 reads `unknown`. Publishable keys, webhook secrets (`whsec_`) and a non-`sk_` value misfiled under a `-secret-key` name read `unknown` with no request. Tag keys stored under `gcp` with `liveness_provider=clerk`. See [Clerk](#clerk). |
 
 | `browserbase` | `GET https://api.browserbase.com/v1/projects` (`X-BB-API-Key`, raw) | 401 only | `browserbase-project-id` is config, not a key. |
 | `firecrawl` | `GET https://api.firecrawl.dev/v2/team/credit-usage` (Bearer) | 401 only | Reads the team's remaining credits; scrapes nothing. 402 (out of credits) reads `unknown`. |
@@ -124,8 +125,8 @@ Long-tail providers with no probe yet. They read `unknown` (no adapter):
 | Slack incoming webhooks | The URL is the credential. The only call is a POST to it, and a valid payload posts a message. |
 | Slack OAuth app credentials | Client secret, signing secret and verification token don't authenticate any read-only call on their own. |
 
-The other provider sub-issues of #141 add their own: Autumn (#143) and Clerk (#145).
-Vercel (#144) and Convex (#142) are the `vercel` and `convex` rows above.
+The remaining provider sub-issue of #141 adds its own: Autumn (#143).
+Vercel (#144), Convex (#142) and Clerk (#145) are the `vercel`, `convex` and `clerk` rows above.
 
 The event-source probes (PANT-1126 / #203) pick their adapter from `provider`, so they only
 apply once the references carry their real provider rather than `gcp`. See
@@ -208,7 +209,8 @@ returns the digest, so the value can be digested inside a resolver boundary
 and never come back up the stack. `reference_fetcher(resolver, name)` (the
 reference's own value, broker policy first), `policy_backend_fetcher(broker,
 backend, ref)` (its copy in one specific backend, policy first) and
-`convex_env_fetcher(resolver, deploy_key_ref, VAR)` are all digesting.
+`convex_env_fetcher(resolver, deploy_key_ref, VAR)` and
+`vercel_env_fetcher(resolver, token_ref, project, VAR, target)` are all digesting.
 
 ### `portunus parity check`
 
@@ -228,6 +230,7 @@ the tag.
 | `gcp[:<project>]` | its copy in GCP Secret Manager (project defaults to the reference's own) |
 | `local` | its copy in the local encrypted vault |
 | `convex:<deploy-key-ref>[:<VAR>]` | env var `VAR` on the Convex deployment that deploy key belongs to. `VAR` defaults to the reference's single `injected_as` name |
+| `vercel:<token-ref>:<project>[:<VAR>[:<target>]]` | env var `VAR` on Vercel project `<project>` (id or name) for `<target>` (`production` by default; `preview`, `development`, or a custom environment's slug), read with the Vercel token `<token-ref>` holds. `VAR` defaults as for `convex`. See [Vercel env as a parity target](#vercel-env-as-a-parity-target) |
 
 Every target is read under the same broker policy as a resolve, so a gated or
 dropped reference reads as an error, not a value. The exit code is `0` when
@@ -278,3 +281,70 @@ false `dead`.
 Not covered yet: rotating the deploy key itself. Convex's Management API has
 `create_deploy_key` and `delete_deploy_key` (team access token), but rotating
 through them hasn't been built or tested. That is a follow-up.
+
+## Clerk
+
+Clerk (PANT-1148, GH #145) keys live in GCP Secret Manager as
+`social-engine-{dev,prod}-clerk-secret-key`, `*-clerk-publishable-key` and
+`*-clerk-webhook-secret`. flayr's `setup-vercel-env.sh` pushes
+`CLERK_SECRET_KEY` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` to Vercel.
+
+- **Liveness.** `portunus liveness check <name>` on a `*-clerk-secret-key`
+  sends it to `GET https://api.clerk.com/v1/jwks`. Clerk's Backend API spec
+  lists that route as needing the secret key, and it returns only the
+  instance's public JWKS. It was picked over `GET /v1/users?limit=1` (returns a
+  user record), `/v1/users/count` (the user count) and `/v1/instance`
+  (instance settings). Bogus keys got `401 clerk_key_invalid` on all four on
+  2026-10-18. The live 200 path hasn't been confirmed against a real key yet,
+  so the first check on a machine that holds one is that confirmation.
+- **Parity.** Compare the vault/GCP copy with what Vercel and Convex have:
+
+  ```sh
+  portunus retag social-engine-prod-clerk-secret-key --tags "liveness_provider=clerk,\
+  parity_targets=gcp vercel:vercel-deploy-token:prj_JSD2sPXbFcJuYQZutwdbV8FGBMj7:CLERK_SECRET_KEY:production"
+  portunus retag vercel-deploy-token --tags "vercel_team_id=team_9LvKhV1a433uROYAAXl6lbhV"
+  portunus parity check social-engine-prod-clerk-secret-key
+  ```
+
+  (`retag --tags` replaces the whole tags dict, so include any existing tags.)
+  Add `convex:<deploy-key-ref>:CLERK_SECRET_KEY` as a target too if the Convex
+  deployment holds the key. The publishable key isn't a secret, but drift
+  there breaks sign-in just as badly, so it can carry a `parity_targets` tag
+  as well.
+- **Rotation.** The Backend API has no way to rotate an instance's own
+  secret key (it only rotates machine, OAuth-app and SCIM keys). Clerk's
+  **Platform API** has
+  `POST /v1/platform/applications/{applicationID}/instances/{envOrInsID}/rotate_secret_keys`
+  (and an all-instances variant). It takes `delay_old_secrets_expiration_hours`
+  for an overlap window and returns the new `sk_` key. It authenticates with a
+  workspace Platform API access token, not the instance key, and the API is
+  in private beta (access by request form). Checked against
+  `clerk/openapi-specs` `platform/beta.yml` on 2026-10-18. A rotation adapter
+  is a follow-up once the workspace has Platform API access. Until then, rotate
+  in the Clerk Dashboard, then re-sync GCP -> Vercel/Convex and run `parity check`.
+
+### Vercel env as a parity target
+
+`vercel:<token-ref>:<project>[:<VAR>[:<target>]]` makes the one request
+flayr's `check-env-parity.sh` makes: `GET
+https://api.vercel.com/v10/projects/<project>/env?decrypt=true`, plus `teamId`
+(a `team_...` value) or `slug` from the token reference's `vercel_team_id` tag,
+and `customEnvironmentSlug` for a custom environment. The listing is parsed
+inside the token's resolver boundary. The one matching entry is digested
+there and everything else, including every other variable's decrypted value,
+is dropped. An error response's body is never read.
+
+- The entry matches when its `key` is `VAR` and `target` contains `<target>`.
+  Branch-specific preview overrides (`gitBranch` set) are ignored. More than
+  one match is an error, not a guess.
+- For a custom environment such as flayr's `dev`, the entry matches when it
+  lists `<target>` or carries `customEnvironmentIds` (the request is already
+  filtered to that slug). This path hasn't been checked against a live
+  project yet.
+- A `sensitive` variable is write-only in Vercel, so it reads as
+  `VercelEnvUnreadable`, an error (exit `1`), not drift. So does an
+  `encrypted` value the token didn't get back decrypted.
+- The token needs read access to the project's env. A dead token (as
+  `vercel-deploy-token` was on 2026-09-13) reads as `VercelEnvError` with
+  the status code. Run `portunus liveness check` on the token.
+

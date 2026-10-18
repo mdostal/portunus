@@ -33,7 +33,8 @@ Parity:
   fingerprint that could be compared across runs. A `digesting` fetcher
   digests inside a resolver boundary instead, so the value never comes back
   up the stack; `parity_fetchers()` builds them from target specs
-  (`ref`, `gcp`, `convex:<deploy-key-ref>:<VAR>`, ...) for `portunus parity`.
+  (`ref`, `gcp`, `convex:<deploy-key-ref>:<VAR>`,
+  `vercel:<token-ref>:<project>:<VAR>`, ...) for `portunus parity`.
 
 Built-in provider probes are registered at the bottom of this module by the
 provider sub-issues (GitHub, PANT-1141, is the first; Neon, PANT-1120, probes a
@@ -43,7 +44,9 @@ credential kinds that can be sent on their own; PANT-1125 adds the
 long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
 `invalidToken` flag and the token's expiry from its response; Convex, PANT-1151,
 probes a deploy key and reads deployment env vars for parity; PANT-1127 adds
-APNs auth keys, probed with an undeliverable HTTP/2 push). See docs/liveness.md.
+APNs auth keys, probed with an undeliverable HTTP/2 push; Clerk, PANT-1148,
+probes instance secret keys, and adds Vercel project env vars as a parity
+target). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -1240,8 +1243,10 @@ class ConvexEnvVarMissing(ConvexEnvError):
 JSONTransport = Callable[[str, str, Mapping[str, str], float], Tuple[int, bytes]]
 
 
-def _default_json_transport(method: str, url: str, headers: Mapping[str, str],
-                            timeout: float) -> Tuple[int, bytes]:
+def _json_request(method: str, url: str, headers: Mapping[str, str], timeout: float,
+                  error: type) -> Tuple[int, bytes]:
+    """urllib request returning (status, body); the body only for a 2xx. A
+    network failure raises `error` with the failure's type name alone."""
     headers = {"User-Agent": "portunus-liveness", **headers}
     req = urllib.request.Request(url, headers=headers, method=method)
     try:
@@ -1253,7 +1258,12 @@ def _default_json_transport(method: str, url: str, headers: Mapping[str, str],
         return code, b""
     except (urllib.error.URLError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
-        raise ConvexEnvError(f"request failed: {type(reason).__name__}") from None
+        raise error(f"request failed: {type(reason).__name__}") from None
+
+
+def _default_json_transport(method: str, url: str, headers: Mapping[str, str],
+                            timeout: float) -> Tuple[int, bytes]:
+    return _json_request(method, url, headers, timeout, ConvexEnvError)
 
 
 def convex_env_fetcher(resolver, deploy_key_ref, var: str,
@@ -1300,6 +1310,172 @@ def convex_env_fetcher(resolver, deploy_key_ref, var: str,
 
 
 # ---------------------------------------------------------------------------
+# Clerk (PANT-1148, GH #145): instance secret-key liveness.
+# ---------------------------------------------------------------------------
+
+
+class ClerkLivenessAdapter(CredentialKindLivenessAdapter):
+    """Clerk: `GET https://api.clerk.com/v1/jwks` with the instance secret key
+    as a bearer token. It returns the instance's public signing keys only --
+    no users, no user count, no instance settings -- and, like every Backend
+    API route, needs the secret key: an invalid one gets 401
+    `clerk_key_invalid` (checked with a bogus key, 2026-10-18). Test and live
+    keys share the one host. A 403 is not documented as an auth failure, so it
+    stays unknown.
+
+    Only `*-secret-key` references are probed (or a `liveness_kind` tag), and
+    only a value shaped like a secret key (`sk_test_` / `sk_live_`) is sent:
+    a publishable key or webhook secret filed under the wrong name would read
+    as a false dead."""
+
+    URL = "https://api.clerk.com/v1/jwks"
+    NOT_SECRET_KEY = -1  # boundary sentinel: never a real HTTP status
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__(
+            "clerk",
+            HTTPProbe(url=self.URL, dead_statuses=(401,)),
+            probe_kinds=("secret-key",),
+            not_probed={
+                "publishable-key": "publishable key -- public frontend config, not a credential",
+                "webhook-secret": "webhook signing secret (whsec_) -- only verifies Svix signatures, "
+                                  "no API accepts it",
+            },
+            transport=transport, timeout=timeout,
+        )
+
+    def check(self, ref, resolver) -> LivenessResult:
+        if not self.can_probe(ref):
+            return super().check(ref, resolver)
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if not value.startswith("sk_"):
+                return self.NOT_SECRET_KEY
+            return self._transport(self.probe.method, self.probe.url, self.probe.headers_for(value),
+                                   self._timeout)
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NOT_SECRET_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="value is not a Clerk secret key (sk_test_/sk_live_) -- not probed")
+        return LivenessResult(ref.name, self.provider, self.probe.classify(code), http_status=code,
+                              detail=f"{self.probe.method} {self.probe.url} -> {code}")
+
+
+register_liveness_adapter("clerk", ClerkLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Vercel project env vars as a parity target (PANT-1148): the Clerk keys, like
+# the Autumn key in the 2026-09-13 incident, are pushed to Vercel by
+# flayr's setup-vercel-env.sh, so the Vercel copy can drift from GCP too.
+# ---------------------------------------------------------------------------
+
+# Reference tag on a Vercel token reference: the team the project belongs to
+# (`team_...` id, or the team slug). Without it the token's own scope is used.
+VERCEL_TEAM_TAG = "vercel_team_id"
+
+VERCEL_TARGETS = ("production", "preview", "development")
+
+
+class VercelEnvError(RuntimeError):
+    """Reading a Vercel project's env var failed. Carries the HTTP status at
+    most -- never a token, a value or a response body."""
+
+
+class VercelEnvVarMissing(VercelEnvError):
+    """The project has no env var of that name for that target."""
+
+
+class VercelEnvUnreadable(VercelEnvError):
+    """The env var exists but Vercel won't return its value (a `sensitive`
+    variable, or one the token could not decrypt)."""
+
+
+def _default_vercel_env_transport(method: str, url: str, headers: Mapping[str, str],
+                                  timeout: float) -> Tuple[int, bytes]:
+    return _json_request(method, url, headers, timeout, VercelEnvError)
+
+
+def _vercel_env_matches(entry, var: str, target: str) -> bool:
+    if not isinstance(entry, dict) or entry.get("key") != var:
+        return False
+    targets = entry.get("target")
+    targets = [targets] if isinstance(targets, str) else targets if isinstance(targets, list) else []
+    if target in targets:
+        return True
+    # A custom environment (flayr's `dev`) is listed via customEnvironmentIds,
+    # and the request is already filtered to that environment's slug.
+    return target not in VERCEL_TARGETS and bool(entry.get("customEnvironmentIds"))
+
+
+def vercel_env_fetcher(resolver, token_ref, project: str, var: str, target: str = "production",
+                       transport: Optional[JSONTransport] = None,
+                       timeout: float = _DEFAULT_TIMEOUT) -> Callable:
+    """Digesting parity fetcher for env var `var` (target `target`) on Vercel
+    project `project`, read with the token `token_ref` holds.
+
+    One request, the one flayr's check-env-parity.sh makes:
+    `GET /v10/projects/<project>/env?decrypt=true` (plus `teamId`/`slug` from
+    the token's `vercel_team_id` tag, and `customEnvironmentSlug` for a custom
+    environment). The listing is parsed inside the token's resolver boundary,
+    the one matching value is digested there, and the rest -- every other
+    variable's value included -- is dropped. Only the digest leaves. A
+    `sensitive` variable can never be read back from Vercel, so it raises
+    VercelEnvUnreadable rather than reading as drift."""
+    send = transport or _default_vercel_env_transport
+    team = (getattr(token_ref, "tags", None) or {}).get(VERCEL_TEAM_TAG, "")
+    params = {"decrypt": "true"}
+    if team:
+        params["teamId" if team.startswith("team_") else "slug"] = team
+    if target not in VERCEL_TARGETS:
+        params["customEnvironmentSlug"] = target
+    url = (f"https://api.vercel.com/v10/projects/{urllib.parse.quote(project, safe='')}/env?"
+           + urllib.parse.urlencode(params))
+
+    def fetch(digest):
+        def boundary(token: str) -> bytes:
+            code, body = send("GET", url, {"Authorization": f"Bearer {token.strip()}"}, timeout)
+            if code != 200:
+                raise VercelEnvError(f"list project env -> {code}")
+            try:
+                envs = json.loads(body)["envs"]
+                if not isinstance(envs, list):
+                    raise TypeError
+            except (ValueError, KeyError, TypeError):
+                raise VercelEnvError("unexpected project env response") from None
+            finally:
+                del body
+            matches = [e for e in envs if _vercel_env_matches(e, var, target)]
+            del envs
+            # Branch-specific preview overrides are not the target's value.
+            general = [e for e in matches if not e.get("gitBranch")]
+            del matches
+            if not general:
+                raise VercelEnvVarMissing(f"no env var {var!r} for target {target!r}")
+            if len(general) > 1:
+                raise VercelEnvError(f"{len(general)} entries for {var!r} on target {target!r}")
+            entry = general.pop()
+            value = entry.get("value")
+            if entry.get("type") == "sensitive":
+                del entry, value
+                raise VercelEnvUnreadable(f"{var!r} is a sensitive variable -- Vercel never returns its value")
+            if not isinstance(value, str) or (entry.get("type") != "plain" and entry.get("decrypted") is not True):
+                del entry, value
+                raise VercelEnvUnreadable(f"{var!r} was not returned decrypted")
+            del entry
+            try:
+                return digest(value)
+            finally:
+                del value
+
+        return resolver.resolve_call("{{secret:%s}}" % token_ref.name, boundary)
+
+    return digesting(fetch)
+
+
+# ---------------------------------------------------------------------------
 # Parity targets: where else a reference's value is supposed to live.
 # ---------------------------------------------------------------------------
 
@@ -1327,7 +1503,7 @@ def parity_references(registry) -> List:
             if parity_specs(ref) and ref.state not in ("dropped", "revoked")]
 
 
-def _convex_var_for(ref) -> str:
+def _injected_var_for(ref) -> str:
     """The env var name a reference is injected as, when there is exactly one."""
     names = list((getattr(ref, "injected_as", None) or {}).keys())
     return names[0] if len(names) == 1 else ""
@@ -1335,7 +1511,8 @@ def _convex_var_for(ref) -> str:
 
 def parity_fetchers(ref, specs: Iterable[str], registry, broker, resolver,
                     backend_for_kind: Callable[[str], object],
-                    convex_transport: Optional[JSONTransport] = None) -> Dict[str, Callable]:
+                    convex_transport: Optional[JSONTransport] = None,
+                    vercel_transport: Optional[JSONTransport] = None) -> Dict[str, Callable]:
     """Build one fetcher per target spec. Specs:
 
     - `ref` -- the reference's own value, resolved as normal (its routed backend)
@@ -1344,6 +1521,10 @@ def parity_fetchers(ref, specs: Iterable[str], registry, broker, resolver,
     - `convex:<deploy-key-ref>[:<VAR>]` -- env var VAR on the Convex deployment
       that deploy key belongs to; VAR defaults to the reference's single
       `injected_as` name
+    - `vercel:<token-ref>:<project>[:<VAR>[:<target>]]` -- env var VAR on that
+      Vercel project, read with the token `token-ref` holds; VAR defaults as
+      for convex, target to `production` (`preview`, `development`, or a
+      custom environment's slug)
 
     Raises ParityTargetError for a malformed spec, so a typo is reported
     rather than read as drift."""
@@ -1357,10 +1538,24 @@ def parity_fetchers(ref, specs: Iterable[str], registry, broker, resolver,
             key_ref = registry.get(key_name) if key_name else None
             if key_ref is None:
                 raise ParityTargetError(f"{spec!r}: no deploy-key reference {key_name!r} in registry")
-            var = var or _convex_var_for(ref)
+            var = var or _injected_var_for(ref)
             if not var:
                 raise ParityTargetError(f"{spec!r}: name the env var (convex:<deploy-key-ref>:<VAR>)")
             fetchers[spec] = convex_env_fetcher(resolver, key_ref, var, transport=convex_transport)
+        elif kind == "vercel":
+            token_name, project, var, target = (rest.split(":") + ["", "", "", ""])[:4]
+            if rest.count(":") > 3:
+                raise ParityTargetError(f"{spec!r}: expected vercel:<token-ref>:<project>[:<VAR>[:<target>]]")
+            token_ref = registry.get(token_name) if token_name else None
+            if token_ref is None:
+                raise ParityTargetError(f"{spec!r}: no Vercel token reference {token_name!r} in registry")
+            if not project:
+                raise ParityTargetError(f"{spec!r}: name the project (vercel:<token-ref>:<project>[:<VAR>])")
+            var = var or _injected_var_for(ref)
+            if not var:
+                raise ParityTargetError(f"{spec!r}: name the env var (vercel:<token-ref>:<project>:<VAR>)")
+            fetchers[spec] = vercel_env_fetcher(resolver, token_ref, project, var, target or "production",
+                                                transport=vercel_transport)
         else:
             try:
                 backend = backend_for_kind(kind)
