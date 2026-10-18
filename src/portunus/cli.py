@@ -1842,6 +1842,105 @@ def cmd_rotation_run(args) -> int:
     return 0
 
 
+def _zernio_ref(registry, args):
+    """Pick the one Zernio reference `rotate zernio` acts on: --ref, or the
+    live zernio references narrowed by kind, --env and --webhook."""
+    from .liveness import provider_for
+    from .zernio import WEBHOOK_TAG, zernio_kind
+
+    if args.ref:
+        ref = registry.get(args.ref)
+        if ref is None:
+            raise ValueError(f"no reference {args.ref!r} in registry")
+        return ref
+    kind = "webhook-secret" if (args.webhook or args.webhook_secret) else "api-key" if args.api_key else ""
+    if not kind:
+        raise ValueError("say what to rotate: --webhook <id> / --webhook-secret, --api-key, or --ref NAME")
+    found = [r for r in registry
+             if provider_for(r) == "zernio" and r.state not in ("dropped", "revoked")
+             and zernio_kind(r) == kind
+             and (not args.env or r.env == args.env)
+             and (not args.webhook or (r.tags or {}).get(WEBHOOK_TAG) == args.webhook)]
+    if len(found) != 1:
+        names = ", ".join(r.name for r in found) or "none"
+        raise ValueError(f"expected exactly one zernio {kind} reference, found {len(found)} ({names}) -- "
+                         "narrow with --env/--webhook or pass --ref NAME (the reference needs "
+                         "provider=zernio or a liveness_provider=zernio tag)")
+    return found[0]
+
+
+def cmd_rotate_zernio(args) -> int:
+    """Roll a Zernio webhook secret or API key and push it to every target
+    (Vercel / Convex env vars, local vault) in one ordered flow. Metadata
+    only on stdout/stderr -- never a value. See docs/zernio-rotation.md."""
+    from .envtargets import TargetSpecError
+    from .zernio import ZernioRotation, ZernioRotationError, targets_for, zernio_kind
+
+    registry, audit, broker, resolver = _build()
+    try:
+        ref = _zernio_ref(registry, args)
+        targets = targets_for(ref, args.target)
+    except (ValueError, TargetSpecError) as exc:
+        _err(str(exc))
+        return 1
+    kind = zernio_kind(ref)
+    if args.rollback and kind != "webhook-secret":
+        _err("--rollback applies to a webhook secret only")
+        return 1
+
+    interactive = sys.stdin.isatty()
+
+    def confirm(question: str) -> bool:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+
+    flow = ZernioRotation(resolver, registry=registry, audit=audit,
+                          confirm=confirm if interactive else None,
+                          redeploy=not args.no_redeploy)
+
+    def run(dry_run: bool):
+        if args.push_only:
+            return flow.push(ref, targets, dry_run=dry_run)
+        if args.rollback:
+            return flow.rollback_webhook_secret(ref, targets, dry_run=dry_run)
+        if kind == "webhook-secret":
+            return flow.rotate_webhook_secret(ref, targets, dry_run=dry_run, retire_old=args.retire_old)
+        if kind == "api-key":
+            return flow.rotate_api_key(ref, targets, dry_run=dry_run, retire_old=args.retire_old)
+        raise ZernioRotationError(f"{ref.name!r} is not a recognised Zernio credential -- set the "
+                                  "'liveness_kind' tag to webhook-secret or api-key")
+
+    def show(report) -> None:
+        if args.json:
+            print(json.dumps({"ref_name": report.ref_name, "kind": report.kind, "dry_run": report.dry_run,
+                              "steps": [{"name": s.name, "detail": s.detail} for s in report.steps],
+                              "key_id": report.key_id, "replayed": list(report.replayed),
+                              "retired_old": report.retired_old}, indent=2))
+            return
+        head = "plan" if report.dry_run else "done"
+        print(f"rotate zernio {report.kind} {report.ref_name} -- {head}")
+        for step in report.steps:
+            print(f"  {step.name:<9} {step.detail}")
+
+    try:
+        plan = run(dry_run=True)
+        if args.dry_run:
+            show(plan)
+            return 0
+        if not args.yes:
+            show(plan)
+            if not interactive:
+                _err("not a terminal -- review the plan above and re-run with --yes")
+                return 1
+            if not confirm("run it?"):
+                _err("cancelled")
+                return 1
+        show(run(dry_run=False))
+    except ZernioRotationError as exc:
+        _err(str(exc))
+        return 1
+    return 0
+
+
 def _ago(ts) -> str:
     if not ts:
         return "-"
@@ -3437,6 +3536,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rot_audit.add_argument("--json", action="store_true")
     rot_audit.set_defaults(func=cmd_rotation_audit)
+
+    rot = sub.add_parser(
+        "rotate",
+        help="roll a provider credential and push it to every target it is injected into",
+    )
+    rot_providers = rot.add_subparsers(dest="rotate_provider", required=True)
+    rz = rot_providers.add_parser(
+        "zernio",
+        help="Zernio webhook signing secret or API key: rotate -> push (Vercel/Convex env) -> "
+             "verify -> retire, in order; see docs/zernio-rotation.md",
+    )
+    rz_what = rz.add_mutually_exclusive_group()
+    rz_what.add_argument("--webhook", metavar="ID", default="",
+                         help="the webhook-secret reference tagged zernio_webhook_id=ID")
+    rz_what.add_argument("--webhook-secret", action="store_true", help="a webhook-secret reference")
+    rz_what.add_argument("--api-key", action="store_true", help="an api-key reference")
+    rz.add_argument("--ref", default="", help="the reference by name (overrides the selectors)")
+    rz.add_argument("--env", default="", help="narrow the selection by reference env (prod, dev, ...)")
+    rz.add_argument("--target", action="append", default=[], metavar="SPEC",
+                    help="target spec (repeatable; overrides the zernio_targets tag): "
+                         "convex:<deploy-key-ref>:<VAR> or "
+                         "vercel:<token-ref>:<project>[@<team>]:<VAR>[:<target>+...]")
+    rz_mode = rz.add_mutually_exclusive_group()
+    rz_mode.add_argument("--push-only", action="store_true",
+                         help="push the local vault's current value to the targets; mint nothing")
+    rz_mode.add_argument("--rollback", action="store_true",
+                         help="webhook secret: put the stashed previous secret back everywhere")
+    rz.add_argument("--dry-run", action="store_true", help="preflight and print the plan; change nothing")
+    rz.add_argument("--retire-old", action="store_true",
+                    help="after a verified rotation, DELETE the old API key / drop the stashed old secret")
+    rz.add_argument("--no-redeploy", action="store_true",
+                    help="don't redeploy Vercel production; ask the operator to confirm a manual redeploy")
+    rz.add_argument("--yes", action="store_true", help="skip the confirm prompt (required without a terminal)")
+    rz.add_argument("--json", action="store_true")
+    rz.set_defaults(func=cmd_rotate_zernio)
 
     lv = sub.add_parser(
         "liveness",
