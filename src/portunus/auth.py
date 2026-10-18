@@ -13,6 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Mapping, Optional, Protocol
@@ -97,6 +98,7 @@ class GCPAccessToken:
     expires_at: int
     identity: str
     scope: str
+    service_account: str = ""
 
 
 @dataclass(frozen=True)
@@ -155,10 +157,46 @@ def _default_aws_transport(url: str, data: Mapping[str, str], timeout: float) ->
         raise AuthError("AWS web identity exchange failed") from exc
 
 
+def _parse_rfc3339_epoch(value: str) -> int:
+    """`2026-10-18T07:00:00Z` / `...00.123456789Z` -> epoch seconds (0 if unparseable)."""
+    if not value:
+        return 0
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    if "." in text:
+        # datetime.fromisoformat() can't take nanoseconds -- drop the fraction.
+        head, _, tail = text.partition(".")
+        offset = ""
+        for sep in ("+", "-"):
+            if sep in tail:
+                offset = sep + tail.split(sep, 1)[1]
+                break
+        text = head + offset
+    try:
+        return int(datetime.fromisoformat(text).timestamp())
+    except ValueError:
+        return 0
+
+
 class GCPWorkloadIdentityAuth:
-    """Exchange OIDC for a scoped GCP access token via Security Token Service."""
+    """Exchange OIDC for a scoped GCP access token via Security Token Service.
+
+    With `service_account` set, the STS federated token is then traded for a
+    short-lived access token OF that service account via the IAM Credentials
+    API (`generateAccessToken`) -- Google's recommended WIF shape: IAM grants
+    (e.g. secretmanager.secretVersionAdder) live on one least-privilege
+    service account, and the pool principal only needs
+    roles/iam.workloadIdentityUser on it. No gcloud login, no key file.
+    Without it, the federated token is returned as-is (the pool principal
+    must then be granted resource roles directly).
+    """
 
     token_url = "https://sts.googleapis.com/v1/token"
+    impersonation_url = (
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+        "{service_account}:generateAccessToken"
+    )
 
     def __init__(
         self,
@@ -168,6 +206,8 @@ class GCPWorkloadIdentityAuth:
         audit: Optional[AuditChain] = None,
         transport: Optional[GCPTransport] = None,
         timeout: float = 30.0,
+        service_account: str = "",
+        lifetime_seconds: int = 3600,
     ):
         self.audience = audience
         self.token_source = token_source or EnvOIDCTokenSource()
@@ -175,6 +215,8 @@ class GCPWorkloadIdentityAuth:
         self.audit = audit or AuditChain()
         self.transport = transport or _default_gcp_transport
         self.timeout = timeout
+        self.service_account = service_account
+        self.lifetime_seconds = lifetime_seconds
 
     def mint(self) -> GCPAccessToken:
         oidc = self.token_source.get()
@@ -200,13 +242,44 @@ class GCPWorkloadIdentityAuth:
         expires_in = int(resp.get("expires_in", 0) or 0)
         expires_at = int(time.time()) + expires_in if expires_in else 0
         identity = _audit_identity(oidc)
-        self.audit.append("credential-mint", identity, "ok:gcp-wif")
+        outcome = "ok:gcp-wif"
+        if self.service_account:
+            access_token, expires_at = self._impersonate(access_token)
+            outcome = f"ok:gcp-wif-impersonate:{self.service_account}"
+        self.audit.append("credential-mint", identity, outcome)
         return GCPAccessToken(
             access_token=access_token,
             expires_at=expires_at,
             identity=identity,
             scope=self.scope,
+            service_account=self.service_account,
         )
+
+    def _impersonate(self, federated_token: str):
+        url = self.impersonation_url.format(
+            service_account=urllib.parse.quote(self.service_account, safe="@.")
+        )
+        try:
+            resp = self.transport(
+                url,
+                {"scope": [self.scope], "lifetime": f"{int(self.lifetime_seconds)}s"},
+                {
+                    "Authorization": f"Bearer {federated_token}",
+                    "Content-Type": "application/json",
+                },
+                self.timeout,
+            )
+        except AuthError as exc:
+            raise AuthError(
+                f"GCP service account impersonation failed for {self.service_account}"
+            ) from exc
+        access_token = str(resp.get("accessToken", ""))
+        if not access_token:
+            raise AuthError(
+                "GCP service account impersonation did not return an access token "
+                f"for {self.service_account}"
+            )
+        return access_token, _parse_rfc3339_epoch(str(resp.get("expireTime", "")))
 
 
 class AWSWebIdentityAuth:

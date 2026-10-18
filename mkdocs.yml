@@ -51,6 +51,7 @@ nav:
   - Core Concepts: concepts.md
   - Architecture: architecture.md
   - Backends & Configuration: backends.md
+  - Keyless GCP Access: gcp-keyless.md
   - Security:
     - Access Control (Petitio): access-control.md
     - Audit Log: audit.md

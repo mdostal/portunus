@@ -66,6 +66,104 @@ def test_gcp_wif_exchange_is_scoped_and_audited_without_token(home):
     assert "ok:gcp-wif" in audit_text
 
 
+def test_gcp_wif_impersonates_service_account_after_sts(home):
+    calls = []
+
+    def transport(url, data, headers, timeout):
+        calls.append((url, dict(data), dict(headers)))
+        if url == GCPWorkloadIdentityAuth.token_url:
+            return {"access_token": "FEDERATED.TOKEN", "expires_in": 3600}
+        return {"accessToken": "SA.ACCESS.TOKEN", "expireTime": "2030-01-01T00:00:00.123456789Z"}
+
+    auth = GCPWorkloadIdentityAuth(
+        audience="//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/p",
+        token_source=StaticOIDC(),
+        audit=AuditChain(),
+        transport=transport,
+        service_account="portunus@ffe-cicd.iam.gserviceaccount.com",
+        lifetime_seconds=900,
+    )
+    minted = auth.mint()
+
+    assert minted.access_token == "SA.ACCESS.TOKEN"
+    assert minted.service_account == "portunus@ffe-cicd.iam.gserviceaccount.com"
+    assert minted.expires_at == 1893456000
+    assert len(calls) == 2
+    url, body, headers = calls[1]
+    assert url == (
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+        "portunus@ffe-cicd.iam.gserviceaccount.com:generateAccessToken"
+    )
+    assert headers["Authorization"] == "Bearer FEDERATED.TOKEN"
+    assert headers["Content-Type"] == "application/json"
+    assert body == {"scope": ["https://www.googleapis.com/auth/cloud-platform"], "lifetime": "900s"}
+    assert "SA.ACCESS.TOKEN" not in repr(minted)
+
+    audit_text = (home / "audit.log").read_text()
+    for secret in ("OIDC.JWT.TEST", "FEDERATED.TOKEN", "SA.ACCESS.TOKEN"):
+        assert secret not in audit_text
+    assert "ok:gcp-wif-impersonate:portunus@ffe-cicd.iam.gserviceaccount.com" in audit_text
+
+
+def test_gcp_wif_without_service_account_makes_one_call(home):
+    calls = []
+
+    def transport(url, data, headers, timeout):
+        calls.append(url)
+        return {"access_token": "FEDERATED.TOKEN", "expires_in": 60}
+
+    minted = GCPWorkloadIdentityAuth(
+        audience="aud", token_source=StaticOIDC(), audit=AuditChain(), transport=transport,
+    ).mint()
+    assert calls == [GCPWorkloadIdentityAuth.token_url]
+    assert minted.access_token == "FEDERATED.TOKEN"
+    assert minted.service_account == ""
+
+
+def test_gcp_wif_impersonation_failure_names_sa_never_tokens(home):
+    def transport(url, data, headers, timeout):
+        if url == GCPWorkloadIdentityAuth.token_url:
+            return {"access_token": "FEDERATED.TOKEN", "expires_in": 60}
+        raise AuthError("GCP token exchange failed")
+
+    auth = GCPWorkloadIdentityAuth(
+        audience="aud", token_source=StaticOIDC(), audit=AuditChain(), transport=transport,
+        service_account="portunus@ffe-cicd.iam.gserviceaccount.com",
+    )
+    with pytest.raises(AuthError) as excinfo:
+        auth.mint()
+    msg = str(excinfo.value)
+    assert "portunus@ffe-cicd.iam.gserviceaccount.com" in msg
+    assert "FEDERATED.TOKEN" not in msg and "OIDC.JWT.TEST" not in msg
+
+
+def test_gcp_wif_impersonation_empty_response_fails_closed(home):
+    def transport(url, data, headers, timeout):
+        if url == GCPWorkloadIdentityAuth.token_url:
+            return {"access_token": "FEDERATED.TOKEN", "expires_in": 60}
+        return {}
+
+    auth = GCPWorkloadIdentityAuth(
+        audience="aud", token_source=StaticOIDC(), audit=AuditChain(), transport=transport,
+        service_account="sa@p.iam.gserviceaccount.com",
+    )
+    with pytest.raises(AuthError):
+        auth.mint()
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("2030-01-01T00:00:00Z", 1893456000),
+    ("2030-01-01T00:00:00.5Z", 1893456000),
+    ("2030-01-01T00:00:00.123456789Z", 1893456000),
+    ("2030-01-01T01:00:00+01:00", 1893456000),
+    ("", 0),
+    ("not-a-time", 0),
+])
+def test_parse_rfc3339_epoch(value, expected):
+    from portunus.auth import _parse_rfc3339_epoch
+    assert _parse_rfc3339_epoch(value) == expected
+
+
 def test_aws_web_identity_exchange_is_audited_without_token(home):
     def transport(url, data, timeout):
         assert data["WebIdentityToken"] == "OIDC.JWT.TEST"

@@ -608,7 +608,10 @@ with no explicit identity follows whichever account gcloud considers "active," a
 pointer. `vault-bindings.json`'s `account` field fixes this: set it per project and every
 Portunus GCP call for that project passes `--account=<email>` explicitly, regardless of
 gcloud's ambient active account. (Mutually exclusive with a WIF binding on the same
-project — a minted access token already carries identity.)
+project — a minted access token already carries identity.) Add `--impersonate-service-account`
+to act as a least-privilege service account. With WIF, that impersonation happens in-process
+through the IAM Credentials API, so no gcloud login is needed at all. See
+`docs/gcp-keyless.md`.
 
 ```bash
 portunus bindings set demo-cicd --account work@example.com
@@ -926,12 +929,14 @@ portunus_resolve_exec(
 
 ```bash
 portunus auth login user@example.com   # thin wrapper around `gcloud auth login` -- the one command to remember
-portunus auth status [--json]          # cross-references every vault-bindings.json account against `gcloud auth list`
+portunus auth status [--json] [--strict]  # per binding: wif ready / account ok|missing|EXPIRED; --strict exits 1
 ```
 
 Bounded on purpose — not automatic reauth. `login` still opens a real browser (Portunus doesn't
-remove that step); `status` reports which configured bindings are currently authenticated vs.
-missing, per-project, so a stale credential shows up before an injection call fails on it.
+remove that step); `status` reports, per project, whether each configured binding is
+authenticated, missing, or expired. It mints a real token to check, so a listed account that is
+stuck behind a reauth wall shows as EXPIRED. That way a stale credential shows up before an
+injection or write fails on it.
 Neither command ever touches a secret value — only account emails and gcloud's own credential
 metadata.
 

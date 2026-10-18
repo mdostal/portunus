@@ -146,9 +146,15 @@ portunus auth gcp --project my-gcp-project
 # Authenticate a gcloud account interactively (opens a browser)
 portunus auth login user@example.com
 
-# Check which configured bindings have a locally-credentialed gcloud account
-portunus auth status
+# Check every binding's credential is usable right now (exit 1 on missing/expired with --strict)
+portunus auth status --strict
+
+# Write a new Secret Manager version through the binding (value on stdin, never argv)
+portunus gcp add-version my-gcp-project my-secret --stdin < ./new-value.txt
 ```
+
+For no-login, no-key-file access (WIF plus a least-privilege service account), see
+[Keyless GCP access](gcp-keyless.md).
 
 ---
 

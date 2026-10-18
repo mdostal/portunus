@@ -6,6 +6,19 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Keyless GCP access for Secret Manager writes (PANT-1171, #231).** WIF bindings can now
+  impersonate a least-privilege service account. After the STS exchange, `GCPWorkloadIdentityAuth`
+  calls the IAM Credentials API `generateAccessToken` (`service_account=`), so writes need no
+  interactive `gcloud` login and no key file. `bindings set` gains
+  `--impersonate-service-account`, and `auth gcp` gains `--service-account` and reports which
+  service account it minted for. `auth status` now probes each `account` binding with a real token
+  mint, so a listed account stuck behind a reauth wall shows `EXPIRED` along with the
+  `gcloud auth login <account> --no-activate` fix. WIF bindings report the readiness of the OIDC
+  token, and `--strict` exits 1 when anything is unusable. The new
+  `portunus gcp add-version <project> <secret> --stdin|--value-file` writes a version through the
+  binding after that preflight, passing the value to gcloud on stdin only. The new
+  `docs/gcp-keyless.md` runbook covers setting this up.
+
 - **Reverse rotation diagnosis (PANT-1121, #208).** Audit entries now carry a wall-clock `ts`
   (epoch seconds, covered by the hash). Entries written before this have none and still verify.
   `portunus audit` gains `--since`/`--until` (dates, datetimes, epoch seconds or ages like
@@ -144,6 +157,9 @@ All notable changes to Portunus are documented in this file.
   the wrong endpoint (`users/me/tokens`). It now shows the documented `users/{id}/permanenttokens`.
 
 ### Fixed
+
+- `portunus bindings set` no longer wipes a binding's `impersonate_service_account` when it
+  updates another field, and `bindings show` now displays it.
 
 - **OAuth refresh now sends `Accept: application/json`.** GitHub's token endpoint returns
   form-urlencoded unless asked for JSON, so refreshing a GitHub App user token failed to parse.
