@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Convex deploy-key liveness and a cross-system parity check (PANT-1151, #142).** A new
+  `convex` liveness probe sends a stored deploy key to `GET <deployment>/api/check_admin_key`,
+  which reads nothing from the deployment. A bad or deleted key gets 403 (`BadDeployKey`) and a
+  malformed one gets 401, both `dead`. The deployment comes from the key itself
+  (`prod:<name>|...`), or from the `convex_url` tag for preview/project keys. New
+  `portunus parity check` (and the `portunus_parity_check` MCP tool) compares one reference
+  across targets listed in its `parity_targets` tag or `--target`: `ref`, `gcp[:<project>]`,
+  `local`, and `convex:<deploy-key-ref>[:<VAR>]`, which reads the env var through the Deployment
+  Platform API with no `npx convex`. Values are digested inside the resolver boundary; the output
+  is target names grouped by agreement. Exits `2` on drift, so it can replace the per-repo
+  `check-env-parity.sh` in a scheduler. See `docs/liveness.md`.
 - **APNs auth-key liveness and mobile credential runbook (PANT-1127, #202).** A new `apns`
   liveness probe signs an ES256 provider JWT with the stored `.p8` and sends it to APNs over
   HTTP/2. The push targets a device token that can't exist, as a silent `background` push with

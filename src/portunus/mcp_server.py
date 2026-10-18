@@ -312,6 +312,25 @@ def portunus_liveness_status(failing: bool = False) -> dict:
 
 
 @mcp.tool()
+def portunus_parity_check(names: Optional[List[str]] = None, all: bool = False,
+                          targets: Optional[List[str]] = None) -> dict:
+    """Compare one reference's value across the places it is supposed to
+    live -- the same as `portunus parity check --json`. Each result groups
+    target names by equal value (`in_sync` when there is one group and no
+    unreadable target); values are compared as per-call HMACs inside the
+    resolver boundary, so no value or reusable fingerprint is ever returned.
+    Targets come from the reference's `parity_targets` tag, or `targets`:
+    `ref`, `gcp[:<project>]`, `local`, `convex:<deploy-key-ref>[:<VAR>]`.
+    Pass `names`, or `all=True` for every reference with that tag."""
+    from .cli import run_parity
+
+    results, error = run_parity(names, all, targets)
+    if error:
+        return {"error": error}
+    return {"results": [r.to_dict() for r in results]}
+
+
+@mcp.tool()
 def portunus_discover(project: str, register: bool = False) -> dict:
     """Read-only: list what already exists in a live GCP Secret Manager
     project (names + labels + create-time only, never a value). With
