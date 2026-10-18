@@ -104,6 +104,7 @@ provider's API docs and a real key.
 | `shippo` | `GET https://api.goshippo.com/addresses?results=1` (`ShippoToken`) | 401 only | Test and live tokens use the same host. |
 | `tremendous` | `GET {host}/api/v2/funding_sources` (Bearer) | 401 only | Sandbox (`testflight.tremendous.com`) and production (`api.tremendous.com`) keys only work on their own host, so the host comes from the key prefix (`TEST_` / `PROD_`). For an older key with no prefix, set the `tremendous_env` tag to `sandbox` or `production`. With neither, the key reads `unknown` and no request is sent. |
 | `vercel-ai` | `GET https://ai-gateway.vercel.sh/v1/credits` (Bearer) | 401 only | Vercel AI Gateway API key, not the Vercel deploy token. |
+| `apns` | HTTP/2 `POST /3/device/<64 zeros>` to the APNs sandbox (or production) host with a JWT signed by the stored `.p8` | 403 `InvalidProviderToken` only | A push that can't be delivered. Needs the `apns_team_id` tag and the key ID. See [APNs auth keys](#apns-auth-keys). |
 
 Each of the long-tail probes above (PANT-1125, GH #204) returned its listed dead status for a
 bogus key when it was added. They haven't been confirmed against a real live key yet, so the
@@ -127,6 +128,58 @@ and Convex (#142).
 The event-source probes (PANT-1126 / #203) pick their adapter from `provider`, so they only
 apply once the references carry their real provider rather than `gcp`. See
 `scripts/backfill_event_api_providers.py` and [rotation.md](rotation.md#event-source-apis-used-by-event-api-meetup-eventbrite-ticketmaster-seatgeek).
+
+## APNs auth keys
+
+APNs (PANT-1127, GH #202) has no read-only endpoint, so the `apns` probe sends a push that can't
+be delivered:
+
+- **Token**: an ES256 JWT (`kid` = key ID, `iss` = team ID, `iat` = now) signed with the stored
+  `.p8`, inside the resolver boundary. The JWT is itself a credential for an hour, so it only
+  goes into the `authorization` header.
+- **Request**: `POST /3/device/000…0` (64 zeros, which is no device's token) as a silent
+  `background` push (`{"aps":{"content-available":1}}`, priority 5) with `apns-expiration: 0`,
+  so APNs doesn't store or retry it either. Nothing reaches a device or a Push Notifications
+  Console delivery log.
+- **Why it works**: APNs checks the provider token before the device token. A freshly generated
+  key that Apple never issued got `403 InvalidProviderToken` on both hosts, with or without
+  `apns-topic` (checked 2026-10-18). A key APNs accepts gets past that and the request is refused
+  for the device token: `400 BadDeviceToken`. The live half hasn't been confirmed against a real
+  key yet, so the first check on a machine that holds one is that confirmation.
+
+| Response | Verdict |
+|---|---|
+| any 2xx; 400 `BadDeviceToken`, `DeviceTokenNotForTopic`, `MissingTopic`, `BadTopic`, `TopicDisallowed`; 410 `Unregistered` | `live` (authentication passed) |
+| 403 `InvalidProviderToken` | `dead` |
+| 403 `BadEnvironmentKeyIdInToken` (key limited to the other environment), `UnrelatedKeyIdInToken`, `ExpiredProviderToken` (local clock off by over an hour), 429, 5xx, anything else | `unknown` |
+
+Unlike every other probe, this one reads the response body, because APNs puts the reason there.
+The body is a fixed `{"reason": "..."}` object that never echoes the token. Only a reason on
+Apple's documented list (`APNS_REASONS`) reaches the result. Anything else shows as
+`(unrecognised)`.
+
+Configuration, all as reference tags (`retag --tags` replaces the whole dict):
+
+| Tag | Required | Meaning |
+|---|---|---|
+| `liveness_provider=apns` | if `provider` isn't `apns` | picks this probe |
+| `apns_team_id` | yes | the 10-character Team ID (the JWT `iss`) |
+| `apns_key_id` | unless the name ends in it (`apns-authkey-B9FVCQ4GB4`) | the 10-character key ID |
+| `apns_env` | no | `sandbox` (default) or `production`. Matters only for environment-limited keys. |
+| `apns_topic` | no | the app's bundle ID. Sent as `apns-topic`. Set it for topic-specific keys. |
+
+Without the team ID or key ID, a key reads `unknown` with no request, and `--all` skips it. A
+wrong team ID or key ID reads `dead`, just like a revoked key, so check the tags before
+re-issuing.
+
+APNs speaks only HTTP/2, which the standard library can't do, so the probe needs the optional
+`h2` package: `pip install 'pantheon-portunus[apns]'`. Without it every APNs check reads
+`unknown` with that instruction. Each check opens its own connection and makes one request.
+Apple disconnects connections that pile up errors such as `BadDeviceToken`, and limits token
+changes to one every 20 minutes *per connection*, so neither touches the production push
+server's connections. A daily sweep is plenty: the key doesn't expire, it only gets revoked.
+
+Re-issue runbook: [mobile-credentials-runbook.md](mobile-credentials-runbook.md#apns-auth-key-p8).
 
 ## Parity
 
