@@ -1124,6 +1124,15 @@ def cmd_resolve(args) -> int:
         text = sys.stdin.read() if args.stdin else (args.text or "")
         path = resolver.resolve_to_tempfile(text)
         print(path)  # path only, never the value
+        if not sys.stdout.isatty():
+            # GH #230: `... | portunus resolve --stdin | vercel env add` stores
+            # this PATH as the value. Say so where a pipe can't swallow it.
+            print(
+                "portunus: resolve printed a temp-file PATH, not the value"
+                + (" (the file keeps the template's trailing newline)" if text.endswith("\n") else "")
+                + " -- to hand the value to a command use `portunus resolve --exec cmd ... {{secret:NAME}}`",
+                file=sys.stderr,
+            )
         return 0
     except UnknownReference as exc:
         return _err(f"unknown reference {{{{secret:{exc.args[0]}}}}}")
@@ -1839,6 +1848,63 @@ def cmd_rotation_run(args) -> int:
         f"retired_old={result.retired_old}"
         + (f"  key_id={result.key_id}" if result.key_id else "")
     )
+    return 0
+
+
+def cmd_rotation_roll(args) -> int:
+    """Rotate a reference and push the new value to every consumer in its
+    `rotation_targets` tag, verify, then delete the old key; roll everything
+    back on failure (GH #230). Prints spec names and key ids, never a value."""
+    from . import rollout
+    from .rotation import RotationAdapterError
+
+    registry, audit, broker, resolver = _build()
+    ref = registry.get(args.ref_name)
+    if ref is None:
+        return _err(f"no reference {args.ref_name!r} in registry")
+    provider = ref.provider
+    factory = rollout.ROLLABLE.get(provider)
+    if factory is None:
+        return _err(
+            f"provider {provider!r} has no roll support yet (supported: "
+            f"{', '.join(sorted(rollout.ROLLABLE))}) -- use `portunus rotation run`"
+        )
+    try:
+        plan = rollout.build_plan(ref, registry, resolver, skip=tuple(args.skip_target or ()))
+    except RotationAdapterError as exc:
+        return _err(str(exc))
+    if args.dry_run:
+        for line in rollout.describe_plan(ref, plan, args.keep_old):
+            print(line)
+        return 0
+    if not args.yes:
+        for line in rollout.describe_plan(ref, plan, args.keep_old):
+            print(line, file=sys.stderr)
+        if not sys.stdin.isatty():
+            return _err(f"rolling {ref.name!r} writes to every target above -- re-run with --yes")
+        if input("continue? [y/N] ").strip().lower() not in ("y", "yes"):
+            return _err("roll cancelled")
+
+    local_backend = LocalEncryptedBackend()
+    adapter = factory(local_backend, audit)
+    try:
+        result = rollout.roll_everywhere(
+            ref, adapter, plan, resolver, local_backend, audit=audit,
+            provider=provider, keep_old=args.keep_old,
+        )
+    except (RotationAdapterError, NotInjectable, ApprovalRequired, NotAuthorized, BackendError) as exc:
+        return _err(str(exc))
+    print(
+        f"rolled {result.ref_name}  provider={result.provider}  key_id={result.key_id}  "
+        f"targets={len(result.written)}  retired_old={result.retired_old}"
+    )
+    for spec in result.verified:
+        print(f"  verified     {spec}")
+    for spec in result.unverifiable:
+        print(f"  not checked  {spec}  (write-only target)")
+    if result.retire_error:
+        _err(f"new key is live everywhere, but the old key was not deleted: {result.retire_error}")
+        return 1
     return 0
 
 
@@ -3530,6 +3596,20 @@ def build_parser() -> argparse.ArgumentParser:
              "(see `portunus impact`); required when stdin is not a terminal",
     )
     rot_run_cmd.set_defaults(func=cmd_rotation_run)
+    rot_roll = rot_sub.add_parser(
+        "roll",
+        help="rotate and push the new value to every target in the ref's rotation_targets tag, "
+             "verify, delete the old key; roll back on failure",
+    )
+    rot_roll.add_argument("ref_name", help="reference name in the registry (e.g. flayr-resend-api-key)")
+    rot_roll.add_argument("--dry-run", action="store_true", help="print the plan; change nothing")
+    rot_roll.add_argument("--keep-old", action="store_true",
+                          help="don't delete the old key after a verified roll")
+    rot_roll.add_argument("--skip-target", action="append", metavar="SPEC",
+                          help="leave this rotation_targets entry out (repeatable)")
+    rot_roll.add_argument("--yes", action="store_true",
+                          help="skip the confirm prompt; required when stdin is not a terminal")
+    rot_roll.set_defaults(func=cmd_rotation_roll)
     rot_audit = rot_sub.add_parser(
         "audit",
         help="group registry refs by provider, join to rotation capability, report superseded keys",

@@ -29,6 +29,12 @@ portunus resolve --exec <cmd> [args...]
 | `--stdin` | Read template from stdin |
 | `--exec` | Resolve in argv and exec — `--exec curl -H "x-key: {{secret:my-token}}" https://api.example.com` |
 
+`resolve [text]` and `resolve --stdin` print the **path** of the temp file, not the value, and
+the file keeps the template text as given, including the trailing newline `echo` adds. Piping
+that output into another command (`... | portunus resolve --stdin | vercel env add`) hands it
+the path. When stdout is not a terminal, `resolve` says so on stderr. To give a value to a
+command, use `--exec`.
+
 **Example:**
 ```sh
 portunus resolve --exec psql postgres://user:{{secret:db-pass}}@host/db
@@ -533,6 +539,26 @@ Before anything runs, it prints the blast radius to stderr ("rotating X touches 
 ```sh
 portunus rotation run ffe-cicd-sa-key --retire-old
 ```
+
+---
+
+### `rotation roll`
+
+Rotate a reference and push the new value to every consumer in its `rotation_targets` tag (Convex env, Vercel env + deploy hook, GCP Secret Manager). Then verify every copy, delete the old key, and roll everything back if a push or check fails. Resend only, for now. See [rotation.md](rotation.md#roll-everywhere-portunus-rotation-roll).
+
+```
+portunus rotation roll <ref_name> [--dry-run] [--keep-old] [--skip-target SPEC]... [--yes]
+```
+
+| Flag | Description |
+|---|---|
+| `--dry-run` | Print the plan (targets, deploy hooks, checks); change nothing |
+| `--keep-old` | Don't delete the old key after a verified roll |
+| `--skip-target SPEC` | Leave one `rotation_targets` entry out (repeatable) |
+| `--yes` | Skip the confirm prompt; required when stdin is not a terminal |
+
+Prints spec names and key ids only, never a value. It exits 1 if the roll was rolled back, or if
+the new key is live everywhere but the old key couldn't be deleted.
 
 ---
 
