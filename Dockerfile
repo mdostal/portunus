@@ -11,6 +11,13 @@
 # maintenance cost for an early, unproven feature.
 FROM python:3.12-slim
 
+# Ownership proof for the official MCP Registry (registryType "oci"): the
+# registry checks this label matches server.json's `name`.
+LABEL io.modelcontextprotocol.server.name="io.github.mdostal/portunus" \
+      org.opencontainers.image.source="https://github.com/mdostal/portunus" \
+      org.opencontainers.image.description="Boundary-only secret broker for AI agents (CLI + MCP stdio server)" \
+      org.opencontainers.image.licenses="MIT"
+
 # gcloud CLI -- required by GcloudBackend, which shells out to the real
 # `gcloud` binary (not a Python SDK -- see backend.py). Installed via
 # Google's own documented apt repo, not a third-party script.
