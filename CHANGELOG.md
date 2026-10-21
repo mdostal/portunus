@@ -6,6 +6,13 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Container image on GHCR + official MCP Registry listing.** A new `publish-mcp.yml` workflow
+  runs on every `vX.Y.Z` release tag (or by hand for an existing tag). It builds the repo's
+  `Dockerfile` for linux/amd64 and linux/arm64, pushes `ghcr.io/mdostal/portunus:<version>` and
+  `:latest`, smoke-tests an MCP `initialize` over stdio, then publishes `server.json` to the MCP
+  Registry as `io.github.mdostal/portunus` through GitHub OIDC (no stored token). The
+  `Dockerfile` carries the `io.modelcontextprotocol.server.name` ownership label.
+
 - **Clerk secret-key liveness (PANT-1148, #145).** New `clerk` liveness adapter. It sends the
   instance secret key to `GET https://api.clerk.com/v1/jwks`, which returns only public signing
   keys. A 401 (`clerk_key_invalid`) reads `dead` and anything else that isn't 2xx reads `unknown`.

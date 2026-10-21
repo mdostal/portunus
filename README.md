@@ -237,6 +237,16 @@ docker run --rm -v portunus-home:/home/portunus/.portunus portunus resolve --exe
   -H "Authorization: Bearer {{secret:shared-anthropic}}" https://api.anthropic.com/v1/messages
 ```
 
+**Prebuilt image + MCP Registry.** Release tags also publish a multi-arch image to
+`ghcr.io/mdostal/portunus:<version>` (and `:latest`) and list it in the official
+[MCP Registry](https://registry.modelcontextprotocol.io) as `io.github.mdostal/portunus`, so an
+MCP client can run the server as
+`docker run -i --rm -v portunus-home:/home/portunus/.portunus ghcr.io/mdostal/portunus mcp`.
+Inside a container only the backends that can reach their store from there work: local-encrypted
+(through the mounted `PORTUNUS_HOME` volume) and GCP Secret Manager (with credentials you mount or
+inject). The Chrome saved-login backend reads your host's Chrome profile, so it is not available
+from the container image.
+
 **⚠️ `PORTUNUS_HOME` must be a real, persistent volume for the local-encrypted backend.** The
 image declares it as a `VOLUME`, so an unmounted run still gets a persistent anonymous volume —
 but if that volume is ever removed (`docker rm -v`, `docker volume rm`, an ephemeral CI runner

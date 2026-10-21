@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mdostal/portunus",
+  "title": "Portunus",
+  "description": "Secret broker for agents: reference secrets by name; values injected only at the execution boundary.",
+  "version": "0.34.0",
+  "repository": {
+    "url": "https://github.com/mdostal/portunus",
+    "source": "github"
+  },
+  "websiteUrl": "https://mdostal.github.io/portunus/",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/mdostal/portunus:0.34.0",
+      "runtimeHint": "docker",
+      "runtimeArguments": [
+        { "type": "positional", "value": "-i" },
+        { "type": "positional", "value": "--rm" },
+        { "type": "named", "name": "-v", "value": "portunus-home:/home/portunus/.portunus" }
+      ],
+      "packageArguments": [
+        { "type": "positional", "value": "mcp" }
+      ],
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

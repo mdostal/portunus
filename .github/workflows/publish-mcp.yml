@@ -1,0 +1,108 @@
+name: Publish container + MCP Registry
+# On every vX.Y.Z release tag (the same tag release-desktop.yml builds on):
+#   1. build the repo's Dockerfile for linux/amd64 + linux/arm64 and push it to
+#      ghcr.io/mdostal/portunus:<version> (+ :latest) with the GITHUB_TOKEN,
+#   2. smoke-test that `portunus mcp` answers an MCP initialize over stdio,
+#   3. publish server.json to the official MCP Registry via GitHub OIDC
+#      (namespace io.github.mdostal -- no stored token needed).
+# workflow_dispatch publishes an EXISTING release tag (input: version, e.g.
+# 0.34.0) using this branch's workflow + server.json, building the image from
+# that tag's source.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing release version to publish, without the v (e.g. 0.34.0)"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  IMAGE: ghcr.io/mdostal/portunus
+  SERVER_NAME: io.github.mdostal/portunus
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout (workflow + server.json)
+        uses: actions/checkout@v4
+
+      - name: Checkout release source (v${{ steps.v.outputs.version }})
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ steps.v.outputs.version }}
+          path: release-src
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push (amd64, arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: release-src
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.v.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          # The label proves ownership to the MCP Registry; set here as well as
+          # in the Dockerfile so older release tags (built from their own
+          # source) carry it too. Annotations cover the multi-arch index.
+          labels: |
+            io.modelcontextprotocol.server.name=${{ env.SERVER_NAME }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.v.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          annotations: |
+            index:io.modelcontextprotocol.server.name=${{ env.SERVER_NAME }}
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            manifest:io.modelcontextprotocol.server.name=${{ env.SERVER_NAME }}
+
+      - name: Smoke test -- MCP initialize over stdio
+        run: |
+          set -o pipefail
+          REQ='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}'
+          OUT=$(printf '%s\n' "$REQ" | timeout 60 docker run -i --rm "$IMAGE:${{ steps.v.outputs.version }}" mcp | head -n 1)
+          echo "$OUT"
+          echo "$OUT" | grep -q '"result"'
+
+      - name: Set version in server.json
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          jq --arg v "$V" --arg img "$IMAGE:$V" \
+            '.version = $v | .packages[0].identifier = $img' server.json > server.tmp
+          mv server.tmp server.json
+          cat server.json
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+
+      - name: Publish to the MCP Registry (GitHub OIDC)
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
