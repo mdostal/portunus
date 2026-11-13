@@ -989,7 +989,7 @@ detected local `gcloud` ADC file** (read directly by the Next.js server; the `cl
 `client_secret`/`refresh_token` values are never sent to or shown in the browser — the form
 shows only "detected: yes/no," never the values themselves) or **enter manually** (masked
 `client_secret`/`refresh_token` fields, same `type="password"` discipline as every other secret
-value in this UI). One submit both stores the credential (`portunus oauth store`) and registers
+value in this UI; leave `client_secret` blank for a public/PKCE client, which has none). One submit both stores the credential (`portunus oauth store`) and registers
 the pointing reference (`portunus drop --backend oauth`) — no behavioral difference from doing
 both by hand.
 
