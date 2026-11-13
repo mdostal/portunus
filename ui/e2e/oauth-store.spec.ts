@@ -27,7 +27,8 @@ function post(body: Record<string, unknown>): Promise<{ status: number; body: st
   });
 }
 
-// Accounts are unique to this spec, so only its own stub-log lines count.
+// Accounts are unique to this spec, so only its own stub-log lines count. The
+// log outlives a local run, so each test counts from the lines already there.
 function stubLines(account: string): string[] {
   try {
     return fs.readFileSync(STUB_LOG, "utf8").split("\n").filter((line) => line.includes(account));
@@ -41,10 +42,11 @@ const BASE = { provider: "acme", client_id: "client-123", refresh_token: "rt-e2e
 test.describe("POST /api/oauth-store (manual credential)", () => {
   test("a public client (no client_secret) is stored without a client_secret key", async () => {
     const account = "oauth-store-spec-public";
+    const before = stubLines(account).length;
     const res = await post({ ...BASE, account, name: "acme-public-oauth" });
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({ ok: true });
-    expect(stubLines(account)).toEqual([
+    expect(stubLines(account).slice(before)).toEqual([
       `oauth store acme ${account} --stdin`,
       `oauth-store-keys acme ${account}: client_id refresh_token token_endpoint `,
       `drop acme-public-oauth acme:${account} --backend oauth --stdin --provider acme`,
@@ -53,23 +55,26 @@ test.describe("POST /api/oauth-store (manual credential)", () => {
 
   test("an empty client_secret counts as none", async () => {
     const account = "oauth-store-spec-empty";
+    const before = stubLines(account).length;
     const res = await post({ ...BASE, account, name: "acme-empty-oauth", client_secret: "" });
     expect(res.status).toBe(200);
-    expect(stubLines(account)).toContain(`oauth-store-keys acme ${account}: client_id refresh_token token_endpoint `);
+    expect(stubLines(account).slice(before)).toContain(`oauth-store-keys acme ${account}: client_id refresh_token token_endpoint `);
   });
 
   test("a confidential client keeps its client_secret", async () => {
     const account = "oauth-store-spec-confidential";
+    const before = stubLines(account).length;
     const res = await post({ ...BASE, account, name: "acme-confidential-oauth", client_secret: "cs-e2e" });
     expect(res.status).toBe(200);
-    expect(stubLines(account)).toContain(`oauth-store-keys acme ${account}: client_id client_secret refresh_token token_endpoint `);
+    expect(stubLines(account).slice(before)).toContain(`oauth-store-keys acme ${account}: client_id client_secret refresh_token token_endpoint `);
   });
 
   test("a missing refresh_token is 400 and never invokes the CLI", async () => {
     const account = "oauth-store-spec-incomplete";
+    const before = stubLines(account).length;
     const res = await post({ provider: "acme", account, name: "acme-incomplete-oauth", client_id: "client-123", token_endpoint: BASE.token_endpoint });
     expect(res.status).toBe(400);
     expect(JSON.parse(res.body).error).toBe("client_id, refresh_token, and token_endpoint are all required");
-    expect(stubLines(account)).toEqual([]);
+    expect(stubLines(account).length).toBe(before);
   });
 });
