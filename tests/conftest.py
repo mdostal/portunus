@@ -12,6 +12,11 @@ def _isolated_portunus_home(tmp_path_factory, monkeypatch):
     `home`, which overrides this with their own tmp_path."""
     monkeypatch.setenv("PORTUNUS_HOME", str(tmp_path_factory.mktemp("portunus-home")))
     monkeypatch.delenv("DOSTAL_SECRETS_HOME", raising=False)
+    # The suite may itself be run by an agent inside a T3 Code thread, where
+    # `portunus prompt` picks the T3 Code card instead of a desktop dialog.
+    # Tests that want that set these themselves.
+    for name in ("T3CODE_THREAD_ID", "PORTUNUS_PROMPT_SURFACE", "PORTUNUS_T3_PARENTS"):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

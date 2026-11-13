@@ -64,6 +64,7 @@ nav:
   - Reference:
     - CLI Reference: cli-reference.md
     - MCP Server & Agent Integration: mcp-server.md
+    - Portunus with T3 Code: t3-code.md
   # Expanded at build time by scripts/mkdocs_process_hook.py into the curated
   # .pHive design story (foundations + one design record per epic).
   - Process & Design: process/index.md

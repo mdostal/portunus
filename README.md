@@ -877,6 +877,13 @@ the actual usage conventions (when to use `ask` vs. `drop`, the fail-closed-mean
 discipline, never echoing a value back after a successful store) that the raw MCP tool table
 below doesn't — a fresh agent gets the *judgment*, not just the tool names.
 
+**T3 Code.** Inside a [T3 Code](docs/t3-code.md) thread, `portunus_prompt` uses T3 Code's own
+secret card as its input surface: the agent raises the card, the human types into it, and
+Portunus stores the value and deletes the card's file. In the other direction,
+`portunus t3 enable` plus `portunus t3 install-shim` let T3 Code's secret-provider slot read a
+reference such as `op://portunus/sudo-pw/value` from the vault. Setup, guard rails and
+troubleshooting are in [docs/t3-code.md](docs/t3-code.md).
+
 **Tools:**
 
 | Tool | Returns |

@@ -4,6 +4,10 @@ Registry management, policy (gate/approve/grant), the audit chain, and the
 boundary-only resolver. No subcommand ever prints a secret value to stdout;
 ``resolve`` either execs a command with the value in argv, or writes a 0600
 temp file and prints its *path*.
+
+The one exception is ``t3 op``, the 1Password-CLI-compatible reader the T3
+Code server spawns: it writes a value to a pipe, never a terminal, and only
+after a human has turned it on. Its guard rails are in ``t3.py``.
 """
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ from . import agent_setup
 from . import diagnose as diagnose_mod
 from . import health as health_mod
 from . import prompt as prompt_mod
+from . import t3 as t3_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
@@ -977,7 +982,12 @@ def cmd_prompt(args) -> int:
     and store it directly -- built for agents, which can run this but never
     see the value. Prints one JSON object of metadata only: {"name",
     "state", "stored": true}, {"cancelled": true} or {"error"}. Exit codes:
-    0 stored (or pending, for --surface ui), 2 cancelled, 1 error."""
+    0 stored (or pending, for --surface ui and the first call of --surface
+    t3), 2 cancelled, 1 error.
+
+    --surface t3 (what auto picks inside a T3 Code thread) prints a handoff
+    naming the T3 Code card tool to call; --value-file PATH then stores what
+    that card saved and deletes the file."""
     registry, _, broker, resolver = _build()
     try:
         tags = _parse_tags(args.tags) if args.tags else {}
@@ -992,14 +1002,114 @@ def cmd_prompt(args) -> int:
     )
     result = prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=args.surface,
-        open_ui=_open_ui, timeout=args.timeout,
+        open_ui=_open_ui, timeout=args.timeout, value_file=args.value_file or "",
+        cli=True,
     )
+    if args.home and "cli" in result.get("then", {}):
+        # The completing call has to land in the same vault.
+        result["then"]["cli"][1:1] = ["--home", args.home]
     print(json.dumps(result))
     if "error" in result:
         return 1
     if result.get("cancelled"):
         return 2
     return 0
+
+
+# --- T3 Code ---------------------------------------------------------------
+def cmd_t3_status(args) -> int:
+    """Report how the T3 Code integration is set up -- never mutates
+    anything and never reads a value."""
+    report = t3_mod.status()
+    if args.json:
+        print(json.dumps(report))
+        return 0
+    launcher = report["launcher"]
+    print(f"reader: {'enabled' if report['enabled'] else 'disabled (run `portunus t3 enable`)'}")
+    if not launcher["installed"]:
+        print("launcher: no `op` on PATH (run `portunus t3 install-shim`)")
+    elif launcher["ours"]:
+        print(f"launcher: {launcher['path']} (Portunus)")
+    else:
+        print(f"launcher: {launcher['path']} is NOT the Portunus launcher "
+              "(probably the 1Password CLI)")
+    print(f"T3 Code thread: {'yes' if report['in_t3_thread'] else 'no'} "
+          f"(T3CODE_THREAD_ID {'set' if report['in_t3_thread'] else 'not set'}); "
+          f"`portunus prompt` picks the {report['prompt_surface']} surface")
+    provider = report["provider"]
+    print("In T3 Code: Settings -> Secrets -> Add provider")
+    print(f"  kind:    {provider['kind']}")
+    print(f"  name:    {provider['name']}")
+    print(f"  account: {provider['account']}")
+    print(f"reference format: {report['reference_format']}")
+    return 0
+
+
+def _cmd_t3_set_enabled(on: bool) -> int:
+    t3_mod.set_enabled(on)
+    AuditChain().append("t3_config_changed", "-", f"reader {'enabled' if on else 'disabled'}")
+    if on:
+        print("T3 Code reader: enabled. T3 Code can now read enabled references through the "
+              "`op` launcher (gated references still need `portunus approve`).")
+    else:
+        print("T3 Code reader: disabled.")
+    return 0
+
+
+def cmd_t3_enable(args) -> int:
+    """Turn the T3 Code reader on. Until this runs, `portunus t3 op` (the
+    `op` launcher) refuses every read."""
+    return _cmd_t3_set_enabled(True)
+
+
+def cmd_t3_disable(args) -> int:
+    return _cmd_t3_set_enabled(False)
+
+
+def cmd_t3_install_shim(args) -> int:
+    """Write the `op` launcher T3 Code's 1Password provider will run."""
+    try:
+        result = t3_mod.install_shim(args.dir or None, force=args.force)
+    except (t3_mod.ShimError, OSError) as exc:
+        return _err(str(exc))
+    print(f"installed {result['path']} -> {' '.join(result['command'])} t3 op")
+    for warning in result["warnings"]:
+        print(f"portunus: warning: {warning}", file=sys.stderr)
+    if not t3_mod.is_enabled():
+        print("the reader is still disabled: run `portunus t3 enable`")
+    return 0
+
+
+def cmd_t3_uninstall_shim(args) -> int:
+    try:
+        result = t3_mod.uninstall_shim(args.dir or None)
+    except (t3_mod.ShimError, OSError) as exc:
+        return _err(str(exc))
+    if not result["removed"]:
+        print("no Portunus launcher found; nothing removed")
+        return 0
+    for path in result["removed"]:
+        print(f"removed {path}")
+    return 0
+
+
+def cmd_t3_ref(args) -> int:
+    """Print the reference to type into T3 Code for one Portunus reference
+    name. A name, never a value."""
+    registry = Registry()
+    if args.name not in registry:
+        return _err(f"unknown reference: {args.name}")
+    try:
+        print(t3_mod.t3_reference(args.name))
+    except t3_mod.BadReference as exc:
+        return _err(str(exc))
+    return 0
+
+
+def cmd_t3_op(args) -> int:
+    """The 1Password-CLI-compatible entry point. main() normally routes
+    `t3 op` here before argparse sees op's own flags."""
+    return t3_mod.op_main(args.argv, _build)
 
 
 def cmd_tty_entry(args) -> int:
@@ -3401,8 +3511,14 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--confirm", action="store_true",
                     help="ask twice in dialog surfaces (terminal surfaces always ask twice)")
     pr.add_argument("--surface", default="auto", choices=("auto",) + prompt_mod.SURFACES,
-                    help="input surface (default auto: first available desktop dialog, "
-                         "then a terminal window). ui opens the dashboard and returns pending")
+                    help="input surface (default auto: the T3 Code card inside a T3 Code "
+                         "thread, else the first available desktop dialog, then a terminal "
+                         "window; PORTUNUS_PROMPT_SURFACE overrides the pick). ui opens the "
+                         "dashboard and returns pending. t3 returns a handoff for the T3 "
+                         "Code secret card; finish it with --value-file")
+    pr.add_argument("--value-file", default="",
+                    help="finish a t3 prompt: the absolute path the T3 Code card returned. "
+                         "The value is stored and the file is deleted")
     pr.add_argument("--timeout", type=int, default=prompt_mod.DEFAULT_TIMEOUT,
                     help="seconds to wait for the human (default %(default)s)")
     pr.set_defaults(func=cmd_prompt)
@@ -3411,6 +3527,62 @@ def build_parser() -> argparse.ArgumentParser:
     tty.add_argument("fifo")
     tty.add_argument("--banner", default="")
     tty.set_defaults(func=cmd_tty_entry)
+
+    t3 = sub.add_parser(
+        "t3",
+        help="T3 Code integration: let T3 Code's secret-provider slot read from the vault "
+             "through a 1Password-CLI-compatible `op` launcher",
+    )
+    t3_sub = t3.add_subparsers(dest="action", required=True)
+
+    t3_status = t3_sub.add_parser(
+        "status", help="show whether the reader is enabled, which `op` is on PATH and what "
+                       "to type into T3 Code -- never mutates anything",
+    )
+    t3_status.add_argument("--json", action="store_true")
+    t3_status.set_defaults(func=cmd_t3_status)
+
+    t3_enable = t3_sub.add_parser(
+        "enable", help="allow T3 Code to read from the vault through the `op` launcher",
+    )
+    t3_enable.set_defaults(func=cmd_t3_enable)
+
+    t3_disable = t3_sub.add_parser("disable", help="refuse every read through the `op` launcher")
+    t3_disable.set_defaults(func=cmd_t3_disable)
+
+    t3_install = t3_sub.add_parser(
+        "install-shim", help="write the `op` launcher T3 Code's 1Password provider runs",
+    )
+    t3_install.add_argument(
+        "--dir", default="",
+        help="directory to write `op` into (default: next to the `portunus` executable, "
+             "else ~/.local/bin); it must be on the PATH of the T3 Code server",
+    )
+    t3_install.add_argument(
+        "--force", action="store_true",
+        help="install even when an `op` that is not ours (the 1Password CLI) is in the way",
+    )
+    t3_install.set_defaults(func=cmd_t3_install_shim)
+
+    t3_uninstall = t3_sub.add_parser(
+        "uninstall-shim", help="remove the `op` launcher (only one Portunus wrote)",
+    )
+    t3_uninstall.add_argument("--dir", default="", help="directory to remove `op` from "
+                                                        "(default: next to `portunus`, then PATH)")
+    t3_uninstall.set_defaults(func=cmd_t3_uninstall_shim)
+
+    t3_ref = t3_sub.add_parser(
+        "ref", help="print the op://portunus/<name>/value reference for a reference name",
+    )
+    t3_ref.add_argument("name")
+    t3_ref.set_defaults(func=cmd_t3_ref)
+
+    t3_op = t3_sub.add_parser(
+        "op", help="internal: what the `op` launcher runs. Accepts only the two calls T3 "
+                   "Code makes (`read`, `inject`) and refuses unless the reader is enabled",
+    )
+    t3_op.add_argument("argv", nargs=argparse.REMAINDER)
+    t3_op.set_defaults(func=cmd_t3_op)
 
     drb = sub.add_parser(
         "drop-bulk",
@@ -4026,7 +4198,39 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _t3_op_argv(argv: List[str]) -> Optional[tuple]:
+    """(home, op argv) when `argv` is `[--home X] t3 op ...`, else None.
+    That call is routed around argparse: its arguments are 1Password CLI
+    flags (`--cache=false`, `--account=...`), and a mistake must produce one
+    short line on stderr, not a usage screen."""
+    rest = list(argv)
+    home_override = ""
+    if rest[:1] == ["--home"] and len(rest) >= 2:
+        home_override, rest = rest[1], rest[2:]
+    elif rest and rest[0].startswith("--home="):
+        home_override, rest = rest[0].split("=", 1)[1], rest[1:]
+    if rest[:2] == ["t3", "op"]:
+        return home_override, rest[2:]
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    t3_op = _t3_op_argv(raw_argv)
+    if t3_op is not None:
+        # No update notice and no background update check on this path.
+        home_override, op_argv = t3_op
+        if not home_override:
+            return t3_mod.op_main(op_argv, _build)
+        prior = os.environ.get("PORTUNUS_HOME")
+        os.environ["PORTUNUS_HOME"] = home_override
+        try:
+            return t3_mod.op_main(op_argv, _build)
+        finally:
+            if prior is None:
+                os.environ.pop("PORTUNUS_HOME", None)
+            else:
+                os.environ["PORTUNUS_HOME"] = prior
     parser = build_parser()
     args = parser.parse_args(argv)
     # `mcp` is a long-running stdio server (a passive-check subprocess/stderr

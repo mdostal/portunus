@@ -22,6 +22,19 @@ Surfaces, in auto-selection order:
     opens the dashboard's ``?fulfill=<name>`` deep link. Asynchronous -- the
     human finishes in the browser, so this returns ``pending`` rather than
     ``stored``.
+  * ``t3`` (explicit, or chosen by ``auto`` inside a T3 Code thread): the
+    secret card T3 Code shows in the thread. Portunus cannot raise that card
+    itself -- only the agent can call T3's ``request_secret`` tool -- so
+    this surface is a two-step handoff. Step one returns a ``pending``
+    handoff naming the card tool and its arguments and stores nothing. The
+    card writes what the human typed to a private 0600 file and gives the
+    agent the path, not the value. Step two (``value_file=<path>``) reads
+    that file here, stores the value and deletes the file.
+
+Inside a T3 Code thread (``T3CODE_THREAD_ID`` is set) ``auto`` picks ``t3``:
+those threads are often driven from another machine, where a dialog on the
+server's desktop is out of reach. ``PORTUNUS_PROMPT_SURFACE=<surface>``
+overrides what ``auto`` picks; an explicit surface wins over both.
 
 MCP form elicitation is deliberately not a surface: most clients route
 elicitation responses through the model, which is exactly what this
@@ -34,6 +47,7 @@ import json
 import os
 import select
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -44,7 +58,22 @@ from urllib.parse import unquote
 
 DIALOG_SURFACES = ("osascript", "kdialog", "zenity", "pinentry")
 TERMINAL_SURFACES = ("terminal-app", "konsole", "gnome-terminal", "xterm")
-SURFACES = DIALOG_SURFACES + TERMINAL_SURFACES + ("ui",)
+# Not a local dialog, so it stays out of the two tuples above and out of
+# available_surfaces(): the T3 Code secret card, completed in two calls.
+T3_SURFACE = "t3"
+SURFACES = DIALOG_SURFACES + TERMINAL_SURFACES + ("ui", T3_SURFACE)
+
+# T3 Code exports this to every agent process it starts; the Portunus MCP
+# server and CLI inherit it from the agent.
+T3_THREAD_ENV = "T3CODE_THREAD_ID"
+# Overrides what surface="auto" picks. Any name in SURFACES.
+SURFACE_ENV = "PORTUNUS_PROMPT_SURFACE"
+T3_CARD_TOOL = "mcp__t3-code__request_secret"
+T3_LABEL_MAX = 80
+# Upper bound for a card's value file. A secret is a line of text or a key
+# file, not a blob.
+VALUE_FILE_MAX_BYTES = 64 * 1024
+_VALUE_FILE_PLACEHOLDER = "<file path returned by the card>"
 
 # GUI pinentry flavours only: a curses pinentry needs a TTY we don't have.
 _PINENTRY_BINARIES = ("pinentry-qt", "pinentry-gnome3", "pinentry-gtk-2", "pinentry-mac")
@@ -378,20 +407,270 @@ def read_secret(req: PromptRequest, surface: str = "auto", *, runner=None,
     raise PromptError(f"unknown surface: {surface}")
 
 
+def choose_surface(surface: str = "auto", env: Optional[Dict[str, str]] = None) -> str:
+    """Settle what ``auto`` means before any surface is opened. An explicit
+    surface is returned untouched. Otherwise ``PORTUNUS_PROMPT_SURFACE``
+    wins if set, then the T3 Code card inside a T3 Code thread, and failing
+    both the answer stays ``auto`` (first available desktop surface)."""
+    if surface != "auto":
+        return surface
+    env = os.environ if env is None else env
+    override = (env.get(SURFACE_ENV) or "").strip()
+    if override:
+        if override not in SURFACES:
+            raise PromptError(
+                f"{SURFACE_ENV} is set to an unknown surface (want one of: {', '.join(SURFACES)})"
+            )
+        return override
+    if env.get(T3_THREAD_ENV):
+        return T3_SURFACE
+    return "auto"
+
+
+# --- t3 surface (T3 Code secret card) ---------------------------------------
+
+def _one_line(text: str, limit: int) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 3].rstrip() + "..."
+
+
+def _request_arguments(req: PromptRequest) -> dict:
+    """The metadata the caller passed, as `portunus_prompt` arguments, so the
+    completing call registers the reference the same way. Defaults are left
+    out."""
+    args: dict = {"name": req.name, "sm_name": req.sm_name,
+                  "value_file": _VALUE_FILE_PLACEHOLDER}
+    for key in ("provider", "project", "org", "env", "scope", "description",
+                "purpose", "group", "repo"):
+        if getattr(req, key):
+            args[key] = getattr(req, key)
+    if req.kind != "password":
+        args["kind"] = req.kind
+    if req.tags:
+        args["tags"] = dict(req.tags)
+    if req.enable:
+        args["enable"] = True
+    if req.gate:
+        args["gate"] = True
+    return args
+
+
+def _request_cli(req: PromptRequest) -> List[str]:
+    argv = ["portunus", "prompt", req.name, req.sm_name,
+            "--value-file", _VALUE_FILE_PLACEHOLDER]
+    for key in ("provider", "project", "org", "env", "scope", "description",
+                "purpose", "group", "repo"):
+        if getattr(req, key):
+            argv += [f"--{key}", getattr(req, key)]
+    if req.kind != "password":
+        argv += ["--kind", req.kind]
+    if req.tags:
+        argv += ["--tags", ",".join(f"{k}={v}" for k, v in req.tags.items())]
+    if req.enable:
+        argv.append("--enable")
+    if req.gate:
+        argv.append("--gate")
+    return argv
+
+
+def t3_handoff(req: PromptRequest, cli: bool = False) -> dict:
+    """Step one of the t3 surface: tell the agent which card to raise and
+    how to finish. Pure -- touches neither the registry, the vault nor the
+    audit log."""
+    reason = (f"The value is stored in your Portunus vault as '{req.name}' "
+              "and the agent never sees it.")
+    if req.gate:
+        reason += " Each use will need your approval."
+    then: dict = {"tool": "portunus_prompt", "arguments": _request_arguments(req)}
+    if cli:
+        then["cli"] = _request_cli(req)
+    return {
+        "stored": False, "pending": True, "surface": T3_SURFACE, "name": req.name,
+        "card": {
+            "tool": T3_CARD_TOOL,
+            "arguments": {
+                "label": _one_line(req.description or req.name, T3_LABEL_MAX) or req.name,
+                "reason": reason,
+                "delivery": "file",
+            },
+        },
+        "then": then,
+        "note": "Call the card tool, then call portunus_prompt again with value_file set "
+                "to the path it returned. Do not read, print or copy that file.",
+    }
+
+
+def _value_file_problem(st: os.stat_result) -> str:
+    """Why a file with this stat result is not acceptable as a card's value
+    file ("" when it is)."""
+    if stat.S_ISLNK(st.st_mode):
+        return "value_file is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "value_file is not a regular file"
+    if st.st_uid != os.getuid():
+        return "value_file is not owned by the current user"
+    if st.st_mode & 0o077:
+        return "value_file is readable by group or others (want mode 0600)"
+    if st.st_size == 0:
+        return "value_file is empty; nothing stored"
+    if st.st_size > VALUE_FILE_MAX_BYTES:
+        return f"value_file is larger than {VALUE_FILE_MAX_BYTES // 1024} KiB"
+    return ""
+
+
+def read_value_file(path: str) -> str:
+    """Read the value a T3 Code card saved. Raises PromptError (never with
+    the value in it) unless `path` is an absolute path to a private regular
+    file of ours: not a symlink, owned by this uid, no group/other bits,
+    between 1 byte and 64 KiB. Never deletes or modifies the file."""
+    if not path or not os.path.isabs(path):
+        raise PromptError("value_file must be an absolute path")
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        raise PromptError("value_file does not exist")
+    except OSError as exc:
+        raise PromptError(f"cannot inspect value_file: {exc.strerror}")
+    problem = _value_file_problem(before)
+    if problem:
+        raise PromptError(problem)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as exc:
+        raise PromptError(f"cannot open value_file: {exc.strerror}")
+    try:
+        # Re-check what was actually opened: the path could have been
+        # swapped between lstat() and open().
+        opened = os.fstat(fd)
+        problem = _value_file_problem(opened)
+        if not problem and (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            problem = "value_file changed while it was being opened"
+        if problem:
+            raise PromptError(problem)
+        raw = b""
+        while len(raw) <= VALUE_FILE_MAX_BYTES:
+            chunk = os.read(fd, VALUE_FILE_MAX_BYTES + 1 - len(raw))
+            if not chunk:
+                break
+            raw += chunk
+    finally:
+        os.close(fd)
+    if len(raw) > VALUE_FILE_MAX_BYTES:
+        raise PromptError(f"value_file is larger than {VALUE_FILE_MAX_BYTES // 1024} KiB")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PromptError("value_file is not UTF-8 text")
+    finally:
+        del raw
+
+
+def complete_from_file(req: PromptRequest, registry, broker, backend, value_file: str) -> dict:
+    """Step two of the t3 surface: store what the card saved, then delete
+    the card's file.
+
+    The file is deleted only once the value is in the vault. Every earlier
+    failure (an unsafe file, an empty value, a store that raises) leaves it
+    where it is and says so, so the human does not have to type the value
+    again."""
+    try:
+        value = _strip_one_newline(read_value_file(value_file))
+    except PromptError as exc:
+        return {"error": str(exc)}
+    if not value:
+        return {"error": "empty secret value; nothing stored"}
+
+    existed = req.name in registry
+    progress: List[str] = []
+    try:
+        result = _store_value(req, registry, broker, backend, value, T3_SURFACE,
+                              progress=progress)
+    except Exception as exc:  # noqa: BLE001 -- must decide the file's fate on any failure
+        if not progress:
+            # Nothing reached the vault. Undo a registry entry this call
+            # created, and leave the file for a retry.
+            if not existed and req.name in registry:
+                try:
+                    registry.remove(req.name)
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"error": f"could not store the value ({type(exc).__name__}); nothing stored. "
+                             "The card's file was left in place: fix the problem and call "
+                             "again with the same value_file, or delete the file"}
+        # The value is in the vault but a later step (audit, gate, enable)
+        # failed. The file has done its job, so it still goes.
+        result = {"name": req.name, "stored": True, "surface": T3_SURFACE,
+                  "warning": f"the value was stored but finishing up failed ({type(exc).__name__}); "
+                             f"check `portunus status {req.name}`"}
+    finally:
+        del value
+
+    try:
+        os.unlink(value_file)
+        result["file_removed"] = True
+    except OSError:
+        result["file_removed"] = False
+        note = f"could not delete the card's file; delete it yourself without reading it: {value_file}"
+        result["warning"] = f"{result['warning']}; {note}" if "warning" in result else note
+    return result
+
+
+def _store_value(req: PromptRequest, registry, broker, backend, value: str, used: str,
+                 progress: Optional[List[str]] = None) -> dict:
+    """Register the reference and store `value`: the one place a prompted
+    value enters the vault, whichever surface it came from. Appends
+    "stored" to `progress` the moment the vault has the value. Returns
+    metadata only."""
+    ref = registry.add(
+        req.name, req.sm_name, scope=req.scope, kind=req.kind, state="dropped",
+        org=req.org, provider=req.provider, project=req.project, env=req.env,
+        tags=req.tags, description=req.description, purpose=req.purpose,
+        group=req.group, repo=req.repo,
+    )
+    backend.store(ref.sm_name, value)
+    del value
+    if progress is not None:
+        progress.append("stored")
+    broker.audit.append("drop", ref.sm_name, f"stored:prompt:{used}")
+    if req.gate:
+        broker.gate(ref.name, on=True)
+    if req.enable:
+        ref = registry.set_state(ref.name, "enabled")
+    ref = registry.require(ref.name)
+    return {"name": ref.name, "state": ref.state, "stored": True,
+            "gated": ref.approval == "required", "surface": used}
+
+
 def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "auto",
-               open_ui: Optional[Callable[[str], dict]] = None, **kwargs) -> dict:
+               open_ui: Optional[Callable[[str], dict]] = None, value_file: str = "",
+               cli: bool = False, env=None, **kwargs) -> dict:
     """Prompt the human, store the answer, return metadata only.
 
     Every return path is a plain dict with no value in it:
     ``{"name", "state", "stored": True, "surface"}``, ``{"cancelled": True}``,
     ``{"name", "state": "requested", "stored": False, "pending": True, ...}``
-    (ui surface) or ``{"error": ...}``.
+    (ui surface), ``{"stored": False, "pending": True, "surface": "t3",
+    "card", "then", ...}`` (t3 surface, first call) or ``{"error": ...}``.
+
+    `value_file` completes a t3 prompt: the path a T3 Code card returned.
+    `cli` adds the equivalent `portunus prompt` argv to a t3 handoff.
     """
     if not hasattr(backend, "store"):
         return {
             "error": "prompt requires the local-encrypted backend "
             "(unset PORTUNUS_BACKEND or set it to unset/local)"
         }
+    if value_file:
+        if surface not in ("auto", T3_SURFACE):
+            return {"error": f"value_file completes a t3 prompt and cannot be combined "
+                             f"with surface={surface}"}
+        return complete_from_file(req, registry, broker, backend, value_file)
+    try:
+        surface = choose_surface(surface, env)
+    except PromptError as exc:
+        return {"error": str(exc)}
+    if surface == T3_SURFACE:
+        return t3_handoff(req, cli=cli)
     if surface == "ui":
         if open_ui is None:
             return {"error": "the ui surface is not available from here"}
@@ -407,7 +686,7 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
                 "surface": "ui", **opened}
 
     try:
-        used, value = read_secret(req, surface, **kwargs)
+        used, value = read_secret(req, surface, env=env, **kwargs)
     except PromptCancelled as exc:
         broker.audit.append("prompt", req.sm_name, f"cancelled:{exc.reason}")
         out = {"cancelled": True}
@@ -418,20 +697,4 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
         return {"error": str(exc)}
     if not value:
         return {"error": "empty secret value; nothing stored"}
-
-    ref = registry.add(
-        req.name, req.sm_name, scope=req.scope, kind=req.kind, state="dropped",
-        org=req.org, provider=req.provider, project=req.project, env=req.env,
-        tags=req.tags, description=req.description, purpose=req.purpose,
-        group=req.group, repo=req.repo,
-    )
-    backend.store(ref.sm_name, value)
-    del value
-    broker.audit.append("drop", ref.sm_name, f"stored:prompt:{used}")
-    if req.gate:
-        broker.gate(ref.name, on=True)
-    if req.enable:
-        ref = registry.set_state(ref.name, "enabled")
-    ref = registry.require(ref.name)
-    return {"name": ref.name, "state": ref.state, "stored": True,
-            "gated": ref.approval == "required", "surface": used}
+    return _store_value(req, registry, broker, backend, value, used)
