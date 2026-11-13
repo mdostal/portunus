@@ -189,12 +189,11 @@ export default function OAuthCredentialForm({
             </label>
             <div className="form-row">
               <label className="form-field">
-                <span>client_secret</span>
+                <span>client_secret (blank for a public client)</span>
                 <input
                   className="field"
                   type="password"
                   autoComplete="off"
-                  required={!useLocalAdc}
                   {...manualField("client_secret")}
                 />
               </label>
