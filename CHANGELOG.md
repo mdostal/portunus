@@ -6,6 +6,23 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **T3 Code: secret cards as a prompt surface, and a vault reader for T3 Code's secret
+  provider.** `portunus prompt` / `portunus_prompt` have a new `t3` surface, which `auto` picks
+  inside a T3 Code thread (`T3CODE_THREAD_ID` set; `PORTUNUS_PROMPT_SURFACE` overrides the
+  pick). The first call stores nothing and returns a handoff naming T3 Code's `request_secret`
+  card. The second call (`--value-file` / `value_file`) reads the 0600 file the card wrote,
+  stores the value and deletes the file. The file must be an absolute path to a regular file
+  owned by the user with no group/other bits and at most 64 KiB; on any failure nothing is
+  stored and the file is left in place. New `portunus t3` commands let T3 Code read from the
+  vault: `t3 enable`/`disable`, `t3 install-shim`/`uninstall-shim` (an `op` launcher for T3
+  Code's 1Password provider slot, account `portunus`), `t3 status` and `t3 ref`. References are
+  `op://portunus/<name>/value`. The launcher is the only path that writes a value to stdout, so
+  it is off by default, refuses a terminal, refuses any parent that is not the T3 Code server,
+  and goes through the same state, approval and role checks as `resolve`. Each read or refusal
+  is audited as `t3_provider_read`. The parent check is not a security boundary; gate a
+  reference (`portunus gate`) to require approval. The `portunus-prompt` skill covers the card
+  flow. See `docs/t3-code.md`.
+
 - **Container image on GHCR + official MCP Registry listing.** A new `publish-mcp.yml` workflow
   runs on every `vX.Y.Z` release tag (or by hand for an existing tag). It builds the repo's
   `Dockerfile` for linux/amd64 and linux/arm64, pushes `ghcr.io/mdostal/portunus:<version>` and

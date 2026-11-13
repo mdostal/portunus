@@ -718,15 +718,35 @@ def portunus_prompt(
     confirm: bool = False,
     surface: str = "auto",
     timeout: int = 300,
+    value_file: str = "",
+    scope: str = "",
+    repo: str = "",
 ) -> dict:
     """Ask the HUMAN to type a secret into Portunus directly -- use this
     instead of portunus_drop whenever the human hasn't already pasted the
-    value to you (a sudo password, a master credential). Opens a
-    human-facing surface on their desktop (password dialog, then a fresh
-    terminal window as fallback) and stores what they enter straight into
-    the local vault; the value never enters your context.
+    value to you (a sudo password, a master credential). The value goes
+    from a human-facing surface into the local vault and never enters your
+    context.
 
-    Blocks until the human answers, cancels, or `timeout` seconds pass.
+    Outside T3 Code it opens a surface on the human's desktop (password
+    dialog, then a fresh terminal window as fallback) and blocks until the
+    human answers, cancels, or `timeout` seconds pass.
+
+    Inside T3 Code (surface="auto" picks "t3" there; you can also ask for
+    surface="t3") the surface is T3 Code's secret card, and it takes two
+    calls because only you can raise that card:
+      1. Call this tool. It stores nothing and returns {"stored": False,
+         "pending": True, "surface": "t3", "card": {"tool", "arguments"},
+         "then": {"tool", "arguments"}}.
+      2. Call the card tool named in "card" (mcp__t3-code__request_secret)
+         with exactly those arguments. It returns {"status": "saved",
+         "file": "<path>"}. Never read, print or copy that file.
+      3. Call this tool again with the arguments in "then", with value_file
+         set to that path. Portunus stores the value, deletes the file and
+         returns the usual metadata plus "file_removed".
+    If the result has file_removed False, delete the path yourself without
+    reading it. If the human dismisses the card, make no second call.
+
     Returns metadata only: {"name", "state", "stored": True, "gated",
     "surface"}, {"cancelled": True} or {"error"} -- never the value, its
     length or a hash. Lands state="dropped" unless enable=True; gate=True
@@ -743,13 +763,13 @@ def portunus_prompt(
     if surface != "auto" and surface not in prompt_mod.SURFACES:
         return {"error": f"unknown surface: {surface}"}
     req = prompt_mod.PromptRequest(
-        name=name, sm_name=sm_name, kind=kind, org=org, provider=provider,
+        name=name, sm_name=sm_name, scope=scope, kind=kind, org=org, provider=provider,
         project=project, env=env, tags=dict(tags or {}), description=description,
-        purpose=purpose, group=group, enable=enable, gate=gate, confirm=confirm,
+        purpose=purpose, group=group, repo=repo, enable=enable, gate=gate, confirm=confirm,
     )
     return prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=surface,
-        open_ui=_open_ui, timeout=timeout,
+        open_ui=_open_ui, timeout=timeout, value_file=value_file,
     )
 
 

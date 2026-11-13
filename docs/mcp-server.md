@@ -9,7 +9,7 @@ Portunus exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (M
 - Discovery and list tools return metadata only (name, description, state, tags).
 - Resolution tools return a **file path** (`portunus_resolve_to_tempfile`) or a **command result** (`portunus_resolve_exec`). The value flows into the command's argv or into a 0600 temp file — it never passes through the tool's return value.
 - `portunus_drop` is the one tool where a value flows *in* (storing a new secret). The return value is metadata only; the value is never echoed back.
-- `portunus_prompt` stores a secret the agent never sees: the human types it into a desktop dialog or terminal window and the tool returns metadata only. Prefer it over `portunus_drop` whenever the human hasn't already pasted the value.
+- `portunus_prompt` stores a secret the agent never sees: the human types it into a desktop dialog, a terminal window or (inside T3 Code) a T3 Code secret card, and the tool returns metadata only. Prefer it over `portunus_drop` whenever the human hasn't already pasted the value.
 
 This means an LLM context reading a tool result cannot inadvertently capture or relay a secret.
 
@@ -113,9 +113,32 @@ Both tools accept dual addressing: exact `name` (from a prior list/search/previe
 | Tool | Key parameters | Description |
 |---|---|---|
 | `portunus_drop` | `name`, `sm_name`, `value`, `provider?`, `project?`, `env?`, `tags?`, … | Create a new local-vault secret. Lands at `state="dropped"`; call `portunus_state(name, "enabled")` to make it injectable. `value` is the one place a secret flows **in** — never echoed back. |
-| `portunus_prompt` | `name`, `sm_name`, `provider?`, `project?`, `description?`, `enable?`, `gate?`, `confirm?`, `surface?`, `timeout?`, … | Ask the **human** to type the value into a desktop dialog / terminal window; stored directly, never seen by the agent. Blocks until answered. Returns `{"name", "state", "stored": True, "gated", "surface"}`, `{"cancelled": True}` or `{"error"}`. `surface="ui"` opens the dashboard fulfill page and returns `{"pending": True}`. |
+| `portunus_prompt` | `name`, `sm_name`, `provider?`, `project?`, `description?`, `enable?`, `gate?`, `confirm?`, `surface?`, `timeout?`, `value_file?`, `scope?`, `repo?`, … | Ask the **human** to type the value into a desktop dialog / terminal window; stored directly, never seen by the agent. Blocks until answered. Returns `{"name", "state", "stored": True, "gated", "surface"}`, `{"cancelled": True}` or `{"error"}`. `surface="ui"` opens the dashboard fulfill page and returns `{"pending": True}`. Inside T3 Code, `surface="auto"` picks `"t3"` and the tool takes two calls; see [the t3 surface](#portunus_prompt-inside-t3-code). |
 | `portunus_drop_bulk` | `entries: List[dict]` | Create many secrets at once. Each entry takes the same fields as `portunus_drop`. Returns `{"created": [names], "failed": [{"name", "error"}]}`. |
 | `portunus_state` | `name: str`, `state: str` | Change a reference's lifecycle state. Valid states: `enabled`, `locked`, `dropped`, `revoked`, `requested`. |
+
+#### `portunus_prompt` inside T3 Code
+
+When `T3CODE_THREAD_ID` is set in the server's environment (T3 Code sets it for the agents it starts), `surface="auto"` picks the `t3` surface: T3 Code's secret card. Portunus cannot raise that card, so the tool returns a handoff instead of blocking, and the agent makes three calls:
+
+1. `portunus_prompt(name, sm_name, ...)` stores nothing and returns
+
+    ```json
+    {"stored": false, "pending": true, "surface": "t3", "name": "<name>",
+     "card": {"tool": "mcp__t3-code__request_secret",
+              "arguments": {"label": "<description, or the name>", "reason": "<one line>", "delivery": "file"}},
+     "then": {"tool": "portunus_prompt",
+              "arguments": {"name": "<name>", "sm_name": "<sm_name>",
+                            "value_file": "<file path returned by the card>", "...": "the metadata arguments that were passed"}},
+     "note": "Call the card tool, then call portunus_prompt again with value_file set to the path it returned. Do not read, print or copy that file."}
+    ```
+
+2. The agent calls `mcp__t3-code__request_secret` with `card.arguments`. The card returns `{"status": "saved", "file": "<path>"}`: a 0600 file holding what the human typed. The agent must not read it.
+3. `portunus_prompt(..., value_file="<path>")` with the arguments from `then` stores the value, deletes the file and returns `{"name", "state", "stored": True, "gated", "surface": "t3", "file_removed": True}`.
+
+`value_file` must be an absolute path to a regular file (not a symlink) owned by the current user, with no group or other permission bits, between 1 byte and 64 KiB. A file that fails a check, an empty value or a failed store returns `{"error"}`, stores nothing and leaves the file in place. If the store succeeded but the file could not be deleted, the result has `"file_removed": False` and a `"warning"` naming the path. `value_file` together with an explicit surface other than `"t3"` is an error.
+
+`surface="t3"` asks for the card outside a T3 Code thread. `PORTUNUS_PROMPT_SURFACE=<surface>` in the server's environment changes what `"auto"` picks; an explicit `surface` wins over both. New optional parameters: `value_file`, plus `scope` and `repo`, which the CLI already had. More in [Portunus with T3 Code](t3-code.md).
 
 ### Access control & bindings
 

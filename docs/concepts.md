@@ -45,6 +45,8 @@ Portunus injects a secret at the **execution boundary** — the actual outbound 
 
 These modes exist to cover different execution shapes — a CLI command, a subprocess environment, a config file — while keeping the invariant consistent: the value never enters the model's context, a log line, or a return value.
 
+There is one more sink, off unless a human turns it on: the [T3 Code reader](t3-code.md). T3 Code's secret-provider slot can only take a value from the stdout of a command it runs, so `portunus t3 op` writes one there, to a pipe and never a terminal, and only when the T3 Code server is the caller. It goes through the same `check_injectable()` gate as the four modes above.
+
 ---
 
 ## Audit chain
