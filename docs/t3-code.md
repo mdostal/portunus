@@ -14,6 +14,8 @@ On their own, cards do not keep anything. The value a human types is used once, 
 
 In both directions the value stays out of the agent's context.
 
+**Which T3 Code builds.** Secret cards are in every T3 Code build, so card → vault works everywhere. Secret providers are a preview feature that is switched on when T3 Code is built (`T3CODE_FEATURE_SECRETS=1`). T3 Code release builds up to 0.1.9 are built without it: they have no **Settings → Secrets** page and their cards have no provider picker, so vault → card needs a T3 Code build with that feature on. Until your build has it, use card → vault and let agents read stored secrets through Portunus directly (`portunus_resolve_to_tempfile`, `portunus_resolve_exec`).
+
 ## Card → vault: the `t3` prompt surface
 
 Nothing to set up beyond `portunus agent init`, which registers the MCP server and installs the `portunus-prompt` skill that teaches agents this flow.
@@ -61,6 +63,8 @@ The file is deleted only after the value is in the vault. If storing fails, the 
 ## Vault → card or settings: the `op` launcher
 
 Stock T3 Code has one kind of secret provider, 1Password, which it uses by running the `op` command it finds on `PATH`. Portunus ships a small launcher named `op` that answers the two calls T3 Code makes, from the Portunus vault. A T3 Code provider of kind 1Password with the account `portunus` then reads from Portunus.
+
+This needs a T3 Code build with the Secrets feature on (see [Which T3 Code builds](#portunus-with-t3-code) above). If **Settings → Secrets** is missing in your T3 Code, the launcher installs and works, but T3 Code has no place to use it yet.
 
 ### Set it up
 

@@ -21,7 +21,9 @@ All notable changes to Portunus are documented in this file.
   and goes through the same state, approval and role checks as `resolve`. Each read or refusal
   is audited as `t3_provider_read`. The parent check is not a security boundary; gate a
   reference (`portunus gate`) to require approval. The `portunus-prompt` skill covers the card
-  flow. See `docs/t3-code.md`.
+  flow. See `docs/t3-code.md`. The reader needs a T3 Code build
+  with its Secrets preview feature on (`T3CODE_FEATURE_SECRETS=1`); release builds up to 0.1.9
+  are built without it, and card-to-vault works on every build.
 
 - **Container image on GHCR + official MCP Registry listing.** A new `publish-mcp.yml` workflow
   runs on every `vX.Y.Z` release tag (or by hand for an existing tag). It builds the repo's
