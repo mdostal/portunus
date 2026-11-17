@@ -121,3 +121,52 @@ def test_inject_file_target_mode_group_json(home, capsys):
     assert stat.S_IMODE(os.stat(target).st_mode) == 0o640
     assert SECRET not in captured.out
     assert SECRET not in captured.err
+
+
+# --- never overwrite, never follow a link (first-cut-trust t1c) ---------------
+
+def test_inject_refuses_an_existing_file_and_audits_the_error(home, capsys):
+    _register()
+    target = home / "out.env"
+    target.write_text("KEEP=me\n")
+
+    rc = main(["inject", "--tags", "provider=vercel,project=mdostal.com",
+               "--target", "file", "--path", str(target), "--format", "env", "--key", "K"])
+    captured = capsys.readouterr()
+
+    assert rc != 0
+    assert "already exists" in captured.err
+    assert target.read_text() == "KEEP=me\n"
+    assert SECRET not in captured.out + captured.err
+    entries = [e for e in AuditChain().entries() if e["action"] == "adapter_resolution"]
+    assert entries[-1]["result"].startswith("error:")
+
+
+def test_inject_refuses_a_symlink_target(home, capsys):
+    _register()
+    victim = home / "victim.txt"
+    victim.write_text("untouched")
+    link = home / "out.env"
+    link.symlink_to(victim)
+
+    rc = main(["inject", "--tags", "provider=vercel,project=mdostal.com",
+               "--target", "file", "--path", str(link), "--format", "env", "--key", "K"])
+
+    assert rc != 0
+    assert victim.read_text() == "untouched"
+    assert SECRET not in capsys.readouterr().err
+
+
+def test_inject_replace_flag_refreshes_an_existing_regular_file(home, capsys):
+    _register()
+    target = home / "out.env"
+    target.write_text("OLD=1\n")
+
+    rc = main(["inject", "--tags", "provider=vercel,project=mdostal.com",
+               "--target", "file", "--path", str(target), "--format", "env", "--key", "K",
+               "--replace"])
+
+    assert rc == 0
+    assert target.read_text() == f"K={SECRET}\n"
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
+    assert SECRET not in capsys.readouterr().out

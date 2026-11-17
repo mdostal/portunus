@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { writeHostAllowed } from "@/lib/host-guard";
 import { runPortunus } from "@/lib/portunus";
+import { describeWriteAuth, loadWriteAuth } from "@/lib/write-auth";
 
 // Health for pantheon-v2's L2 service-descriptor contract
 // (docs/PANTHEON-CONTRACTS.md §2a) and any dashboard or supervisor.
@@ -20,6 +21,12 @@ import { runPortunus } from "@/lib/portunus";
 // reaches the UI over a Host whose writes proxy.ts would 403 (a non-loopback
 // name with PORTUNUS_UI_HOST unset) gets status "down": nothing it sends can
 // mutate, so it mustn't see a green health result.
+//
+// "ui-write-auth": whether writes need the write credential (lib/write-auth.ts).
+// No credential configured (or an unreadable token file) means every write is
+// refused with 503, so the result is at least "degraded". An explicit opt-out
+// (PORTUNUS_ALLOW_UNAUTHENTICATED_WRITES=1) passes, but its detail says OPEN.
+// Never includes the token.
 export async function GET(request: Request) {
   const shallow = new URL(request.url).searchParams.get("shallow");
   if (shallow === "1" || shallow === "true") {
@@ -34,6 +41,7 @@ export async function GET(request: Request) {
         ok: false,
         detail: `writes over Host "${host}" are rejected (non-loopback Host); set PORTUNUS_UI_HOST to accept them`,
       };
+  const authCheck = { name: "ui-write-auth", ...describeWriteAuth(loadWriteAuth()) };
 
   let detail: string;
   try {
@@ -43,9 +51,10 @@ export async function GET(request: Request) {
       const body = JSON.parse(result.stdout);
       if (["ok", "degraded", "down"].includes(body?.status)) {
         const checks = Array.isArray(body.checks) ? body.checks : [];
-        const status = hostCheck.ok ? body.status : "down";
+        let status = hostCheck.ok ? body.status : "down";
+        if (!authCheck.ok && status === "ok") status = "degraded";
         return NextResponse.json(
-          { ...body, status, checks: [...checks, hostCheck] },
+          { ...body, status, checks: [...checks, hostCheck, authCheck] },
           { status: status === "down" ? 503 : 200 },
         );
       }
@@ -57,7 +66,7 @@ export async function GET(request: Request) {
     detail = err instanceof Error ? err.message : "failed to spawn portunus";
   }
   return NextResponse.json(
-    { status: "down", checks: [{ name: "cli", ok: false, detail }, hostCheck] },
+    { status: "down", checks: [{ name: "cli", ok: false, detail }, hostCheck, authCheck] },
     { status: 503 },
   );
 }

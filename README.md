@@ -397,6 +397,8 @@ portunus find --tags provider=vercel,project=mdostal.com,env=prod
 # Resolve by tags and inject directly at a boundary target:
 portunus inject --tags provider=vercel,project=mdostal.com,env=prod --target env --var VERCEL_TOKEN
 portunus inject --tags provider=vercel,project=mdostal.com,env=prod --target file --format env --key VERCEL_TOKEN --path ./.env.local
+# a file target must not exist yet (never overwritten, never written through a symlink);
+# add --replace to refresh a regular file you own
 
 # Semantic front door -- plain-language request instead of exact tags:
 portunus ask "the vercel secret for mdostal.com in prod" --target env --var VERCEL_TOKEN
@@ -1194,8 +1196,28 @@ rejected with **403** if it carries an `Origin` other than the UI's own, or if i
 `localhost` / `127.0.0.1` / `[::1]` (this stops DNS rebinding; the check is skipped once you set
 `PORTUNUS_UI_HOST`). It is rejected with **415** if its `Content-Type` isn't
 `application/json`. That means another web page open in your browser can't drive the vault
-through the UI's API. A client with no `Origin` header, such as `curl`, still works as long as it
-sends JSON.
+through the UI's API.
+
+**Write credential.** Those checks stop a web page, not a client that sets its own headers, such
+as `curl` from a container that can reach the host's loopback port. So every non-GET `/api/*`
+request also needs `X-Portunus-Write-Token: <token>`. The server reads the expected token from
+the file named by `PORTUNUS_WRITE_TOKEN_FILE` on every write, so rewriting the file rotates the
+token. A missing or wrong token gets **401**, and the request never reaches the CLI. If no token
+file is configured, every write is refused with **503**. On a single-user machine where nothing
+else can reach the port, set `PORTUNUS_ALLOW_UNAUTHENTICATED_WRITES=1` instead. The server then
+prints a warning banner and runs with writes open. GET routes stay open, and none of them
+returns a secret value.
+
+```bash
+umask 077 && openssl rand -hex 32 > ~/.portunus/ui-write-token
+PORTUNUS_WRITE_TOKEN_FILE=~/.portunus/ui-write-token npm run dev
+```
+
+The page asks for the token the first time it writes and keeps it for that tab. The desktop app
+mints its own token on each launch, so it needs no setup. The CLI and `portunus mcp` change the
+vault directly and never go through HTTP, so they need no token.
+[docs/http-routes.md](docs/http-routes.md) classifies every route and covers rollout for a
+deployment that already has HTTP writers.
 
 **Deploying behind a non-loopback name (containers, reverse proxies).** If anything reaches the
 UI by a name other than `localhost` / `127.0.0.1` / `[::1]`, for example another container

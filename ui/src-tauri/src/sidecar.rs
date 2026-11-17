@@ -12,8 +12,11 @@
 //! fresh OS-assigned free port.
 
 use std::env;
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -104,6 +107,37 @@ pub fn resolve_server_js(app: &AppHandle) -> PathBuf {
 pub struct SidecarHandle {
     pub child: Child,
     pub port: u16,
+    /// This launch's UI write credential, or None if it could not be minted
+    /// (the sidecar then refuses every write with 503 rather than run open).
+    pub write_token: Option<String>,
+    pub write_token_file: Option<PathBuf>,
+}
+
+const WRITE_TOKEN_FILE_NAME: &str = "ui-write-token";
+
+/// Mints this launch's UI write credential (ui/lib/write-auth.ts): 32 random
+/// bytes as hex, written 0600 to a fresh file in the app's data dir. The
+/// sidecar gets the file's path as PORTUNUS_WRITE_TOKEN_FILE; the window gets
+/// the token in the URL fragment it navigates to (lib.rs), which never reaches
+/// the server, a log, or another process's argv. A new token every launch.
+fn mint_write_token(dir: &Path) -> std::io::Result<(PathBuf, String)> {
+    let mut bytes = [0u8; 32];
+    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    fs::create_dir_all(dir)?;
+    let path = dir.join(WRITE_TOKEN_FILE_NAME);
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    // create_new = O_CREAT|O_EXCL: never opens an existing file or a link.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&path)?;
+    file.write_all(token.as_bytes())?;
+    Ok((path, token))
 }
 
 /// Spawns `node <server.js>` with PORT=<port> and the captured real PATH.
@@ -113,12 +147,32 @@ pub fn spawn_sidecar(app: &AppHandle) -> SidecarHandle {
     let server_js = resolve_server_js(app);
     let port = pick_free_port();
     let path = capture_login_shell_path();
+    let minted = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| std::io::Error::new(ErrorKind::Other, e.to_string()))
+        .and_then(|dir| mint_write_token(&dir));
+    let (write_token_file, write_token) = match minted {
+        Ok((file, token)) => (Some(file), Some(token)),
+        Err(e) => {
+            log::error!("could not mint the UI write token, so the vault UI will refuse writes: {e}");
+            (None, None)
+        }
+    };
 
-    let child = Command::new("node")
+    let mut command = Command::new("node");
+    command
         .arg(&server_js)
         .env("PORT", port.to_string())
         .env("PATH", path)
         .env("HOSTNAME", "127.0.0.1")
+        // Never inherit an opt-out or another token file from the launching env.
+        .env_remove("PORTUNUS_ALLOW_UNAUTHENTICATED_WRITES")
+        .env_remove("PORTUNUS_WRITE_TOKEN_FILE");
+    if let Some(file) = &write_token_file {
+        command.env("PORTUNUS_WRITE_TOKEN_FILE", file);
+    }
+    let child = command
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -126,7 +180,7 @@ pub fn spawn_sidecar(app: &AppHandle) -> SidecarHandle {
             panic!("failed to spawn sidecar (node {}): {e}", server_js.display())
         });
 
-    SidecarHandle { child, port }
+    SidecarHandle { child, port, write_token, write_token_file }
 }
 
 /// Polls http://127.0.0.1:<port>/api/health?shallow=1 until it returns 200,
@@ -146,4 +200,48 @@ pub fn wait_until_healthy(port: u16) -> bool {
         std::thread::sleep(HEALTH_POLL_INTERVAL);
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!("portunus-sidecar-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn mints_a_fresh_0600_hex_token_each_time() {
+        let dir = scratch("mint");
+        let (path, first) = mint_write_token(&dir).unwrap();
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let (_, second) = mint_write_token(&dir).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(fs::read_to_string(&path).unwrap(), second);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn never_writes_through_a_planted_symlink() {
+        let dir = scratch("link");
+        fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim");
+        fs::write(&victim, "untouched").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.join(WRITE_TOKEN_FILE_NAME)).unwrap();
+        let (path, token) = mint_write_token(&dir).unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "untouched");
+        assert!(!fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&path).unwrap(), token);
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

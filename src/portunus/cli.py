@@ -297,7 +297,8 @@ def _adapter_from_args(args):
     return (
         FileAdapter(),
         {"path": args.path, "fmt": args.format, "key": args.key,
-         "mode": args.mode, "group": args.group},
+         "mode": args.mode, "group": args.group,
+         "replace": bool(getattr(args, "replace", False))},
         f"file:{args.path}",
     )
 
@@ -3193,6 +3194,9 @@ def build_parser() -> argparse.ArgumentParser:
     inj.add_argument("--group", default="",
                       help="group name or gid to own the file (--target file); portunus must "
                            "belong to it, or it must be the directory's setgid group")
+    inj.add_argument("--replace", action="store_true",
+                      help="(--target file) replace an existing regular file at --path. Without it "
+                           "inject refuses any existing file, and a symlink is refused either way")
     inj.add_argument("--json", action="store_true",
                       help="print {message, file: {uid, gid, mode, readable_by}} on success")
     inj.set_defaults(func=cmd_inject)
@@ -3209,6 +3213,8 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--mode", default="", choices=("", "0600", "0640", "0660"),
                       help="file mode (--target file; default 0600), as for inject")
     ask.add_argument("--group", default="", help="group name or gid to own the file (--target file), as for inject")
+    ask.add_argument("--replace", action="store_true",
+                      help="(--target file) replace an existing regular file at --path, as for inject")
     ask.add_argument("--json", action="store_true", help="machine-readable output for resolve-only calls (UI consumer)")
     ask.add_argument("--name", default="", help="required for an 'add' request, e.g. --name vercel-mdostal")
     ask.add_argument("--tags", default="",

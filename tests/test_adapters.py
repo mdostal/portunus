@@ -106,13 +106,85 @@ def test_file_adapter_file_is_never_group_or_world_readable(tmp_path, monkeypatc
     assert (target.stat().st_mode & 0o777) == 0o600
 
 
-def test_file_adapter_tightens_a_preexisting_file(tmp_path):
+# --- FileAdapter never overwrites or follows a link (first-cut-trust t1c) ---
+
+def test_file_adapter_refuses_a_preexisting_file_and_leaves_it_alone(tmp_path):
     target = tmp_path / "out.env"
     target.write_text("old")
     os.chmod(target, 0o644)
-    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K")
+    with pytest.raises(AdapterError) as exc_info:
+        FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K")
+    assert "already exists" in str(exc_info.value)
+    assert SENTINEL not in str(exc_info.value)
+    assert target.read_text() == "old"
+    assert (target.stat().st_mode & 0o777) == 0o644
+
+
+def test_file_adapter_refuses_a_symlink_and_never_writes_through_it(tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched")
+    link = tmp_path / "out.env"
+    link.symlink_to(victim)
+    with pytest.raises(AdapterError) as exc_info:
+        FileAdapter().inject(SENTINEL, path=str(link), fmt="env", key="K")
+    assert SENTINEL not in str(exc_info.value)
+    assert link.is_symlink()
+    assert victim.read_text() == "untouched"
+
+
+def test_file_adapter_refuses_a_dangling_symlink_and_never_creates_its_target(tmp_path):
+    # A dangling link is the classic plant: O_CREAT without O_EXCL would
+    # create the file the link points at, wherever that is.
+    pointed_at = tmp_path / "elsewhere" / "planted.env"
+    pointed_at.parent.mkdir()
+    link = tmp_path / "out.env"
+    link.symlink_to(pointed_at)
+    with pytest.raises(AdapterError):
+        FileAdapter().inject(SENTINEL, path=str(link), fmt="env", key="K")
+    assert not pointed_at.exists()
+    assert link.is_symlink()
+
+
+def test_file_adapter_replace_swaps_a_regular_file_and_tightens_it(tmp_path):
+    target = tmp_path / "out.env"
+    target.write_text("old")
+    os.chmod(target, 0o644)
+    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", replace=True)
     assert (target.stat().st_mode & 0o777) == 0o600
     assert target.read_text() == f"K={SENTINEL}\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out.env"]  # no temp left
+
+
+def test_file_adapter_replace_creates_a_missing_file(tmp_path):
+    target = tmp_path / "out.env"
+    FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", replace=True)
+    assert target.read_text() == f"K={SENTINEL}\n"
+
+
+def test_file_adapter_replace_still_refuses_a_symlink(tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched")
+    link = tmp_path / "out.env"
+    link.symlink_to(victim)
+    with pytest.raises(AdapterError) as exc_info:
+        FileAdapter().inject(SENTINEL, path=str(link), fmt="env", key="K", replace=True)
+    assert "symlink" in str(exc_info.value)
+    assert victim.read_text() == "untouched"
+    assert link.is_symlink()
+
+
+def test_file_adapter_replace_failure_keeps_the_old_file_and_leaves_no_temp(tmp_path, monkeypatch):
+    def deny(*a, **k):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(os, "fchown", deny)
+    target = tmp_path / "out.env"
+    target.write_text("old")
+    with pytest.raises(AdapterError) as exc_info:
+        FileAdapter().inject(SENTINEL, path=str(target), fmt="env", key="K", mode="0640",
+                             group=str(os.getgid() + 12345), replace=True)
+    assert SENTINEL not in str(exc_info.value)
+    assert target.read_text() == "old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["out.env"]
 
 
 # --- FileAdapter mode/group (PANT-1142) ---------------------------------

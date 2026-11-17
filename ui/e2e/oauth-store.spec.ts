@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import { test, expect } from "@playwright/test";
-import { STUB_LOG } from "../playwright.config";
+import { STUB_LOG, WRITE_TOKEN } from "../playwright.config";
 
 // POST /api/oauth-store with a manually entered credential. A public (PKCE)
 // OAuth client has no client_secret: the route must accept that and hand
@@ -10,7 +10,11 @@ import { STUB_LOG } from "../playwright.config";
 // the bundle's key names only (e2e/fixtures/bin/portunus).
 
 const PORT = 3100;
-const HEADERS = { Origin: `http://127.0.0.1:${PORT}`, "Content-Type": "application/json" };
+const HEADERS = {
+  Origin: `http://127.0.0.1:${PORT}`,
+  "Content-Type": "application/json",
+  "X-Portunus-Write-Token": WRITE_TOKEN,
+};
 
 function post(body: Record<string, unknown>): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
