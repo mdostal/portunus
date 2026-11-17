@@ -3,7 +3,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
-import { STUB_LOG } from "../playwright.config";
+import { STUB_LOG, WRITE_TOKEN } from "../playwright.config";
 
 // PANT-1003: a caller that gives up on a file-target inject (core-api aborts
 // after 5s) must not get the file written after it left. The stub CLI waits
@@ -18,7 +18,7 @@ function postThenAbort(body: string, abortAfterMs: number): Promise<void> {
       port: PORT,
       path: "/api/inject",
       method: "POST",
-      headers: { Origin: `http://127.0.0.1:${PORT}`, "Content-Type": "application/json" },
+      headers: { Origin: `http://127.0.0.1:${PORT}`, "Content-Type": "application/json", "X-Portunus-Write-Token": WRITE_TOKEN },
     });
     req.on("error", () => resolve());
     req.on("close", () => resolve());
@@ -42,7 +42,7 @@ test("a completed slow file inject still writes the file", async ({ request }) =
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "portunus-e2e-"));
   const target = path.join(dir, "slow-ok.secret");
   const res = await request.post("/api/inject", {
-    headers: { Origin: `http://127.0.0.1:${PORT}` },
+    headers: { Origin: `http://127.0.0.1:${PORT}`, "X-Portunus-Write-Token": WRITE_TOKEN },
     data: { tags: { provider: "github" }, target: "file", path: target, format: "env", key: "VALUE" },
   });
   expect(res.status()).toBe(200);
@@ -55,7 +55,7 @@ test("a file inject passes mode and group through and returns the file descripti
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "portunus-e2e-"));
   const target = path.join(dir, "grouped.env");
   const res = await request.post("/api/inject", {
-    headers: { Origin: `http://127.0.0.1:${PORT}` },
+    headers: { Origin: `http://127.0.0.1:${PORT}`, "X-Portunus-Write-Token": WRITE_TOKEN },
     data: {
       tags: { provider: "github" }, target: "file", path: target,
       format: "env", key: "VALUE", mode: "0640", group: "10002",

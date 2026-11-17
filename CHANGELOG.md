@@ -6,6 +6,19 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Write credential on every state-changing UI route (first-cut-trust t1c).** Every non-GET
+  `/api/*` request now needs `X-Portunus-Write-Token`. The server checks it against the file
+  named by `PORTUNUS_WRITE_TOKEN_FILE`, re-read on every write, with a constant-time compare.
+  A missing or wrong token gets 401 and never reaches the CLI. Before this, any process that
+  could reach the port could retag, drop or inject: for example, a container reaching the
+  host's loopback port through podman. With no token file, every write is refused (503).
+  `PORTUNUS_ALLOW_UNAUTHENTICATED_WRITES=1` keeps the old open behaviour for a single-user
+  machine, with a startup banner. The deep `/api/health` reports a `ui-write-auth` check. The
+  browser UI sends the token for you: it reads it from a `#write-token=` fragment, or asks once
+  per tab. The desktop app mints a fresh token on each launch. The CLI and MCP server are
+  unchanged, since they never write through HTTP. docs/http-routes.md classifies every route;
+  none returns a secret value.
+
 - **Container image on GHCR + official MCP Registry listing.** A new `publish-mcp.yml` workflow
   runs on every `vX.Y.Z` release tag (or by hand for an existing tag). It builds the repo's
   `Dockerfile` for linux/amd64 and linux/arm64, pushes `ghcr.io/mdostal/portunus:<version>` and
@@ -263,6 +276,15 @@ All notable changes to Portunus are documented in this file.
   by service name stayed green with every write failing. The deep health check now runs the same
   Host check on its own request and adds a `ui-write-host` check; when it fails the result is
   `down` (HTTP 503) and the detail says to set `PORTUNUS_UI_HOST`. `?shallow=1` is unchanged.
+
+### Changed
+
+- **`inject --target file` never overwrites and never follows a link.** It creates the file
+  with `O_CREAT|O_EXCL|O_NOFOLLOW`, so an existing file, directory or symlink at the path,
+  dangling or not, fails the inject and nothing is written. Before this, an existing file was
+  truncated and a symlink was followed. Use the new CLI-only `--replace` to refresh a regular
+  file you own. It writes a temp file and renames it into place, and still refuses a symlink.
+  `POST /api/inject` never forwards it.
 
 ## [0.34.0] - 2026-10-14
 

@@ -226,8 +226,14 @@ Resolve a reference by tags and inject its value at a boundary target.
 
 ```
 portunus inject --tags <k=v,...> --target env|file [--var <name>] [--path <path>] [--format env|json|yaml] [--key <key>]
-                [--mode 0600|0640|0660] [--group <name|gid>] [--json]
+                [--mode 0600|0640|0660] [--group <name|gid>] [--replace] [--json]
 ```
+
+A `file` target must not exist yet. Inject creates it with `O_CREAT|O_EXCL|O_NOFOLLOW`. If
+anything is already at the path, the inject fails and writes nothing. That covers a file, a
+directory, and a symlink, including a dangling symlink. `--replace` (CLI only, never sent by
+`POST /api/inject`) refreshes a regular file you own. It writes a new temp file beside the
+target and renames it into place. Even with `--replace`, a symlink is refused.
 
 A `file` target is written `0600`, owned by the uid Portunus runs as. A caller running as a
 different uid can't read that file, and can't delete it unless the directory is writable for
