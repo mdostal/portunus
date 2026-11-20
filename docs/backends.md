@@ -347,6 +347,84 @@ never reads an item, so it can't trigger an unlock prompt.
 
 ---
 
+## Infisical
+
+Reads secrets from [Infisical](https://infisical.com), on Infisical Cloud or self-hosted, using a
+**machine identity** with universal auth. **Read-only.** Portunus never writes to Infisical.
+
+### Credentials
+
+Portunus takes the first of these that is set:
+
+1. `INFISICAL_TOKEN`: an access token you already minted for a machine identity.
+2. `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` and `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` (the same
+   variable names the Infisical CLI uses).
+3. A client id and secret kept in Portunus's own local vault, by default under the sm_names
+   `infisical-client-id` and `infisical-client-secret`:
+
+```bash
+portunus drop infisical-client-id infisical-client-id --backend local --stdin < ./client-id.txt
+portunus drop infisical-client-secret infisical-client-secret --backend local --stdin < ./client-secret.txt
+```
+
+The client secret is only ever sent in the body of an HTTPS POST to
+`/api/v1/auth/universal-auth/login`. The access token that login returns stays in memory until
+shortly before it expires. It is never logged, printed or written to disk. If nothing is
+configured, the resolve fails closed and says how to configure it.
+
+Give the machine identity **read** access to each project and environment you resolve from.
+
+### Addressing
+
+**Full address.** This needs no setup beyond credentials:
+
+```
+infisical:<project-id>:<environment>:<path/NAME>
+```
+
+The last path segment is the secret key and the rest is the folder, `/` by default. For example,
+`infisical:6f1c...:prod:/payments/STRIPE_KEY` reads key `STRIPE_KEY` from folder `/payments` in
+environment `prod`.
+
+**Project mapping.** Map a Portunus project to an Infisical project and environment once. After
+that, references in the project can use plain sm_names (`STRIPE_KEY`, or `payments/STRIPE_KEY`
+relative to the mapping's base folder):
+
+```bash
+portunus infisical map shop --project-id 6f1c... --env prod --path /backend
+portunus bindings set shop --backend infisical     # route the whole project here
+portunus infisical status --check                  # mappings, credential source, test login
+```
+
+Mappings live in `PORTUNUS_HOME/infisical.json` (mode 0600) and hold topology only: project id,
+environment, base folder, and an optional `--site-url` for self-hosted instances. They can also
+name different local-vault refs for the client id and secret (`--client-id-ref`,
+`--client-secret-ref`) when projects use different machine identities. Without a mapping, the
+site URL comes from `INFISICAL_SITE_URL` (or `INFISICAL_API_URL`; a trailing `/api` is dropped),
+and defaults to `https://app.infisical.com`.
+
+### Failure behaviour
+
+These all raise a clear error and never fall back to another backend: no credentials, a rejected
+login, a denied read (the identity has no access to that environment or folder), an unreachable
+server, and a malformed response. If a cached token is rejected, Portunus logs in once more
+against the same server before failing. A missing secret is reported as `NOT_FOUND`, so a
+reference that follows a binding gets the existing local-value fallback rule (#246), with its
+warning and audit entry. A reference pinned with `--backend infisical` and a full address has
+no local value to fall back to.
+
+`portunus health` reports, without any network call, how many projects are mapped, where the
+credentials come from, and any reference whose project has no mapping.
+
+### Known limitations
+
+- **No write-back, rotation or discovery.** Secrets are addressed by name; there is no `list`.
+- Reads use the v3 raw-secrets API (`GET /api/v3/secrets/raw/<name>`), with secret imports
+  included. End-to-end-encrypted (non-raw) projects aren't supported.
+- Tests use a mocked HTTP transport. It has not been run against a live Infisical instance.
+
+---
+
 ## Stub backends
 
 The following backends are recognized by Portunus but not yet implemented. Each fails closed with a clear error rather than silently mis-routing to a different backend:
@@ -358,7 +436,6 @@ The following backends are recognized by Portunus but not yet implemented. Each 
 | Azure Key Vault | `azure` |
 | 1Password Secrets Automation | `onepassword` |
 | Doppler | `doppler` |
-| Infisical | `infisical` |
 
 To request an adapter, use the [adapter-request template](https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml).
 
@@ -374,6 +451,7 @@ To request an adapter, use the [adapter-request template](https://github.com/mdo
 | Production with GCP, also need offline resilience or deploy-time snapshot | `gcp` + `sync_mode: cached` |
 | Testing against real, already-authenticated browser credentials (macOS/Linux) | `chrome` |
 | Logins kept in a Bitwarden personal/organization vault | `bitwarden` |
+| Secrets managed in Infisical (cloud or self-hosted) | `infisical` |
 | Secrets already in the OS keystore (macOS Keychain, GNOME Keyring/KWallet, Windows Credential Manager) | `keychain` |
 | Any other cloud provider | Wait for the stub to be implemented |
 

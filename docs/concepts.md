@@ -18,7 +18,7 @@ A **Reference** is a named credential slot — a metadata record that says "ther
 2. The project's `VaultBinding` (configured with `portunus bindings set <project> --backend ...`).
 3. The global `PORTUNUS_BACKEND` environment variable as the final fallback.
 
-Real backends today: `local` (local-encrypted vault, the default) and `gcp` (GCP Secret Manager, keyless via Workload Identity Federation). All others (`aws`, `vault`, `infisical`, `doppler`, `onepassword`, `azure`) are honest stubs that fail closed with a clear error. `mock` always short-circuits the entire selection tree — used for tests and dry runs only.
+Real backends today: `local` (local-encrypted vault, the default), `gcp` (GCP Secret Manager, keyless via Workload Identity Federation), `infisical` (universal auth), and the read-only `chrome`, `bitwarden` and `keychain` (OS keystore) backends. The others (`aws`, `vault`, `doppler`, `onepassword`, `azure`) are honest stubs that fail closed with a clear error. `mock` always short-circuits the entire selection tree — used for tests and dry runs only.
 
 ---
 
