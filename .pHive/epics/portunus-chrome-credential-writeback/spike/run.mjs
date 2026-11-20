@@ -13,13 +13,16 @@ const OLD = 'dummy-old-' + crypto.randomBytes(6).toString('hex');
 const NEW = 'dummy-new-' + crypto.randomBytes(6).toString('hex');
 const ext = process.env.HOME + '/spike-work/ext';
 const out = { mode, old_sha: d(OLD), new_sha: d(NEW) };
-const ctx = await chromium.launchPersistentContext(prof, { executablePath: exe, headless: false, viewport: null,
+const ctx = await chromium.launchPersistentContext(prof, { executablePath: exe, headless: !!process.env.HEADLESS, viewport: null,
   ignoreDefaultArgs: ['--disable-extensions', '--enable-automation', '--password-store=basic', '--disable-component-extensions-with-background-pages'],
   args: ['--password-store=basic', `--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--window-size=1280,900', '--window-position=0,0'] });
 const pm = ctx.pages()[0] || await ctx.newPage();
 await pm.goto('chrome://password-manager/passwords');
 if (!flags.includes('--no-seed')) {
-  out.seed = await pm.evaluate(async ([u, n, p]) => { try { await chrome.passwordsPrivate.addPassword({ url: u, username: n, password: p, note: '', useAccountStore: false }); return 'ok'; } catch (e) { return 'err:' + e.message; } }, [ORIGIN, USER, OLD]);
+  const seedUrl = process.env.SEED_URL || ORIGIN;
+  out.seed = await pm.evaluate(async ([u, n, p, acct]) => { try { await chrome.passwordsPrivate.addPassword({ url: u, username: n, password: p, note: '', useAccountStore: acct }); return 'ok'; } catch (e) { return 'err:' + e.message; } }, [seedUrl, USER, OLD, false]);
+  if (process.env.SEED_ACCOUNT) out.seed_account = await pm.evaluate(async ([u, n, p]) => { try { await chrome.passwordsPrivate.addPassword({ url: u, username: n, password: p, note: '', useAccountStore: true }); return 'ok'; } catch (e) { return 'err:' + e.message; } }, [seedUrl, USER, OLD + '-acct']);
+  out.list_after_seed = await pm.evaluate(async () => { await new Promise(r => setTimeout(r, 500)); return (await chrome.passwordsPrivate.getSavedPasswordList()).map(x => ({ signon: x.urls && x.urls.signonRealm, link: x.urls && x.urls.link, user: x.username, storedIn: x.storedIn })); });
 }
 const internals = await ctx.newPage();
 await internals.goto('chrome://password-manager-internals');
@@ -33,9 +36,9 @@ const pending = { id: USER, password: NEW };
 try {
   if (mode === 'page-nogesture') {
     out.call = await page.evaluate(async c => { const a = navigator.userActivation.isActive; try { await navigator.credentials.store(new PasswordCredential(c)); return { ok: true, hasActivation: a }; } catch (e) { return { ok: false, err: e.name, hasActivation: a }; } }, pending);
-  } else if (mode === 'cdp-gesture') {
+  } else if (mode === 'cdp-gesture' || mode === 'cdp-nogesture') {
     const s = await ctx.newCDPSession(page);
-    const r = await s.send('Runtime.evaluate', { userGesture: true, awaitPromise: true, returnByValue: true,
+    const r = await s.send('Runtime.evaluate', { userGesture: mode === 'cdp-gesture', awaitPromise: true, returnByValue: true,
       expression: `(async()=>{const a=navigator.userActivation.isActive;try{await navigator.credentials.store(new PasswordCredential(${JSON.stringify(pending)}));return {ok:true,hasActivation:a}}catch(e){return {ok:false,err:e.name,hasActivation:a}}})()` });
     out.call = r.result.value;
   } else if (mode === 'click') {
@@ -49,6 +52,16 @@ try {
   }
 } catch (e) { out.call = 'harness-err:' + e.message.split('\n')[0]; }
 await page.waitForTimeout(2500);
+if (process.env.ACCEPT_TRY) {
+  // try to accept a pending bubble using only CDP (no OS-level input): Enter / Space / Tab+Enter dispatched via Input domain
+  const s2 = await ctx.newCDPSession(page);
+  for (const key of [['Enter', 13, '\r'], [' ', 32, ' '], ['Tab', 9, ''], ['Enter', 13, '\r']]) {
+    await s2.send('Input.dispatchKeyEvent', { type: 'keyDown', key: key[0], windowsVirtualKeyCode: key[1], text: key[2] || undefined });
+    await s2.send('Input.dispatchKeyEvent', { type: 'keyUp', key: key[0], windowsVirtualKeyCode: key[1] });
+  }
+  out.accept_try = 'sent Enter/Space/Tab/Enter via CDP Input.dispatchKeyEvent';
+  await page.waitForTimeout(1500);
+}
 if (mode.startsWith('hostile')) out.captured = await page.evaluate(() => window.__captured);
 fs.mkdirSync(process.env.HOME + '/spike-work/shots', { recursive: true });
 const shot = `${process.env.HOME}/spike-work/shots/${mode}.png`;
