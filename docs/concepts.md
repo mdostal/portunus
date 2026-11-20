@@ -55,6 +55,20 @@ Every resolve decision — allowed or denied — is appended to a tamper-evident
 
 ---
 
+## TOTP seeds and recovery codes
+
+A reference can carry a `secret_type`. With `totp`, the vault holds an `otpauth://totp/...` URI (seed, algorithm, digits, period, issuer, account). Whoever has the seed can mint codes forever, so the seed never leaves Portunus. The only way out is `portunus otp <ref>` (MCP: `portunus_otp`), which returns the current code and the seconds it stays valid (RFC 6238; SHA1/SHA256/SHA512, 6-10 digits). A totp reference is refused by every template sink (`resolve`, `inject`, `resolve_exec`, `resolve_to_tempfile`), so `{{secret:NAME}}` can't smuggle the seed out either.
+
+`otp` passes through Petitio like any resolve: lifecycle state, roles, and the approval gate. Gate a seed with `portunus gate <ref>`, then approve per use (`approve <ref> --ttl 1`) or for a session (`approve <ref> --ttl 2h`). Every code handed out writes an `otp … issued` audit line.
+
+Seeds get in without passing through chat: the human types or pastes them into `portunus prompt <ref> <sm> --type totp` (dialog or terminal window), or imports the setup QR image with `portunus drop <ref> <sm> --qr IMAGE` (needs `zbarimg`). Either form accepts a full URI or a bare base32 setup key.
+
+`recovery_code` references are one-time: gated when created, and moved to `state=used` right after the resolve that hands one out. A second resolve fails. The burn happens when the value is fetched, so a sink that fails afterwards still uses the code up.
+
+`leak-scan` searches for a totp reference's base32 seed (canonical uppercase form), which also catches any otpauth URI carrying it. A seed written in lowercase or split into groups is not caught.
+
+---
+
 ## Fail-closed default
 
 A freshly dropped or registered reference starts in `state=dropped` (or `state=requested` for agent-initiated placeholders). In either state, `check_injectable()` refuses resolution — the reference is not injectable until a human explicitly runs `portunus state <ref> enabled`. This is the fail-closed default: a new credential slot does nothing until deliberately activated. It prevents a race where a newly stored secret becomes injectable before an operator has had a chance to review it, and it means a misconfigured or placeholder reference never silently resolves to a wrong value — it fails loudly and immediately instead.

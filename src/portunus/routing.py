@@ -28,7 +28,7 @@ from typing import Dict, Iterable, List, Optional, Set
 
 # Backends that hold values remotely and are addressed by the same plain
 # `sm_name` a drop writes locally -- the only kinds a local value can be
-# stranded behind. oauth/chrome/bitwarden use their own sm_name schemes and
+# stranded behind. oauth/chrome/bitwarden/keychain use their own sm_name schemes and
 # never hold drop-written values.
 REMOTE_STORE_KINDS = ("gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure")
 

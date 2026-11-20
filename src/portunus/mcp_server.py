@@ -39,7 +39,8 @@ from .search import search_references
 from . import bitwarden
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
-from .resolver import UnknownReference
+from .resolver import NotTotp, UnknownReference
+from . import totp as totp_mod
 from .rotation import load_rotation_bindings, rotation_adapter_for, rotation_audit_data
 
 mcp = FastMCP("portunus")
@@ -763,6 +764,7 @@ def portunus_prompt(
     scope: str = "",
     repo: str = "",
     value_files: Optional[dict] = None,
+    secret_type: str = "",
 ) -> dict:
     """Ask the HUMAN to type a secret into Portunus directly -- use this
     instead of portunus_drop whenever the human hasn't already pasted the
@@ -809,7 +811,13 @@ def portunus_prompt(
     surface="ui" instead opens the dashboard's fulfill deep link and
     returns {"pending": True} immediately (the human finishes in the
     browser). Fails with an error, not a hang, when there is no desktop
-    session to show a prompt on."""
+    session to show a prompt on.
+
+    secret_type="totp" asks the human for a 2FA setup key (otpauth:// URI or
+    base32 seed) -- afterwards only portunus_otp reads it, as the current
+    code; the seed never resolves anywhere else. secret_type="recovery_code"
+    stores a one-time 2FA recovery code, always gated, burned (state=used)
+    after it resolves once."""
     from . import prompt as prompt_mod
     from .cli import _open_ui
 
@@ -820,6 +828,7 @@ def portunus_prompt(
         name=name, sm_name=sm_name, scope=scope, kind=kind, org=org, provider=provider,
         project=project, env=env, tags=dict(tags or {}), description=description,
         purpose=purpose, group=group, repo=repo, enable=enable, gate=gate, confirm=confirm,
+        secret_type=secret_type,
     )
     return prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=surface,
@@ -861,6 +870,37 @@ def portunus_request_approval(
         registry, broker, name, purpose=purpose, amount=amount, merchant=merchant,
         surface=surface, request_id=request_id, code_file=code_file,
     )
+
+
+@mcp.tool()
+def portunus_otp(name: str = "", tags: Optional[dict] = None) -> dict:
+    """Current 2FA code for a totp reference -- use it to answer a TOTP
+    prompt (GitHub sign-in, sudo mode, ...). Returns {"code",
+    "seconds_left", "period", "digits"}; if seconds_left is small, wait for
+    the next period before typing it. Never returns the seed or the
+    otpauth URI, on any path. Address by exact `name` or by `tags`, like
+    portunus_resolve_to_tempfile. Gated like any resolve (lifecycle state,
+    `portunus approve` if the reference is gated, roles) and every code
+    handed out is written to the audit chain."""
+    registry, _audit, _broker, resolver = _build()
+    try:
+        ref = _resolve_address(registry, name, tags)
+    except AddressError as exc:
+        return {"error": str(exc)}
+    except NoMatch:
+        return {"error": f"no reference matches tags: {tags!r}"}
+    except AmbiguousMatch as exc:
+        return {"error": f"ambiguous match: {exc.candidates}"}
+    try:
+        return resolver.otp(ref.name)
+    except UnknownReference:
+        return {"error": f"unknown reference: {ref.name}"}
+    except (NotTotp, totp_mod.TotpError) as exc:
+        return {"error": str(exc)}
+    except (NotInjectable, ApprovalRequired, NotAuthorized) as exc:
+        return {"error": str(exc)}
+    except BackendError as exc:
+        return {"error": str(exc)}
 
 
 @mcp.tool()
@@ -920,7 +960,7 @@ def portunus_drop_bulk(entries: List[dict]) -> dict:
 def portunus_state(name: str, state: str) -> dict:
     """Change a reference's lifecycle state -- the harness-side counterpart
     to `portunus state <name> <state>`. Valid states: enabled, locked,
-    dropped, revoked, requested. Typically used to promote a freshly
+    dropped, revoked, requested, used. Typically used to promote a freshly
     portunus_drop-ped secret (state=dropped) to state=enabled so it becomes
     injectable. Pure metadata -- no backend, no value, ever touched."""
     registry, *_ = _build()

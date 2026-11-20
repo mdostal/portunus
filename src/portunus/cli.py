@@ -34,6 +34,7 @@ from . import diagnose as diagnose_mod
 from . import health as health_mod
 from . import prompt as prompt_mod
 from . import t3 as t3_mod
+from . import totp as totp_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
@@ -47,7 +48,7 @@ from .identity_token import (
 )
 from . import bitwarden, chrome_discovery
 from .backend import (
-    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, DopplerBackend,
+    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, KeychainBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
     LocalFallbackBackend,
@@ -93,7 +94,7 @@ from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInject
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter, describe_file
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
-from .resolver import Resolver, UnknownReference
+from .resolver import NotTotp, Resolver, UnknownReference
 from .vault_transfer import build_bundle, import_bundle, verify_access, write_bundle
 
 # Distinct exit codes so scripts can branch on the failure mode without
@@ -144,6 +145,8 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
             inst = ChromeBackend(audit=audit)
         elif kind == "bitwarden":
             inst = BitwardenBackend(audit=audit)
+        elif kind == "keychain":
+            inst = KeychainBackend(audit=audit)
         else:
             inst = fallback_backend
         instances[kind] = inst
@@ -1106,8 +1109,18 @@ def cmd_drop(args) -> int:
             "drop requires the local-encrypted backend "
             "(unset PORTUNUS_BACKEND or set it to unset/local)"
         )
-    keep = args.keep_whitespace or args.kind == "password"
-    if args.stdin:
+    secret_type = _SECRET_TYPE_ARGS[args.secret_type]
+    keep = (args.keep_whitespace or args.kind == "password") and not secret_type
+    if args.qr:
+        try:
+            value = totp_mod.decode_qr(args.qr)
+        except totp_mod.TotpError as exc:
+            return _err(str(exc))
+        if not secret_type:
+            secret_type = totp_mod.SECRET_TYPE_TOTP
+        elif secret_type != totp_mod.SECRET_TYPE_TOTP:
+            return _err("--qr only imports a totp seed")
+    elif args.stdin:
         value = _clean_value(sys.stdin.readline(), keep)
     elif args.value_file:
         try:
@@ -1135,6 +1148,10 @@ def cmd_drop(args) -> int:
     if not value:
         return _err("empty secret value; nothing dropped")
     try:
+        value, typed_meta = prompt_mod.prepare_typed_value(secret_type, value)
+    except totp_mod.TotpError as exc:
+        return _err(f"{exc}; nothing dropped")
+    try:
         extra_tags = _parse_tags(args.tags) if args.tags else {}
         injected_as = _parse_tags(args.injected_as) if args.injected_as else {}
         related = _parse_related(args.related) if args.related else []
@@ -1150,7 +1167,7 @@ def cmd_drop(args) -> int:
             # Pin on write (#246): the value goes to the local vault, so the
             # reference says so -- never "" left to follow a remote binding.
             backend=written_backend_kind(backend, args.backend or ""), repo=args.repo,
-            source_files=source_files, reject_collisions=True,
+            source_files=source_files, reject_collisions=True, secret_type=secret_type,
         )
     except AmbiguousMatch as exc:
         _err(_collision_message(args.name, exc))
@@ -1159,11 +1176,55 @@ def cmd_drop(args) -> int:
     _warn_unpushed(ref)
     del value  # scrub our local reference promptly
     broker.audit.append("drop", ref.sm_name, "stored")
+    if secret_type == totp_mod.SECRET_TYPE_TOTP:
+        who = "/".join(p for p in (typed_meta.get("issuer"), typed_meta.get("account")) if p)
+        print(
+            f"dropped totp {ref.name} -> {ref.sm_name} ({who or 'no label'}, "
+            f"{typed_meta['digits']} digits/{typed_meta['period']}s/{typed_meta['algorithm']}; "
+            f"state=dropped; run `portunus state {ref.name} enabled`, then `portunus otp {ref.name}`)"
+        )
+        return 0
+    if secret_type == totp_mod.SECRET_TYPE_RECOVERY_CODE:
+        broker.gate(ref.name, on=True)
+        print(
+            f"dropped recovery code {ref.name} -> {ref.sm_name} (gated, one-time: it moves to "
+            f"state=used after it resolves once; run `portunus state {ref.name} enabled`)"
+        )
+        return 0
     print(
         f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} "
         f"(backend={ref.backend or 'default'}, state=dropped; "
         f"run `portunus state {ref.name} enabled` to allow injection)"
     )
+    return 0
+
+
+# --type on drop/prompt -> Reference.secret_type
+_SECRET_TYPE_ARGS = {
+    "secret": "",
+    "totp": totp_mod.SECRET_TYPE_TOTP,
+    "recovery-code": totp_mod.SECRET_TYPE_RECOVERY_CODE,
+}
+
+
+def cmd_otp(args) -> int:
+    """Print the CURRENT code of a totp reference and its seconds left --
+    never the seed or the otpauth URI. Gated and audited like any resolve."""
+    _, _, _, resolver = _build()
+    try:
+        result = resolver.otp(args.name)
+    except UnknownReference:
+        return _err(f"unknown reference: {args.name}")
+    except (NotTotp, totp_mod.TotpError) as exc:
+        return _err(str(exc))
+    except (NotInjectable, ApprovalRequired, NotAuthorized) as exc:
+        return _err(str(exc))
+    except BackendError as exc:
+        return _err(str(exc))
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"{result['code']}  ({result['seconds_left']}s left)")
     return 0
 
 
@@ -1210,7 +1271,7 @@ def cmd_prompt(args) -> int:
         org=args.org, provider=args.provider, project=args.project, env=args.env,
         tags=tags, description=args.description, purpose=args.purpose,
         group=args.group, repo=args.repo, enable=args.enable, gate=args.gate,
-        confirm=args.confirm,
+        confirm=args.confirm, secret_type=_SECRET_TYPE_ARGS[args.secret_type],
     )
     result = prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=args.surface,
@@ -1691,6 +1752,8 @@ def cmd_status(args) -> int:
     print(f"approval-gate: {'yes' if ref.approval == 'required' else 'no'}")
     if ref.card:
         print(f"card:          {card_mod.display(ref.card)}")
+    if ref.secret_type:
+        print(f"secret-type:   {ref.secret_type}")
     return 0
 
 
@@ -4211,7 +4274,7 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument(
         "--backend", default="",
         choices=("", "default", "local", "gcp", "aws", "vault", "infisical", "doppler",
-                 "onepassword", "azure", "oauth", "chrome", "bitwarden"),
+                 "onepassword", "azure", "oauth", "chrome", "bitwarden", "keychain"),
         help="pin which backend this reference resolves from ('default' clears the pin so it "
              "follows the project's VaultBinding). Metadata only: it does not move the value",
     )
@@ -4357,7 +4420,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
-        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden"),
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden", "keychain"),
         default="",
         help="which backend this reference resolves from (default: local -- where drop "
              "writes the value; a remote backend here means you will push it there "
@@ -4368,7 +4431,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="keep leading/trailing whitespace in the value (only the final newline is "
              "removed); implied by --kind password",
     )
+    dr.add_argument(
+        "--type", dest="secret_type", choices=tuple(_SECRET_TYPE_ARGS), default="secret",
+        help="totp: the value is an otpauth:// URI or base32 setup key -- only `portunus otp` "
+             "ever reads it back, as the current code; recovery-code: a one-time 2FA recovery "
+             "code, gated, burned (state=used) after one resolve",
+    )
     src = dr.add_mutually_exclusive_group(required=False)
+    src.add_argument("--qr", metavar="IMAGE",
+                     help="import a totp seed from an authenticator-setup QR image (needs zbarimg); "
+                          "implies --type totp")
     src.add_argument("--stdin", action="store_true", help="read the value from stdin")
     src.add_argument(
         "--value-file",
@@ -4416,7 +4488,19 @@ def build_parser() -> argparse.ArgumentParser:
                          "FIELD=PATH once per field (number, expiry, cvc, name, postal)")
     pr.add_argument("--timeout", type=int, default=prompt_mod.DEFAULT_TIMEOUT,
                     help="seconds to wait for the human (default %(default)s)")
+    pr.add_argument("--type", dest="secret_type", choices=tuple(_SECRET_TYPE_ARGS), default="secret",
+                    help="totp: the human enters an otpauth:// URI or base32 setup key; "
+                         "recovery-code: a one-time 2FA recovery code (always gated)")
     pr.set_defaults(func=cmd_prompt)
+
+    otp = sub.add_parser(
+        "otp",
+        help="print the current code of a totp reference (never the seed); gated + audited",
+    )
+    otp.add_argument("name", help="totp reference name")
+    otp.add_argument("--json", action="store_true",
+                     help='print {"code", "seconds_left", "period", "digits"}')
+    otp.set_defaults(func=cmd_otp)
 
     tty = sub.add_parser("_tty-entry")
     tty.add_argument("fifo")
@@ -4547,7 +4631,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     st = sub.add_parser("state", help="set lifecycle state (enabled/locked/dropped/revoked)")
     st.add_argument("name")
-    st.add_argument("state", choices=("enabled", "locked", "dropped", "revoked"))
+    st.add_argument("state", choices=("enabled", "locked", "dropped", "revoked", "used"))
     st.set_defaults(func=cmd_state)
 
     stat = sub.add_parser("status", help="show a reference's state + gate")

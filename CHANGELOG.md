@@ -4,6 +4,16 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **OS keystore backend: `backend=keychain` (PANT-1403, GH #254).** Resolves a reference straight
+  from the operating system's own store instead of a copy in the local vault: macOS Keychain
+  (`security find-generic-password`), Linux Secret Service, which covers GNOME Keyring and KWallet
+  (`secret-tool lookup`), and Windows Credential Manager (`CredReadW`). Every platform uses the same
+  address, `keychain:<service>[:<account>]`. It is read-only. A locked or unreachable keystore fails
+  closed with a clear error and never falls back to another backend. `portunus health` reports
+  whether the platform's access tool is available.
+
 ### Fixed
 
 - **`retag` no longer reports a collision for a description-only change (GH #251).** It only
@@ -67,6 +77,17 @@ All notable changes to Portunus are documented in this file.
   with its Secrets preview feature on (`T3CODE_FEATURE_SECRETS=1`); release builds up to 0.1.9
   are built without it, and card-to-vault works on every build.
 
+- **TOTP seeds held by Portunus (PANT-1404, GH #253).** A new `totp` secret type stores an
+  `otpauth://totp` URI. `portunus otp <ref>` and the MCP tool `portunus_otp` return only the current
+  code and its seconds left, never the seed or the URI. Every resolve sink refuses a totp reference.
+  Seeds come in through `portunus prompt --type totp` (MCP `portunus_prompt(secret_type="totp")`)
+  or `portunus drop --qr IMAGE` (via `zbarimg`), so they never pass through chat. `otp` is gated
+  like any resolve (per use: `approve --ttl 1`, per session: `approve --ttl 2h`), and each code
+  writes an `otp … issued` audit line. `recovery_code` references are gated by default and move to
+  the new `used` state after the one resolve that hands them out. `leak-scan` searches for a totp
+  reference's base32 seed. RFC 6238 SHA1/SHA256/SHA512 vectors are tested. `secret_type` is only
+  written to `registry.json` when set; a registry that holds a totp or recovery-code reference
+  can't be read by older Portunus versions.
 
 - **Keyless Claude access through Anthropic Workload Identity Federation (PANT-1406, GH #248).**
   `portunus identity-token mint --audience A --out FILE [--watch]` mints a Google identity token

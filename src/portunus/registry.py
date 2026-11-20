@@ -18,11 +18,13 @@ from typing import Dict, Iterator, List, Optional
 from .atomicio import atomic_write
 from .filelock import LockTimeout, flock_path
 from .paths import home
+from .totp import SECRET_TYPES as _SECRET_TYPES
 
 # Lifecycle states, mirroring bin/secrets. "enabled"/"locked" are injectable;
 # "dropped"/"revoked"/"requested" fail closed. "requested" is an agent-initiated
-# placeholder (no value stored yet) -- see Registry.request().
-VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested")
+# placeholder (no value stored yet) -- see Registry.request(). "used" is a
+# one-time recovery code that has already been handed out (PANT-1404).
+VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested", "used")
 
 # Tag keys resolved against Reference's own fields; anything else is looked
 # up in the open `tags` dict. Keep in sync with Reference's structured fields.
@@ -49,6 +51,17 @@ class AmbiguousMatch(KeyError):
     def __init__(self, candidates: List[str]):
         self.candidates = candidates
         super().__init__(f"ambiguous match: {candidates!r}")
+
+
+def _stored_dict(ref: "Reference") -> dict:
+    """The on-disk form of a Reference. `secret_type` (PANT-1404) is only
+    written when set: an older Portunus loads entries with Reference(**v)
+    and would fail on an unknown key, so a registry with no typed secrets
+    stays readable by it."""
+    data = ref.to_dict()
+    if not data.get("secret_type"):
+        data.pop("secret_type", None)
+    return data
 
 
 class RegistryLocked(RuntimeError):
@@ -90,6 +103,9 @@ class Reference:
     card: dict = field(default_factory=dict)  # kind=card only: {"brand", "last4"} --
                             # the ONLY card data kept outside the vault, so list/status/
                             # MCP/UI can show "visa ••••4242" (portunus/card.py, GH #251)
+    secret_type: str = ""  # "" (opaque secret) | "totp" | "recovery_code" -- see totp.py.
+                            # A totp reference never resolves through {{secret:NAME}};
+                            # only `portunus otp` / portunus_otp hand out its current code.
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -133,7 +149,7 @@ class Registry:
         self._data = {k: Reference(**v) for k, v in raw.items()}
 
     def _flush(self) -> None:
-        atomic_write(self.path, json.dumps({k: v.to_dict() for k, v in self._data.items()}, indent=2))
+        atomic_write(self.path, json.dumps({k: _stored_dict(v) for k, v in self._data.items()}, indent=2))
 
     @contextmanager
     def _locked(self):
@@ -182,6 +198,7 @@ class Registry:
         repo: str = "",
         source_files: Optional[list] = None,
         reject_collisions: bool = False,
+        secret_type: str = "",
     ) -> Reference:
         """Register (or overwrite) a reference. Value is never accepted here.
 
@@ -193,6 +210,8 @@ class Registry:
         Raised before anything is written, so a drop stores no value."""
         if state not in VALID_STATES:
             raise ValueError(f"invalid state: {state!r} (want one of {VALID_STATES})")
+        if secret_type not in _SECRET_TYPES:
+            raise ValueError(f"invalid secret_type: {secret_type!r} (want one of {_SECRET_TYPES})")
         sm_path = f"projects/{project}/secrets/{sm_name}" if project else ""
         with self._locked():
             if reject_collisions:
@@ -210,6 +229,7 @@ class Registry:
                 injected_as=dict(injected_as or {}),
                 group=group, related=list(related or []), backend=backend,
                 repo=repo, source_files=list(source_files or []),
+                secret_type=secret_type,
             )
             self._data[name] = ref
         return ref

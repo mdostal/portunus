@@ -56,6 +56,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from . import card as card_mod
+from . import totp as totp_mod
 from .localvault import written_backend_kind
 from urllib.parse import unquote
 
@@ -115,9 +116,14 @@ class PromptRequest:
     enable: bool = False
     gate: bool = False
     confirm: bool = False
+    secret_type: str = ""  # "" | "totp" | "recovery_code" (PANT-1404)
 
     @property
     def title(self) -> str:
+        if self.secret_type == totp_mod.SECRET_TYPE_TOTP:
+            return "Portunus: enter a 2FA (TOTP) setup key"
+        if self.secret_type == totp_mod.SECRET_TYPE_RECOVERY_CODE:
+            return "Portunus: enter a 2FA recovery code"
         return "Portunus: enter a secret"
 
     @property
@@ -140,6 +146,9 @@ class PromptRequest:
         if self.description:
             lines.append(self.description)
         lines.extend(self.context_lines)
+        if self.secret_type == totp_mod.SECRET_TYPE_TOTP:
+            lines.append("Paste the otpauth:// URI or the base32 setup key. Agents will only "
+                         "ever get the current 6-digit code, never this key.")
         lines.append("The agent will only learn whether it was stored, never the value.")
         return "\n".join(lines)
 
@@ -519,6 +528,8 @@ def _request_arguments(req: PromptRequest) -> dict:
             args[key] = getattr(req, key)
     if req.kind != "password":
         args["kind"] = req.kind
+    if req.secret_type:
+        args["secret_type"] = req.secret_type
     if req.tags:
         args["tags"] = dict(req.tags)
     if req.enable:
@@ -537,6 +548,8 @@ def _request_cli(req: PromptRequest) -> List[str]:
             argv += [f"--{key}", getattr(req, key)]
     if req.kind != "password":
         argv += ["--kind", req.kind]
+    if req.secret_type:
+        argv += ["--type", req.secret_type.replace("_", "-")]
     if req.tags:
         argv += ["--tags", ",".join(f"{k}={v}" for k, v in req.tags.items())]
     if req.enable:
@@ -684,6 +697,10 @@ def complete_from_file(req: PromptRequest, registry, broker, backend, value_file
                              f"check `portunus status {req.name}`"}
     finally:
         del value
+    if result.get("error"):
+        # Rejected before anything was stored (e.g. not a valid TOTP key):
+        # same rule as any failure, the file stays for a retry.
+        return result
 
     try:
         os.unlink(value_file)
@@ -705,6 +722,11 @@ def _store_value(req: PromptRequest, registry, broker, backend, value: str, used
     Re-prompting an existing gated reference keeps its gate: a new value
     is not a reason to drop the approval requirement (GH #251). Only
     `portunus gate --off` removes a gate."""
+    try:
+        value, extra = prepare_typed_value(req.secret_type, value)
+    except totp_mod.TotpError as exc:
+        broker.audit.append("prompt", req.sm_name, "rejected:invalid-totp")
+        return {"error": f"{exc}; nothing stored"}
     prior = registry.get(req.name)
     keep_gate = prior is not None and prior.approval == "required"
     ref = registry.add(
@@ -713,21 +735,25 @@ def _store_value(req: PromptRequest, registry, broker, backend, value: str, used
         org=req.org, provider=req.provider, project=req.project, env=req.env,
         tags=req.tags, description=req.description, purpose=req.purpose,
         group=req.group, repo=req.repo,
-        backend=written_backend_kind(backend),
+        backend=written_backend_kind(backend), secret_type=req.secret_type,
     )
     backend.store(ref.sm_name, value)
     del value
     if progress is not None:
         progress.append("stored")
     broker.audit.append("drop", ref.sm_name, f"stored:prompt:{used}")
-    if req.gate and not keep_gate:
+    if (req.gate or req.secret_type == totp_mod.SECRET_TYPE_RECOVERY_CODE) and not keep_gate:
         broker.gate(ref.name, on=True)
     if req.enable:
         ref = registry.set_state(ref.name, "enabled")
     ref = registry.require(ref.name)
-    return {"name": ref.name, "state": ref.state, "stored": True,
-            "gated": ref.approval == "required", "surface": used,
-            "backend": ref.backend}
+    out = {"name": ref.name, "state": ref.state, "stored": True,
+           "gated": ref.approval == "required", "surface": used,
+           "backend": ref.backend}
+    if req.secret_type:
+        out["secret_type"] = req.secret_type
+        out.update(extra)
+    return out
 
 
 # --- card kind (GH #251) ----------------------------------------------------
@@ -1050,6 +1076,15 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
     if clash:
         return {"error": f"{req.name!r} would have exactly the same tags as "
                          f"{', '.join(clash)} -- add a distinguishing tag; nothing was asked"}
+    if req.secret_type not in totp_mod.SECRET_TYPES:
+        return {"error": f"unknown secret_type {req.secret_type!r} "
+                         f"(want one of {', '.join(t for t in totp_mod.SECRET_TYPES if t)})"}
+    if req.secret_type and req.is_card:
+        return {"error": "--kind card cannot be combined with --type "
+                         f"{req.secret_type.replace('_', '-')}; a card is its own kind"}
+    if surface == "ui" and req.secret_type:
+        return {"error": f"the ui surface cannot store a {req.secret_type} secret yet -- "
+                         "use a desktop dialog or terminal surface"}
     if req.is_card:
         return _run_card_prompt(req, registry, broker, backend, surface, value_file,
                                 value_files, cli, env, kwargs)
@@ -1093,3 +1128,16 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
     if not value:
         return {"error": "empty secret value; nothing stored"}
     return _store_value(req, registry, broker, backend, value, used)
+
+
+def prepare_typed_value(secret_type: str, value: str):
+    """Validate/canonicalize a value for its secret_type before it is stored.
+    Returns (value_to_store, non_secret_metadata). A totp value becomes the
+    canonical otpauth URI; the metadata is issuer/account/algorithm/digits/
+    period only -- never the seed. Raises totp.TotpError (seed-free message)."""
+    if secret_type == totp_mod.SECRET_TYPE_TOTP:
+        uri = totp_mod.normalize(value)
+        return uri, totp_mod.describe(uri)
+    if secret_type == totp_mod.SECRET_TYPE_RECOVERY_CODE:
+        return value.strip(), {}
+    return value, {}
