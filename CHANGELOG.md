@@ -6,6 +6,15 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **`portunus browser fill`: type a secret into a browser tab field (PANT-1400, GH #258).** Over
+  the Chrome DevTools Protocol (stdlib client, loopback endpoints only) Portunus types a value into
+  a field of an open tab and returns only "typed N characters" plus the origin. Fields of a JSON
+  secret are addressed by key (`card-1#number`, `cvc`, `expiry`, ...), including inside
+  cross-origin iframes such as Stripe's. Each reference has an exact-origin allow-list
+  (`portunus browser allow/disallow/origins`, CLI only); the tab's origin and every frame's origin
+  must be on it, checked before the value is fetched. The approval gate applies, and the audit log
+  records the origin typed into. Also exposed as the `portunus_browser_fill` MCP tool.
+
 - **Infisical backend: `backend=infisical` is now a real adapter (PANT-1403, GH #254).** It used
   to be a stub that always failed. It is read-only and logs in with a machine identity through
   universal auth. Credentials come from `INFISICAL_TOKEN`, from

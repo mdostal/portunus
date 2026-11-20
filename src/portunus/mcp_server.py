@@ -837,6 +837,54 @@ def portunus_otp(name: str = "", tags: Optional[dict] = None) -> dict:
 
 
 @mcp.tool()
+def portunus_browser_fill(name: str, fields: List[dict], tab: str = "", cdp: str = "") -> dict:
+    """Type a secret into fields of a browser tab the human can see -- the
+    value goes from the vault to the page over the Chrome DevTools protocol
+    and never through you. Returns only what was typed where:
+    {"name", "tab_origin", "fields": [{key, selector, origin, typed, method}]}
+    where `typed` is a character count.
+
+    `name`: exact reference name; `name#key` sets the default key for a
+    structured secret (a card stores number, exp_month, exp_year, cvc, name,
+    postal; derived keys: expiry (MM/YY), exp_mm, exp_yy, exp_yyyy).
+    `fields`: [{"selector": "<CSS>", "key": "<key>", "frame": "<origin>"}].
+    Each selector must match exactly one element across the tab and all its
+    frames, cross-origin iframes (e.g. Stripe's) included; `frame` narrows
+    the search to frames on one origin. `key` omitted: the whole value (or
+    the #key of `name`). `tab`: a target id or a fragment of the tab's URL or
+    title (required when more than one tab is open). `cdp`: a loopback
+    DevTools endpoint (default $PORTUNUS_BROWSER_CDP or
+    http://127.0.0.1:9222).
+
+    Refused, before the value is fetched, unless the tab's origin AND every
+    field's frame origin are on the reference's allowed origins -- set by a
+    human with `portunus browser allow <name> <origin>`; you cannot change
+    that list. Gated like any resolve: a gated reference needs `portunus
+    approve` first. Every field typed is written to the audit chain with
+    the origin it went to."""
+    from . import browser_fill
+    try:
+        ref_name, default_key = browser_fill.split_ref(name)
+        specs = []
+        for f in fields or []:
+            if not isinstance(f, dict) or not f.get("selector"):
+                return {"error": "each field needs a selector"}
+            frame = browser_fill.normalize_origin(f["frame"]) if f.get("frame") else ""
+            specs.append(browser_fill.FieldSpec(key=str(f.get("key") or default_key),
+                                                selector=str(f["selector"]), frame=frame))
+    except ValueError as exc:
+        return {"error": str(exc)}
+    _registry, _audit, _broker, resolver = _build()
+    try:
+        return browser_fill.fill(resolver, ref_name, specs, tab=tab, cdp=cdp)
+    except UnknownReference:
+        return {"error": f"unknown reference: {ref_name}"}
+    except (browser_fill.BrowserFillError, NotInjectable, ApprovalRequired, NotAuthorized,
+            BackendError) as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
 def portunus_drop_bulk(entries: List[dict]) -> dict:
     """Create many LOCAL-VAULT secrets in one call -- the bulk counterpart
     to portunus_drop, for cases like importing ~100 candidate passwords/

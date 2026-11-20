@@ -79,7 +79,7 @@ If `portunus` is not on `PATH` in the harness's environment, use the full path (
 
 ## MCP tools
 
-All 23 tools are listed below. No tool ever returns a resolved secret value.
+All 24 tools are listed below. No tool ever returns a resolved secret value.
 
 ### Liveness
 
@@ -106,6 +106,7 @@ All 23 tools are listed below. No tool ever returns a resolved secret value.
 | `portunus_resolve_to_tempfile` | `name?: str`, `tags?: dict` | Resolve one secret to a 0600 temp file; returns `{"path": "..."}`. Address by exact `name` or by `tags` — give one, not both. Treat the path as a pointer to hand to another tool; do not read the file back into your own response. |
 | `portunus_resolve_exec` | `argv: List[str]`, `name?: str`, `tags?: dict` | Run a command with one secret substituted in; returns `{"stdout", "stderr", "returncode"}`. Write the literal marker `{{secret}}` in `argv` where the value should go, e.g. `["curl", "-H", "x-api-key: {{secret}}", "https://..."]`. A non-zero returncode is returned, not raised. |
 
+| `portunus_browser_fill` | `name: str` (`name#key` allowed), `fields: List[{selector, key?, frame?}]`, `tab?`, `cdp?` | Type a secret, or fields of a JSON secret such as a card, into an open browser tab over loopback CDP, including cross-origin iframes. Returns only `{name, tab_origin, fields: [{key, selector, origin, typed, method}]}`. Refused unless the tab's origin and every frame's origin are on the reference's allow-list (set by a human with `portunus browser allow`; no MCP tool changes it). Gated and audited like a resolve. |
 | `portunus_otp` | `name?: str`, `tags?: dict` | Current 2FA code for a `totp` reference: `{"code", "seconds_left", "period", "digits"}`. Never the seed or URI. Gated and audited like a resolve. A totp reference is refused by the two resolve tools above. |
 
 All three tools accept dual addressing: exact `name` (from a prior list/search/preview call) or `tags` dict.

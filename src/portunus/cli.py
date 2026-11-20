@@ -40,7 +40,7 @@ from .identity_token import (
     TokenRefresher,
     decode_claims as decode_identity_claims,
 )
-from . import bitwarden, chrome_discovery
+from . import bitwarden, browser_fill, chrome_discovery
 from .backend import (
     AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, KeychainBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
@@ -861,6 +861,91 @@ def cmd_browser_list(args) -> int:
         return 0
     for l in logins:
         print(f"  {l.origin_url}  {l.username_value}")
+    return 0
+
+
+def _fill_specs(raw_name: str, raw_fields) -> tuple:
+    """(name, [FieldSpec]) from `name[#key]` and repeated KEY=SELECTOR.
+    A field with an empty KEY takes the key after `#` in the name, if any."""
+    name, default_key = browser_fill.split_ref(raw_name)
+    specs = []
+    for raw in raw_fields or []:
+        spec = browser_fill.parse_field_spec(raw)
+        if not spec.key:
+            spec.key = default_key
+        specs.append(spec)
+    return name, specs
+
+
+def cmd_browser_fill(args) -> int:
+    """Type a reference (or keys of a structured one) into fields of a
+    browser tab over CDP. Prints what was typed where -- character counts and
+    origins, never the value (PANT-1400)."""
+    try:
+        name, specs = _fill_specs(args.name, args.field)
+    except ValueError as exc:
+        return _err(str(exc))
+    _registry, _audit, _broker, resolver = _build()
+    try:
+        result = browser_fill.fill(resolver, name, specs, tab=args.tab, cdp=args.cdp)
+    except (browser_fill.BrowserFillError, UnknownReference, NotInjectable, ApprovalRequired,
+            NotAuthorized, BackendError) as exc:
+        return _err(str(exc))
+    if args.json:
+        print(json.dumps(result))
+        return 0
+    for f in result["fields"]:
+        label = f"{name}#{f['key']}" if f["key"] else name
+        print(f"typed {f['typed']} characters of {{{{secret:{label}}}}} into {f['selector']} "
+              f"on {f['origin']} (tab {result['tab_origin']}, via {f['method']})")
+    return 0
+
+
+def cmd_browser_allow(args) -> int:
+    """Add origins a reference may be typed into by `browser fill`. A human
+    control, like `approve`: deliberately not exposed over MCP."""
+    registry = Registry()
+    ref = registry.get(args.name)
+    if ref is None:
+        return _err(f"unknown reference: {args.name}")
+    try:
+        added = [browser_fill.normalize_origin(o) for o in args.origins]
+    except ValueError as exc:
+        return _err(str(exc))
+    ref = registry.set_allowed_origins(args.name, list(ref.allowed_origins) + added)
+    AuditChain().append("browser_allow", ref.sm_name, f"allowed:{','.join(added)}")
+    print(f"{args.name} may be typed into: {', '.join(ref.allowed_origins)}")
+    return 0
+
+
+def cmd_browser_disallow(args) -> int:
+    registry = Registry()
+    ref = registry.get(args.name)
+    if ref is None:
+        return _err(f"unknown reference: {args.name}")
+    if args.all:
+        drop = set(ref.allowed_origins)
+    elif not args.origins:
+        return _err("name at least one ORIGIN, or pass --all")
+    else:
+        try:
+            drop = {browser_fill.normalize_origin(o) for o in args.origins}
+        except ValueError as exc:
+            return _err(str(exc))
+    ref = registry.set_allowed_origins(args.name, [o for o in ref.allowed_origins if o not in drop])
+    AuditChain().append("browser_allow", ref.sm_name, f"removed:{','.join(sorted(drop)) or '-'}")
+    print(f"{args.name} may be typed into: {', '.join(ref.allowed_origins) or '(nowhere)'}")
+    return 0
+
+
+def cmd_browser_origins(args) -> int:
+    ref = Registry().get(args.name)
+    if ref is None:
+        return _err(f"unknown reference: {args.name}")
+    if args.json:
+        print(json.dumps({"name": ref.name, "allowed_origins": list(ref.allowed_origins)}))
+    else:
+        print(f"{ref.name} may be typed into: {', '.join(ref.allowed_origins) or '(nowhere)'}")
     return 0
 
 
@@ -4193,7 +4278,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     br = sub.add_parser(
         "browser",
-        help="Chrome saved-login discovery (metadata only -- see backend=chrome for resolving a value)",
+        help="Chrome saved-login discovery (metadata only), and typing a secret into a tab (fill)",
     )
     br_sub = br.add_subparsers(dest="action", required=True)
 
@@ -4209,6 +4294,38 @@ def build_parser() -> argparse.ArgumentParser:
     br_list.add_argument("--profile", required=True)
     br_list.add_argument("--json", action="store_true")
     br_list.set_defaults(func=cmd_browser_list)
+
+    br_fill = br_sub.add_parser(
+        "fill",
+        help="type a secret into fields of a browser tab over CDP -- the value never passes through you",
+    )
+    br_fill.add_argument("name", help="reference name, optionally name#key for a structured secret")
+    br_fill.add_argument("--field", action="append", required=True, metavar="KEY=SELECTOR",
+                         help="repeatable. KEY of a structured secret (empty: the whole value, or the "
+                              "#key of NAME) = CSS selector matching exactly one element across the tab "
+                              "and its frames. Append @https://origin to only look in that frame")
+    br_fill.add_argument("--tab", default="", help="target id, or a fragment of the tab's URL or title")
+    br_fill.add_argument("--cdp", default="",
+                         help="DevTools endpoint on loopback (default $PORTUNUS_BROWSER_CDP, "
+                              "else http://127.0.0.1:9222)")
+    br_fill.add_argument("--json", action="store_true")
+    br_fill.set_defaults(func=cmd_browser_fill)
+
+    br_allow = br_sub.add_parser("allow", help="let `browser fill` type a reference into these origins")
+    br_allow.add_argument("name")
+    br_allow.add_argument("origins", nargs="+", metavar="ORIGIN", help="e.g. https://checkout.stripe.com")
+    br_allow.set_defaults(func=cmd_browser_allow)
+
+    br_disallow = br_sub.add_parser("disallow", help="remove origins from a reference's fill allow-list")
+    br_disallow.add_argument("name")
+    br_disallow.add_argument("origins", nargs="*", metavar="ORIGIN")
+    br_disallow.add_argument("--all", action="store_true", help="clear the whole list")
+    br_disallow.set_defaults(func=cmd_browser_disallow)
+
+    br_origins = br_sub.add_parser("origins", help="show the origins a reference may be typed into")
+    br_origins.add_argument("name")
+    br_origins.add_argument("--json", action="store_true")
+    br_origins.set_defaults(func=cmd_browser_origins)
 
     inf = sub.add_parser(
         "infisical",

@@ -64,6 +64,9 @@ That's portunus.
   wrong secret.
 - **Inject at the boundary** — env var, file (env/json/yaml), subprocess argv, or a `0600`
   tempfile. The agent gets a *reference* or a *path*, never the value.
+- **Type into a browser field** — `portunus browser fill` (or the `portunus_browser_fill` MCP
+  tool) types a password or card fields into an open tab over loopback CDP, including Stripe-style
+  cross-origin iframes, only on origins a human allow-listed. The agent gets "typed N characters".
 - **Bring your own vault** — **GCP Secret Manager** (keyless, via Workload Identity Federation),
   a **local-encrypted vault** (Fernet: AES-128-CBC + HMAC-SHA256, zero cloud setup), and
   **Chrome's own saved logins** (macOS Keychain / Linux Secret Service-KWallet, read-only — see
