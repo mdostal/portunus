@@ -88,6 +88,7 @@ def test_rotate_intent_flags_existing_reference_without_touching_value(home, cap
     ref = Registry().require("vercel-mdostal")
     assert ref.tags.get("rotation_requested") == "true"
     assert ref.state == "enabled"  # untouched -- still injectable, value unaffected
+    assert "portunus rotation run vercel-mdostal" in out  # vercel has an auto adapter
 
 
 def test_rotate_intent_no_match_fails_closed_like_fetch(home, capsys):
