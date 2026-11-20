@@ -1476,6 +1476,114 @@ register_liveness_adapter("clerk", ClerkLivenessAdapter)
 
 
 # ---------------------------------------------------------------------------
+# Stripe (PANT-1134, GH #195). The stored key's TYPE is read from its prefix
+# inside the resolver boundary -- the prefix class is the only thing that
+# leaves it -- so `liveness check` doubles as the metadata-only answer to
+# "is this a standard or a restricted key?".
+# ---------------------------------------------------------------------------
+
+# Prefix -> (key type, mode). Longest prefixes first: `sk_org_` before `sk_`.
+_STRIPE_KEY_PREFIXES: Tuple[Tuple[str, str, str], ...] = (
+    ("sk_org_live_", "organization secret key", "live"),
+    ("sk_org_test_", "organization secret key", "test"),
+    ("sk_live_", "secret key", "live"),
+    ("sk_test_", "secret key", "test"),
+    ("rk_live_", "restricted key", "live"),
+    ("rk_test_", "restricted key", "test"),
+    ("pk_live_", "publishable key", "live"),
+    ("pk_test_", "publishable key", "test"),
+    ("whsec_", "webhook signing secret", ""),
+)
+
+
+def stripe_key_type(value: str) -> Tuple[str, str]:
+    """(key type, mode) of a Stripe value from its prefix alone -- never
+    anything after it. ("", "") when the prefix isn't a known Stripe one.
+    Only call inside a resolver boundary."""
+    value = value.strip()
+    for prefix, kind, mode in _STRIPE_KEY_PREFIXES:
+        if value.startswith(prefix):
+            return kind, mode
+    return "", ""
+
+
+def describe_stripe_key_type(kind: str, mode: str) -> str:
+    if not kind:
+        return "unrecognised prefix (not sk_/rk_/pk_/whsec_)"
+    return f"{mode} {kind}" if mode else kind
+
+
+class StripeLivenessAdapter(HTTPLivenessAdapter):
+    """Stripe: `GET https://api.stripe.com/v1/balance` with a secret or
+    restricted key as a bearer token -- a read of the account balance, no
+    side effects. Stripe answers an invalid, expired or rolled-and-expired
+    key with 401, so 401 is dead.
+
+    A 403 means Stripe authenticated the key but it lacks the permission:
+    for a restricted key (`rk_`) without Balance read that is a working
+    key, so it reads live with that reason. For any other key a 403 is
+    unexpected and reads unknown.
+
+    Every result's detail names the key type taken from the prefix
+    (`live restricted key`, `test secret key`, ...); nothing after the
+    prefix leaves the boundary. Values that authenticate nothing on their
+    own -- a publishable key (`pk_`, which Stripe rejects on server
+    endpoints), a webhook signing secret (`whsec_`), an unrecognised prefix
+    -- read unknown without a request, never a false dead. Organization
+    keys (`sk_org_`) need a `Stripe-Context` header naming an account, so
+    they are not probed either. A reference whose name says
+    `publishable-key` is skipped by sweeps."""
+
+    URL = "https://api.stripe.com/v1/balance"
+    _PROBED_TYPES = ("secret key", "restricted key")
+    _SKIP_NAME_KINDS = ("publishable-key", "webhook-secret")
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__(
+            "stripe",
+            HTTPProbe(url=self.URL, dead_statuses=(401,)),
+            transport=transport, timeout=timeout,
+        )
+
+    def can_probe(self, ref) -> bool:
+        return credential_kind(ref, self._SKIP_NAME_KINDS) == ""
+
+    def check(self, ref, resolver) -> LivenessResult:
+        def boundary(value: str) -> Tuple[str, str, Optional[int]]:
+            kind, mode = stripe_key_type(value)
+            if kind not in self._PROBED_TYPES:
+                return kind, mode, None
+            code = self._transport(
+                self.probe.method, self.probe.url, self.probe.headers_for(value.strip()),
+                self._timeout,
+            )
+            return kind, mode, code
+
+        kind, mode, code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        key = describe_stripe_key_type(kind, mode)
+        if code is None:
+            reason = {
+                "publishable key": "a publishable key is public and Stripe rejects it on "
+                                   "server endpoints",
+                "webhook signing secret": "a webhook signing secret is never sent to Stripe's "
+                                          "API; it only verifies incoming webhook signatures",
+                "organization secret key": "an organization key needs a Stripe-Context account "
+                                           "header to make any account-level call",
+            }.get(kind, "not a Stripe API key")
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"{key}: not probed -- {reason}")
+        status = self.probe.classify(code)
+        note = ""
+        if code == 403 and kind == "restricted key":
+            status, note = LIVE, " (authenticated; key has no Balance read permission)"
+        return LivenessResult(ref.name, self.provider, status, http_status=code,
+                              detail=f"{key}: {self.probe.method} {self.probe.url} -> {code}{note}")
+
+
+register_liveness_adapter("stripe", StripeLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
 # Multica (PANT-1128, GH #201). A workspace personal access token (`mul_...`)
 # authenticates the Multica REST API; the cheapest authenticated read is
 # `GET /api/me`. Self-hosted instances answer on their own API host.

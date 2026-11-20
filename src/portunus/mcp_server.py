@@ -222,11 +222,10 @@ def portunus_rotation_status(provider: str = "") -> dict:
     store), `resend` (API key), `grafana-cloud` (access policy token),
     `youtrack` (JetBrains Hub permanent token), `vercel` (access token),
     `neon` (Postgres role-password reset; needs --retire-old), `upstash`
-    (Redis REST token via password reset; needs --retire-old) and `github`
+    (Redis REST token via password reset; needs --retire-old), `github`
     (OAuth App token reset; other GitHub token types are refused per
-    reference as manual/not-applicable). Stub adapters:
-    stripe. Manual (no
-    programmatic path exists): sentry."""
+    reference as manual/not-applicable) and `stripe` (API key roll via the
+    v2 IAM preview API). Manual (no programmatic path exists): sentry."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
