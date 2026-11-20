@@ -127,7 +127,9 @@ def test_drop_accepts_backend_flag(home, capsys):
     assert ref.backend == "local"
 
 
-def test_drop_backend_defaults_empty(home, capsys):
+def test_drop_backend_pins_local_by_default(home, capsys):
+    """#246: drop writes the local vault, so the reference is pinned there --
+    never left "" to follow a (possibly remote) project binding."""
     value_file = home / "value.txt"
     value_file.write_text(SECRET + "\n")
 
@@ -136,7 +138,7 @@ def test_drop_backend_defaults_empty(home, capsys):
 
     from portunus import Registry
     ref = Registry().require("shared-test")
-    assert ref.backend == ""
+    assert ref.backend == "local"
 
 
 def test_drop_stdin_trims_leading_and_trailing_whitespace(home, monkeypatch, capsys):

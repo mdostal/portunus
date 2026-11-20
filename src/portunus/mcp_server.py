@@ -18,7 +18,10 @@ from mcp.server.fastmcp import FastMCP
 
 from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotAuthorized, NotInjectable
-from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
+from .cli import (
+    _build, _build_tree, _collision_message, _eager_sync_down, _TREE_KEY_FNS, _wif_configured,
+    pinned_backend,
+)
 from .crawl import crawl_candidates
 from .impact import impact as impact_of
 from .health import run_health
@@ -694,8 +697,9 @@ def portunus_drop(
     separately to make it injectable. `tags`/`injected_as` are plain dicts,
     `related` is a plain list of reference names -- no CLI-style comma-
     separated string parsing. `backend` optionally overrides which backend
-    THIS reference routes to later (e.g. "gcp") once you've dropped it here
-    locally -- empty means "use the project's default binding." `repo` is
+    THIS reference routes to later (e.g. "gcp") once you've pushed it there
+    -- empty means "local", where this tool writes the value (it never
+    follows a remote project binding it was not written to). `repo` is
     the git repo that consumes this secret (distinct from `project`, which
     can be one cloud project shared by many repos); `source_files` is a
     plain list of file paths in that repo, same posture as `related`.
@@ -717,13 +721,16 @@ def portunus_drop(
         }
     if not value:
         return {"error": "empty secret value; nothing dropped"}
-    ref = registry.add(
-        name, sm_name, scope=scope, kind=kind, state="dropped",
-        provider=provider, project=project, env=env, tags=tags,
-        description=description, purpose=purpose, injected_as=injected_as,
-        group=group, related=related, backend=backend,
-        repo=repo, source_files=source_files,
-    )
+    try:
+        ref = registry.add(
+            name, sm_name, scope=scope, kind=kind, state="dropped",
+            provider=provider, project=project, env=env, tags=tags,
+            description=description, purpose=purpose, injected_as=injected_as,
+            group=group, related=related, backend=pinned_backend(backend),
+            repo=repo, source_files=source_files, reject_collisions=True,
+        )
+    except AmbiguousMatch as exc:
+        return {"error": _collision_message(name, exc)}
     local_backend.store(ref.sm_name, value)
     del value
     broker.audit.append("drop", ref.sm_name, "stored")
@@ -821,12 +828,16 @@ def portunus_drop_bulk(entries: List[dict]) -> dict:
                 env=entry.get("env", ""), tags=entry.get("tags"),
                 description=entry.get("description", ""), purpose=entry.get("purpose", ""),
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
-                related=entry.get("related"), backend=entry.get("backend", ""),
+                related=entry.get("related"),
+                backend=pinned_backend(entry.get("backend", "")),
+                reject_collisions=True,
             )
             local_backend.store(ref.sm_name, entry_value)
             del entry_value
             broker.audit.append("drop", ref.sm_name, "stored")
             created.append(ref.name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": entry_name, "error": _collision_message(entry_name, exc)})
         except (ValueError, KeyError) as exc:
             failed.append({"name": entry_name, "error": str(exc)})
     return {"created": created, "failed": failed}

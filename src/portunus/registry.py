@@ -178,12 +178,27 @@ class Registry:
         backend: str = "",
         repo: str = "",
         source_files: Optional[list] = None,
+        reject_collisions: bool = False,
     ) -> Reference:
-        """Register (or overwrite) a reference. Value is never accepted here."""
+        """Register (or overwrite) a reference. Value is never accepted here.
+
+        reject_collisions=True (reg add / drop / drop-bulk / prompt) raises
+        AmbiguousMatch when ANOTHER reference already carries the exact same
+        org/provider/project/env/repo/tags set -- two such references can
+        never be told apart by `inject --tags` nor retagged independently,
+        so the error belongs here, not in a later unrelated retag (#246).
+        Raised before anything is written, so a drop stores no value."""
         if state not in VALID_STATES:
             raise ValueError(f"invalid state: {state!r} (want one of {VALID_STATES})")
         sm_path = f"projects/{project}/secrets/{sm_name}" if project else ""
         with self._locked():
+            if reject_collisions:
+                clash = self.identical_tags(
+                    name, org=org, provider=provider, project=project, env=env,
+                    repo=repo, tags=tags or {},
+                )
+                if clash:
+                    raise AmbiguousMatch(sorted(clash + [name]))
             ref = Reference(
                 name=name, sm_name=sm_name, scope=scope, kind=kind,
                 state=state, approval=approval, sm_path=sm_path, org=org,
@@ -195,6 +210,32 @@ class Registry:
             )
             self._data[name] = ref
         return ref
+
+    @staticmethod
+    def _full_tag_set(org: str, provider: str, project: str, env: str, repo: str,
+                      tags: dict) -> Dict[str, str]:
+        full: Dict[str, str] = {}
+        for field_name, val in (("org", org), ("provider", provider), ("project", project),
+                                ("env", env), ("repo", repo)):
+            if val:
+                full[field_name] = val
+        full.update(tags or {})
+        return full
+
+    def identical_tags(self, name: str, *, org: str = "", provider: str = "",
+                       project: str = "", env: str = "", repo: str = "",
+                       tags: Optional[dict] = None) -> List[str]:
+        """Names of OTHER references whose full tag set equals this one's.
+        An empty tag set never collides (untagged references are common)."""
+        mine = self._full_tag_set(org, provider, project, env, repo, tags or {})
+        if not mine:
+            return []
+        return sorted(
+            other.name for other in self._data.values()
+            if other.name != name and self._full_tag_set(
+                other.org, other.provider, other.project, other.env, other.repo, other.tags,
+            ) == mine
+        )
 
     def remove(self, name: str) -> bool:
         with self._locked():

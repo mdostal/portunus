@@ -223,11 +223,15 @@ def cmd_reg(args) -> int:
             related = _parse_related(args.related) if args.related else None
         except ValueError as exc:
             return _err(str(exc))
-        ref = registry.add(args.name, args.sm_name, scope=args.scope,
-                           kind=args.kind, org=args.org or "", project=args.project or "",
-                           description=args.description or "", purpose=args.purpose or "",
-                           injected_as=injected_as, group=args.group or "", related=related,
-                           repo=args.repo or "")
+        try:
+            ref = registry.add(args.name, args.sm_name, scope=args.scope,
+                               kind=args.kind, org=args.org or "", project=args.project or "",
+                               description=args.description or "", purpose=args.purpose or "",
+                               injected_as=injected_as, group=args.group or "", related=related,
+                               repo=args.repo or "", reject_collisions=True)
+        except AmbiguousMatch as exc:
+            _err(_collision_message(args.name, exc))
+            return EXIT_AMBIGUOUS
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
         return 0
     if args.action == "rm":
@@ -980,6 +984,29 @@ def cmd_session_remove(args) -> int:
     return 0
 
 
+def pinned_backend(requested: str) -> str:
+    """The backend a write path records on the reference: what the caller
+    asked for, else "local" -- where drop/prompt actually put the value
+    (#246). Never "" (which would follow the project's binding, possibly
+    to a remote store the value was never written to)."""
+    return requested or "local"
+
+
+def _collision_message(name: str, exc: AmbiguousMatch) -> str:
+    others = [c for c in exc.candidates if c != name]
+    return (f"{name!r} would have exactly the same tags as {', '.join(others)} -- "
+            "two references must differ in at least one tag (e.g. add --tags key=<which>) "
+            "so they can be resolved and retagged independently; nothing was stored")
+
+
+def _warn_unpushed(ref) -> None:
+    """An explicit remote backend on a drop: the value is still only local."""
+    if ref.backend in REMOTE_STORE_KINDS:
+        print(f"note: {ref.name}'s value was written to the LOCAL vault; it resolves from "
+              f"there until {ref.sm_name} exists in {ref.backend} (for gcp: `portunus "
+              f"doctor --fix-routing --push --apply`)", file=sys.stderr)
+
+
 def _clean_value(raw: str, keep_whitespace: bool) -> str:
     """Default: trim surrounding whitespace (pasted keys often carry a stray
     space or newline). With keep_whitespace (--keep-whitespace, implied by
@@ -1046,14 +1073,22 @@ def cmd_drop(args) -> int:
         source_files = _parse_related(args.source_files) if args.source_files else []
     except ValueError as exc:
         return _err(str(exc))
-    ref = registry.add(
-        args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
-        org=args.org, provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
-        description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related, backend=args.backend, repo=args.repo,
-        source_files=source_files,
-    )
+    try:
+        ref = registry.add(
+            args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
+            org=args.org, provider=args.provider, project=args.project, env=args.env,
+            tags=extra_tags, description=args.description, purpose=args.purpose,
+            injected_as=injected_as, group=args.group, related=related,
+            # Pin on write (#246): the value goes to the local vault, so the
+            # reference says so -- never "" left to follow a remote binding.
+            backend=pinned_backend(args.backend), repo=args.repo,
+            source_files=source_files, reject_collisions=True,
+        )
+    except AmbiguousMatch as exc:
+        _err(_collision_message(args.name, exc))
+        return EXIT_AMBIGUOUS
     backend.store(ref.sm_name, value)
+    _warn_unpushed(ref)
     del value  # scrub our local reference promptly
     broker.audit.append("drop", ref.sm_name, "stored")
     print(
@@ -1135,12 +1170,17 @@ def cmd_drop_bulk(args) -> int:
                 env=entry.get("env", ""), tags=entry.get("tags"),
                 description=entry.get("description", ""), purpose=entry.get("purpose", ""),
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
-                related=entry.get("related"), backend=entry.get("backend", ""),
+                related=entry.get("related"),
+                backend=pinned_backend(entry.get("backend", "")),
+                reject_collisions=True,
             )
             backend.store(ref.sm_name, value)
             del value
             broker.audit.append("drop", ref.sm_name, "stored")
+            _warn_unpushed(ref)
             created.append(ref.name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": entry_name, "error": _collision_message(entry_name, exc)})
         except (ValueError, KeyError) as exc:
             failed.append({"name": entry_name, "error": str(exc)})
 
@@ -3585,8 +3625,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--backend",
         choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden"),
         default="",
-        help="override which backend this one reference uses (default: '' -- follow the "
-             "project's VaultBinding/PORTUNUS_BACKEND as normal)",
+        help="which backend this reference resolves from (default: local -- where drop "
+             "writes the value; a remote backend here means you will push it there "
+             "yourself, until then it resolves from the local copy)",
     )
     dr.add_argument(
         "--keep-whitespace", action="store_true",
