@@ -15,7 +15,8 @@ def _isolated_portunus_home(tmp_path_factory, monkeypatch):
     # The suite may itself be run by an agent inside a T3 Code thread, where
     # `portunus prompt` picks the T3 Code card instead of a desktop dialog.
     # Tests that want that set these themselves.
-    for name in ("T3CODE_THREAD_ID", "PORTUNUS_PROMPT_SURFACE", "PORTUNUS_T3_PARENTS"):
+    for name in ("T3CODE_THREAD_ID", "PORTUNUS_PROMPT_SURFACE", "PORTUNUS_T3_PARENTS",
+                 "PORTUNUS_UI_URL", "PORTUNUS_UI_PORT"):
         monkeypatch.delenv(name, raising=False)
 
 

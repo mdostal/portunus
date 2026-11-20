@@ -968,7 +968,7 @@ portunus discover --provider gcp --project my-gcp-project --register
 
 ### `ui open`
 
-Open the vault web dashboard in a browser. Fire-and-forget — safe for an agent's own tool call. Set `PORTUNUS_UI_URL` to override the default `http://localhost:3000`.
+Open the vault web dashboard in a browser. Fire-and-forget — safe for an agent's own tool call. Set `PORTUNUS_UI_URL` to override the default `http://127.0.0.1:7781`, or `PORTUNUS_UI_PORT` to change only the port (the UI's npm scripts read the same variable).
 
 ```
 portunus ui open [--fulfill <ref_name>]

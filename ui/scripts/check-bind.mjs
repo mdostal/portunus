@@ -19,11 +19,11 @@ import { fileURLToPath } from "node:url";
 const UI_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const CASES = [
-  { name: "npm start", cmd: "npm start -- --port $PORT", env: {}, expect: "127.0.0.1" },
-  { name: "npm run dev", cmd: "npm run dev -- --port $PORT", env: {}, expect: "127.0.0.1" },
+  { name: "npm start", cmd: "npm start", env: {}, expect: "127.0.0.1" },
+  { name: "npm run dev", cmd: "npm run dev", env: {}, expect: "127.0.0.1" },
   // The README's supervised-service command, verbatim apart from the port.
   { name: "README standalone", cmd: "npm run start:standalone", env: {}, expect: "127.0.0.1" },
-  { name: "npm start + override", cmd: "npm start -- --port $PORT", env: { PORTUNUS_UI_HOST: "0.0.0.0" }, expect: "0.0.0.0" },
+  { name: "npm start + override", cmd: "npm start", env: { PORTUNUS_UI_HOST: "0.0.0.0" }, expect: "0.0.0.0" },
   { name: "README standalone + override", cmd: "npm run start:standalone", env: { PORTUNUS_UI_HOST: "0.0.0.0" }, expect: "0.0.0.0" },
 ];
 
@@ -108,7 +108,7 @@ async function runCase(c) {
   const port = await freePort();
   const child = spawn("sh", ["-c", c.cmd], {
     cwd: UI_DIR,
-    env: { ...process.env, HOSTNAME: "0.0.0.0", PORTUNUS_UI_HOST: "", ...c.env, PORT: String(port) },
+    env: { ...process.env, HOSTNAME: "0.0.0.0", PORTUNUS_UI_HOST: "", ...c.env, PORT: String(port), PORTUNUS_UI_PORT: String(port) },
     stdio: ["ignore", "ignore", "pipe"],
     detached: true,
   });

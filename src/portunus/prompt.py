@@ -622,9 +622,16 @@ def _store_value(req: PromptRequest, registry, broker, backend, value: str, used
     """Register the reference and store `value`: the one place a prompted
     value enters the vault, whichever surface it came from. Appends
     "stored" to `progress` the moment the vault has the value. Returns
-    metadata only."""
+    metadata only.
+
+    Re-prompting an existing gated reference keeps its gate: a new value
+    is not a reason to drop the approval requirement (GH #251). Only
+    `portunus gate --off` removes a gate."""
+    prior = registry.get(req.name)
+    keep_gate = prior is not None and prior.approval == "required"
     ref = registry.add(
         req.name, req.sm_name, scope=req.scope, kind=req.kind, state="dropped",
+        approval="required" if keep_gate else "",
         org=req.org, provider=req.provider, project=req.project, env=req.env,
         tags=req.tags, description=req.description, purpose=req.purpose,
         group=req.group, repo=req.repo,
@@ -635,7 +642,7 @@ def _store_value(req: PromptRequest, registry, broker, backend, value: str, used
     if progress is not None:
         progress.append("stored")
     broker.audit.append("drop", ref.sm_name, f"stored:prompt:{used}")
-    if req.gate:
+    if req.gate and not keep_gate:
         broker.gate(ref.name, on=True)
     if req.enable:
         ref = registry.set_state(ref.name, "enabled")

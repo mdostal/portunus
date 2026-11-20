@@ -358,13 +358,21 @@ class Registry:
                     full_tags[field_name] = val
             full_tags.update(new_tags_dict)
 
-            colliding = [
+            # Only a change to the tag set can create a collision. A retag
+            # that leaves org/provider/project/env/repo/tags as they are
+            # (say, only --description) is never refused for an overlap that
+            # already existed (GH #251).
+            old_tags = self._full_tag_set(ref.org, ref.provider, ref.project, ref.env,
+                                          ref.repo, ref.tags)
+            colliding = [] if full_tags == old_tags else [
                 other.name for other in self._data.values()
                 if other.name != name and full_tags
                 and all(other.matches_tag(k, v) for k, v in full_tags.items())
             ]
             if colliding:
-                raise AmbiguousMatch(sorted(colliding + [name]))
+                # Name only the OTHER references: the one being retagged
+                # is not something it collides with.
+                raise AmbiguousMatch(sorted(colliding))
 
             ref.org = new_org
             ref.provider = new_provider

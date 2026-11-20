@@ -112,6 +112,19 @@ def test_prompt_enable_and_gate(home, monkeypatch, capsys):
     assert result["gated"] is True
 
 
+
+def test_reprompt_keeps_an_existing_gate(home, monkeypatch, capsys):
+    """GH #251: re-running `portunus prompt` on a gated reference used to
+    clear its gate silently."""
+    _use_runner(monkeypatch, FakeRunner((0, SECRET + "\n"), (0, "rotated\n")))
+    assert main(["prompt", "sudo-pw", "dostal-sudo", "--enable", "--gate"]) == 0
+    capsys.readouterr()
+    assert main(["prompt", "sudo-pw", "dostal-sudo", "--enable"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["gated"] is True
+    from portunus import Registry
+    assert Registry().require("sudo-pw").approval == "required"
+
 def test_prompt_cancel(home, monkeypatch, capsys):
     _use_runner(monkeypatch, FakeRunner((1, "")))
     rc = main(["prompt", "sudo-pw", "dostal-sudo"])

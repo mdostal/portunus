@@ -3058,7 +3058,16 @@ def cmd_vault_access_verify(args) -> int:
     return 0
 
 
-_DEFAULT_UI_URL = "http://localhost:3000"
+# Not 3000: many other dev servers default to it, so `ui open` could land the
+# human in the wrong app (GH #251). 127.0.0.1, not localhost, because the UI
+# binds 127.0.0.1 and "localhost" may resolve to ::1 first. The UI's npm
+# scripts read the same PORTUNUS_UI_PORT, so the two cannot disagree.
+_DEFAULT_UI_PORT = 7781
+
+
+def _default_ui_url() -> str:
+    port = os.environ.get("PORTUNUS_UI_PORT", "").strip() or str(_DEFAULT_UI_PORT)
+    return f"http://127.0.0.1:{port}"
 
 
 def _ui_reachable(url: str, timeout: float = 1.5) -> bool:
@@ -3103,7 +3112,7 @@ def cmd_ui_open(args) -> int:
 def _open_ui(fulfill: str = "") -> dict:
     """Open the dashboard (optionally at the ?fulfill=<name> deep link).
     Returns {"url"} or {"error"}; shared by `ui open` and `prompt --surface ui`."""
-    base_url = os.environ.get("PORTUNUS_UI_URL", _DEFAULT_UI_URL)
+    base_url = os.environ.get("PORTUNUS_UI_URL") or _default_ui_url()
     url = base_url
     if fulfill:
         sep = "&" if "?" in url else "?"
@@ -4743,7 +4752,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui_open = ui_sub.add_parser(
         "open",
-        help="open the vault UI in a browser (PORTUNUS_UI_URL, default http://localhost:3000)",
+        help="open the vault UI in a browser (PORTUNUS_UI_URL, else http://127.0.0.1:$PORTUNUS_UI_PORT, default port 7781)",
     )
     ui_open.add_argument(
         "--fulfill", default="",

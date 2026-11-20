@@ -802,8 +802,8 @@ portunus ui open                              # just opens the dashboard
 portunus ui open --fulfill vercel-mdostal     # deep-links straight into that pending request's form
 ```
 
-Reads `PORTUNUS_UI_URL` (default `http://localhost:3000`, matching `npm run dev`'s own default
-below). Refuses clearly — before ever opening a browser — if `--fulfill NAME` doesn't exist or
+Reads `PORTUNUS_UI_URL` (default `http://127.0.0.1:7781`, matching `npm run dev` below; set
+`PORTUNUS_UI_PORT` to move both the UI and this default together). Refuses clearly — before ever opening a browser — if `--fulfill NAME` doesn't exist or
 isn't `state=requested` anymore, and if no UI is reachable at that URL at all (never opens a
 browser to a broken page). The same "Fulfill…" action is also reachable by hand: click any
 `requested`-state reference in the Console/Project Explorer, then "Fulfill…" in its detail
@@ -1195,7 +1195,7 @@ auto-block anything; v1 is deliberately advisory-only (docs/architecture.md §11
 ```bash
 cd ui
 npm install
-npm run dev   # http://localhost:3000
+npm run dev   # http://127.0.0.1:7781 (PORTUNUS_UI_PORT to change)
 ```
 
 **Bind address.** Every way of starting the UI (`npm run dev`, `npm start`, and the standalone

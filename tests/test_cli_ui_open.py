@@ -21,7 +21,7 @@ def test_ui_open_opens_browser_when_reachable(home, monkeypatch, capsys, _no_rea
     monkeypatch.setattr("portunus.cli._ui_reachable", lambda url: True)
     rc = main(["ui", "open"])
     assert rc == 0
-    assert _no_real_browser == ["http://localhost:3000"]
+    assert _no_real_browser == ["http://127.0.0.1:7781"]
     assert "opened" in capsys.readouterr().out
 
 
@@ -49,7 +49,7 @@ def test_ui_open_fulfill_appends_query_param_for_a_pending_request(home, monkeyp
     monkeypatch.setattr("portunus.cli._ui_reachable", lambda url: True)
     rc = main(["ui", "open", "--fulfill", "pending-one"])
     assert rc == 0
-    assert _no_real_browser == ["http://localhost:3000?fulfill=pending-one"]
+    assert _no_real_browser == ["http://127.0.0.1:7781?fulfill=pending-one"]
 
 
 def test_ui_open_fulfill_refuses_when_name_does_not_exist(home, monkeypatch, capsys, _no_real_browser):
@@ -109,3 +109,22 @@ def test_ui_reachable_false_for_a_port_nothing_is_listening_on():
     port = srv.getsockname()[1]
     srv.close()
     assert _ui_reachable(f"http://127.0.0.1:{port}") is False
+
+
+def test_ui_open_default_follows_portunus_ui_port(home, monkeypatch, capsys, _no_real_browser):
+    """GH #251: the CLI default and the UI's npm scripts read the same port."""
+    monkeypatch.delenv("PORTUNUS_UI_URL", raising=False)
+    monkeypatch.setenv("PORTUNUS_UI_PORT", "4555")
+    monkeypatch.setattr("portunus.cli._ui_reachable", lambda url: True)
+    assert main(["ui", "open"]) == 0
+    assert _no_real_browser == ["http://127.0.0.1:4555"]
+
+
+def test_ui_npm_scripts_default_to_the_cli_port():
+    import json
+    from pathlib import Path
+    from portunus.cli import _DEFAULT_UI_PORT
+    scripts = json.loads((Path(__file__).parent.parent / "ui" / "package.json").read_text())["scripts"]
+    for name in ("dev", "start", "start:standalone"):
+        assert f"PORTUNUS_UI_PORT:-" in scripts[name], name
+        assert str(_DEFAULT_UI_PORT) in scripts[name], name
