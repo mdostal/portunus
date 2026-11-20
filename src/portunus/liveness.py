@@ -47,7 +47,8 @@ APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
 probes API keys only; Clerk, PANT-1148, probes the instance secret key
 against the JWKS endpoint; PostHog, PANT-1130, picks its probe from the
 key's prefix because a project token and a personal API key authenticate
-different routes). See docs/liveness.md.
+different routes; Anthropic, PANT-1132, probes LLM API keys via the free Models
+API and only date-checks Claude Code OAuth setup-tokens). See docs/liveness.md.
 """
 from __future__ import annotations
 

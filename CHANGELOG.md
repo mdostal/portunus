@@ -6,6 +6,12 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Anthropic liveness check (`anthropic`, PANT-1132, GH #197).** An LLM API key (`sk-ant-api…`)
+  is probed with `GET https://api.anthropic.com/v1/models?limit=1`, which bills no tokens; 401 is
+  `dead`. A Claude Code OAuth setup-token (`claude-code-oauth*`, or an `sk-ant-oat` value) is never
+  sent anywhere: the check reads its `expires_at` tag and reads `unknown` within 30 days of it and
+  `dead` after it. Admin API keys and values without an `sk-ant-` prefix are not sent. Neither
+  credential gets a rotation adapter; both stay `manual`. See docs/liveness.md (Anthropic).
 - **PostHog liveness probe (`posthog`, PANT-1130, GH #199).** `portunus liveness check` now tells
   PostHog's two credentials apart by the stored value's prefix. A personal API key (`phx_`) is
   probed with `GET /api/users/@me/`. A project token (`phc_`) is probed with `POST /flags/?v=2`,
