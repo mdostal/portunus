@@ -55,6 +55,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
+from . import card as card_mod
 from .localvault import written_backend_kind
 from urllib.parse import unquote
 
@@ -131,6 +132,19 @@ class PromptRequest:
         lines.append("The agent will only learn whether it was stored, never the value.")
         return "\n".join(lines)
 
+    @property
+    def is_card(self) -> bool:
+        return self.kind == card_mod.KIND
+
+    @property
+    def card_text(self) -> str:
+        detail = f" ({self.provider})" if self.provider else ""
+        lines = [f"An agent asked you to store the payment card '{self.name}'{detail} in Portunus."]
+        if self.description:
+            lines.append(self.description)
+        lines.append("The agent will only see the card's brand and last four digits.")
+        return "\n".join(lines)
+
 
 # --- surface detection ------------------------------------------------------
 
@@ -192,15 +206,18 @@ def _applescript_quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _dialog_argv(surface: str, title: str, text: str) -> List[str]:
+def _dialog_argv(surface: str, title: str, text: str, hidden: bool = True) -> List[str]:
+    """`hidden=False` is only for card fields that are not secret on their
+    own (expiry, name, postal code), so the human can see what they type."""
     if surface == "kdialog":
-        return ["kdialog", "--title", title, "--password", text]
+        return ["kdialog", "--title", title, "--password" if hidden else "--inputbox", text]
     if surface == "zenity":
-        return ["zenity", "--entry", "--hide-text", "--title", title, "--text", text]
+        return ["zenity", "--entry", *(["--hide-text"] if hidden else []),
+                "--title", title, "--text", text]
     if surface == "osascript":
         script = (
             f"display dialog {_applescript_quote(text)} default answer \"\" "
-            f"with hidden answer with title {_applescript_quote(title)}"
+            f"{'with hidden answer ' if hidden else ''}with title {_applescript_quote(title)}"
         )
         return ["osascript", "-e", script, "-e", "text returned of result"]
     raise PromptError(f"not a dialog surface: {surface}")
@@ -238,7 +255,8 @@ def _ask_pinentry(binary: str, title: str, text: str, prompt: str, runner, timeo
     return value
 
 
-def _ask_dialog(surface: str, text: str, title: str, runner, timeout: int, which) -> str:
+def _ask_dialog(surface: str, text: str, title: str, runner, timeout: int, which,
+                hidden: bool = True) -> str:
     if surface == "pinentry":
         binary = _pinentry_binary(which)
         if not binary:
@@ -246,7 +264,7 @@ def _ask_dialog(surface: str, text: str, title: str, runner, timeout: int, which
         return _ask_pinentry(binary, title, text, "Secret:", runner, timeout)
     try:
         proc = runner(
-            _dialog_argv(surface, title, text),
+            _dialog_argv(surface, title, text, hidden),
             capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
@@ -300,13 +318,45 @@ def _shell_quote(arg: str) -> str:
     return "'" + arg.replace("'", "'\"'\"'") + "'"
 
 
-def tty_entry(fifo_path: str, banner: str) -> int:
+def _tty_card_fields() -> dict:
+    """Card mode of tty_entry: one field at a time, each checked as it is
+    entered and asked again (up to three tries) when it fails."""
+    fields: Dict[str, str] = {}
+    steps = card_mod.fields_in_order()
+    for i, fld in enumerate(steps, 1):
+        print(card_mod.field_prompt(fld, i, len(steps)))
+        for attempt in range(3):
+            raw = (getpass.getpass(f"{fld.label}: ") if fld.hidden
+                   else input(f"{fld.label}: ")).strip()
+            if not raw and not fld.required:
+                break
+            problem = card_mod.check_field(fld.key, raw, fields)
+            if problem is None:
+                fields[fld.key] = raw
+                break
+            print(f"  {problem}")
+        else:
+            return {"error": f"{fld.label}: {problem}; nothing stored"}
+    return {"fields": fields}
+
+
+def tty_entry(fifo_path: str, banner: str, card: bool = False) -> int:
     """Runs INSIDE the spawned terminal window. Masked prompt, twice (no
     visual feedback otherwise), then one JSON line down the FIFO to the
-    waiting parent. Prints nothing about the value."""
+    waiting parent. Prints nothing about the value. `card` asks for the
+    fields of a payment card instead (see portunus/card.py)."""
     print(banner)
     print()
     message: dict
+    if card:
+        try:
+            message = _tty_card_fields()
+        except (EOFError, KeyboardInterrupt):
+            message = {"cancelled": True}
+        with open(fifo_path, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(message) + "\n")
+        del message
+        return 0
     try:
         value = getpass.getpass("value: ")
         confirm = getpass.getpass("value (confirm): ")
@@ -324,9 +374,10 @@ def tty_entry(fifo_path: str, banner: str) -> int:
 
 
 def read_from_terminal(surface: str, req: PromptRequest, popen=None,
-                       timeout: int = DEFAULT_TIMEOUT) -> str:
+                       timeout: int = DEFAULT_TIMEOUT, card: bool = False):
     """The value travels child -> parent over a FIFO inside a private 0700
-    directory: never argv, never env, never a regular file on disk."""
+    directory: never argv, never env, never a regular file on disk.
+    Returns the value, or with `card` the dict of raw card fields."""
     popen = popen or subprocess.Popen
     workdir = tempfile.mkdtemp(prefix="portunus-prompt-")
     fifo = os.path.join(workdir, "answer")
@@ -334,7 +385,10 @@ def read_from_terminal(surface: str, req: PromptRequest, popen=None,
     fd = None
     try:
         os.mkfifo(fifo, 0o600)
-        inner = [sys.executable, "-m", "portunus", "_tty-entry", fifo, "--banner", req.text]
+        inner = [sys.executable, "-m", "portunus", "_tty-entry", fifo, "--banner",
+                 req.card_text if card else req.text]
+        if card:
+            inner.append("--card")
         try:
             proc = popen(_terminal_argv(surface, inner),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -370,6 +424,11 @@ def read_from_terminal(surface: str, req: PromptRequest, popen=None,
             raise PromptCancelled()
         if "error" in message:
             raise PromptError(str(message["error"]))
+        if card:
+            fields = message.get("fields")
+            if not isinstance(fields, dict):
+                raise PromptError("unreadable answer from the terminal prompt")
+            return {str(k): str(v) for k, v in fields.items()}
         return str(message.get("value", ""))
     finally:
         if fd is not None:

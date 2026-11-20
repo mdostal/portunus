@@ -87,6 +87,9 @@ class Reference:
                             # applied to the live field except via Registry.confirm_suggestion()
                             # (portunus-vault-trust-and-access). Only description/purpose/tags/
                             # group are ever suggestible -- see SUGGESTIBLE_FIELDS.
+    card: dict = field(default_factory=dict)  # kind=card only: {"brand", "last4"} --
+                            # the ONLY card data kept outside the vault, so list/status/
+                            # MCP/UI can show "visa ••••4242" (portunus/card.py, GH #251)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -254,6 +257,14 @@ class Registry:
         with self._locked():
             ref = self.require(name)
             ref.approval = "required" if required else ""
+        return ref
+
+    def set_card(self, name: str, meta: Optional[dict]) -> Reference:
+        """Record a card's display metadata (brand + last four, nothing else)."""
+        allowed = {k: str(v) for k, v in (meta or {}).items() if k in ("brand", "last4")}
+        with self._locked():
+            ref = self.require(name)
+            ref.card = allowed
         return ref
 
     def migrate_legacy_tags(self) -> int:
