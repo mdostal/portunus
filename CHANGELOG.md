@@ -6,6 +6,19 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Bitwarden vault backend + discovery (PANT-1147, #164).** Portunus can now see into a Bitwarden
+  personal/organization vault through the official `bw` CLI. `portunus bitwarden list [--search Q]`
+  and the new `portunus_bitwarden_search` MCP tool enumerate items as metadata only (id, name,
+  username, URIs, custom-field names); passwords, TOTP seeds and notes are stripped as soon as the
+  JSON is parsed. `--register` / `register=True` writes login items as `state=requested`,
+  `backend=bitwarden` references, so `portunus search` finds them, and they stay non-injectable
+  until a human enables them. A new `bitwarden` backend resolves `bitwarden:<item-id>[:<field>]`
+  (default `password`; also `username`, `totp`, `notes` or a custom field name). Portunus never
+  holds the master password: the human unlocks the vault and exports `BW_SESSION`, which `bw`
+  reads from the environment (never from argv). A locked vault fails closed with a remediation
+  message. `portunus bitwarden status` and `portunus health` report the lock state. Bitwarden
+  Secrets Manager (`bws`) is not covered yet. See docs/backends.md (Bitwarden vault).
+
 - **MongoDB Atlas database-user rotation (PANT-1131).** A new `mongodb-atlas` rotation adapter rotates
   the user inside a stored Atlas connection URI through the Atlas Admin API v2, authenticating with a
   service account (Bearer) or a legacy API key (Digest). The default `new-user` mode is non-destructive.
