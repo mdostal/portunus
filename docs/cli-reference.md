@@ -68,11 +68,14 @@ portunus drop <name> <sm_name> [--stdin | --value-file <path>] [flags]
 | `--source-files` | Comma-separated file paths in that repo |
 | `--backend` | Where the reference resolves from. Defaults to `local`, which is where `drop` writes the value, so a project binding to GCP never reroutes it (#246). Pass `gcp`/`aws`/… only when the value is pushed there too; until then it resolves from the local copy with a warning |
 | `--keep-whitespace` | Keep leading/trailing whitespace (only the final newline is removed). Implied by `--kind password` |
+| `--type secret\|totp\|recovery-code` | `totp`: the value is an `otpauth://totp` URI or a base32 setup key, read back only as the current code by `otp`. `recovery-code`: a one-time 2FA recovery code, gated, `state=used` after one resolve. See [TOTP seeds](concepts.md#totp-seeds-and-recovery-codes) |
+| `--qr IMAGE` | Import a totp seed from an authenticator-setup QR image (needs `zbarimg`). Implies `--type totp`; the URI is never printed |
 
 **Examples:**
 ```sh
 echo "sk-ant-..." | portunus drop anthropic-key dostal-anthropic --provider anthropic --project dostal --stdin
 portunus drop stripe-live dostal-stripe-live --value-file /tmp/stripe.txt --project dostal.com --env prod
+portunus drop gh-2fa dostal-gh-2fa --qr ~/Downloads/github-2fa.png --provider github
 ```
 
 ---
@@ -94,6 +97,7 @@ portunus prompt <name> <sm_name> [--provider ..] [--project ..] [--kind password
 | `--confirm` | Ask twice in dialog surfaces (terminal windows always ask twice) |
 | `--surface` | `auto` (default) picks the first available: `osascript` on macOS; `kdialog`, `zenity`, GUI `pinentry`, then a terminal window on Linux (needs `DISPLAY`/`WAYLAND_DISPLAY`). `ui` creates a `requested` placeholder and opens the dashboard's fulfill page |
 | `--timeout` | Seconds to wait for the human |
+| `--type totp\|recovery-code` | Ask for a 2FA setup key (otpauth URI or base32) or a recovery code. An invalid seed stores nothing. `recovery-code` is always gated. Not available with `--surface ui` |
 
 Plus the metadata flags from `drop` (`--org`, `--project`, `--env`, `--scope`, `--tags`, `--purpose`, `--group`, `--repo`).
 
@@ -101,6 +105,24 @@ Results: `{"name", "state", "stored": true, "gated", "surface"}` (exit 0), `{"ca
 
 ```sh
 portunus prompt sudo-pw dostal-sudo --provider linux --description "sudo on workstation" --enable --gate
+```
+
+---
+
+### `otp`
+
+Print the current code of a `totp` reference and how long it stays valid. Never the seed or the URI. Gated like a resolve (state, roles, `approve`) and audited (`otp … issued`) for every code.
+
+```
+portunus otp <name> [--json]
+```
+
+Text output is `123456  (17s left)`. `--json` gives `{"code", "seconds_left", "period", "digits"}`. A non-totp reference is an error.
+
+```sh
+portunus prompt gh-2fa dostal-gh-2fa --type totp --provider github --enable --gate
+portunus approve gh-2fa --ttl 1      # one code; use --ttl 2h for a session
+portunus otp gh-2fa
 ```
 
 ---
@@ -130,7 +152,7 @@ Set a reference's lifecycle state.
 portunus state <name> <state>
 ```
 
-Valid states: `enabled` | `locked` | `dropped` | `revoked`
+Valid states: `enabled` | `locked` | `dropped` | `revoked` | `used` (a recovery code that was handed out; set automatically)
 
 **Example:**
 ```sh

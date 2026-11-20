@@ -30,6 +30,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **TOTP seeds held by Portunus (PANT-1404, GH #253).** A new `totp` secret type stores an
+  `otpauth://totp` URI. `portunus otp <ref>` and the MCP tool `portunus_otp` return only the current
+  code and its seconds left, never the seed or the URI. Every resolve sink refuses a totp reference.
+  Seeds come in through `portunus prompt --type totp` (MCP `portunus_prompt(secret_type="totp")`)
+  or `portunus drop --qr IMAGE` (via `zbarimg`), so they never pass through chat. `otp` is gated
+  like any resolve (per use: `approve --ttl 1`, per session: `approve --ttl 2h`), and each code
+  writes an `otp … issued` audit line. `recovery_code` references are gated by default and move to
+  the new `used` state after the one resolve that hands them out. `leak-scan` searches for a totp
+  reference's base32 seed. RFC 6238 SHA1/SHA256/SHA512 vectors are tested. Registries that hold a
+  reference with `secret_type` set can't be read by older Portunus versions.
+
 - **`portunus doctor --fix-routing`**: finds stranded references and pins them local, pins them
   remote (`--prefer remote`) or pushes them into GCP (`--push`, verified). It is a dry run unless
   `--apply`. `portunus health` reports them as a degraded `routing` check, and `vault status` (run

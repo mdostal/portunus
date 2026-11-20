@@ -106,16 +106,18 @@ All 23 tools are listed below. No tool ever returns a resolved secret value.
 | `portunus_resolve_to_tempfile` | `name?: str`, `tags?: dict` | Resolve one secret to a 0600 temp file; returns `{"path": "..."}`. Address by exact `name` or by `tags` — give one, not both. Treat the path as a pointer to hand to another tool; do not read the file back into your own response. |
 | `portunus_resolve_exec` | `argv: List[str]`, `name?: str`, `tags?: dict` | Run a command with one secret substituted in; returns `{"stdout", "stderr", "returncode"}`. Write the literal marker `{{secret}}` in `argv` where the value should go, e.g. `["curl", "-H", "x-api-key: {{secret}}", "https://..."]`. A non-zero returncode is returned, not raised. |
 
-Both tools accept dual addressing: exact `name` (from a prior list/search/preview call) or `tags` dict.
+| `portunus_otp` | `name?: str`, `tags?: dict` | Current 2FA code for a `totp` reference: `{"code", "seconds_left", "period", "digits"}`. Never the seed or URI. Gated and audited like a resolve. A totp reference is refused by the two resolve tools above. |
+
+All three tools accept dual addressing: exact `name` (from a prior list/search/preview call) or `tags` dict.
 
 ### Drop / state
 
 | Tool | Key parameters | Description |
 |---|---|---|
 | `portunus_drop` | `name`, `sm_name`, `value`, `provider?`, `project?`, `env?`, `tags?`, … | Create a new local-vault secret. Lands at `state="dropped"`; call `portunus_state(name, "enabled")` to make it injectable. `value` is the one place a secret flows **in** — never echoed back. |
-| `portunus_prompt` | `name`, `sm_name`, `provider?`, `project?`, `description?`, `enable?`, `gate?`, `confirm?`, `surface?`, `timeout?`, … | Ask the **human** to type the value into a desktop dialog / terminal window; stored directly, never seen by the agent. Blocks until answered. Returns `{"name", "state", "stored": True, "gated", "surface"}`, `{"cancelled": True}` or `{"error"}`. `surface="ui"` opens the dashboard fulfill page and returns `{"pending": True}`. |
+| `portunus_prompt` | `name`, `sm_name`, `provider?`, `project?`, `description?`, `enable?`, `gate?`, `confirm?`, `surface?`, `timeout?`, … | Ask the **human** to type the value into a desktop dialog / terminal window; stored directly, never seen by the agent. Blocks until answered. Returns `{"name", "state", "stored": True, "gated", "surface"}`, `{"cancelled": True}` or `{"error"}`. `surface="ui"` opens the dashboard fulfill page and returns `{"pending": True}`. `secret_type="totp"` asks for a 2FA setup key (then use `portunus_otp`); `"recovery_code"` stores a gated one-time code. |
 | `portunus_drop_bulk` | `entries: List[dict]` | Create many secrets at once. Each entry takes the same fields as `portunus_drop`. Returns `{"created": [names], "failed": [{"name", "error"}]}`. |
-| `portunus_state` | `name: str`, `state: str` | Change a reference's lifecycle state. Valid states: `enabled`, `locked`, `dropped`, `revoked`, `requested`. |
+| `portunus_state` | `name: str`, `state: str` | Change a reference's lifecycle state. Valid states: `enabled`, `locked`, `dropped`, `revoked`, `requested`, `used`. |
 
 ### Access control & bindings
 
