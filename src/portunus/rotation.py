@@ -65,8 +65,12 @@ Real adapters:
   read-only one) and verifies it with a REST `PING`. Destructive by design
   (the old tokens are revoked at once), so it requires --retire-old.
 
-Stub adapters (`StripeRotationAdapter`) still raise unconditionally. A
-future real adapter would authenticate using its OWN
+- `StripeRotationAdapter` (stripe_rotation.py, PANT-1409) rotates a Stripe
+  secret/restricted or publishable API key through Stripe's v2 IAM API
+  (preview): rotate with a grace window, decrypt the JWE-wrapped secret
+  in-process, verify, store, and (with --retire-old) expire the old key.
+
+No stub adapters remain. A new real adapter authenticates using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
 docs/architecture.md for the worked example.
 
@@ -3061,18 +3065,6 @@ class UpstashRotationAdapter:
         return f"HTTP {status}" + (f": {err}" if err else "")
 
 
-class StripeRotationAdapter:
-    """Stripe -- STUB. No real calls."""
-
-    def capability(self) -> str:
-        return "unknown"
-
-    def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
-        raise RotationAdapterError(
-            f"Stripe rotation is not yet implemented -- request it: {_ADAPTER_REQUEST_URL}"
-        )
-
-
 class SentryRotationAdapter:
     """Sentry -- MANUAL. No real calls, and none are possible.
 
@@ -3103,6 +3095,12 @@ class SentryRotationAdapter:
         )
 
 
+def _stripe_adapter():
+    # Lazy: stripe_rotation.py builds on this module.
+    from .stripe_rotation import StripeRotationAdapter
+    return StripeRotationAdapter()
+
+
 def _mongodb_atlas_adapter():
     # Lazy: mongo_atlas.py builds on this module.
     from .mongo_atlas import MongoDBAtlasRotationAdapter
@@ -3127,7 +3125,7 @@ _ADAPTERS = {
     "neon": NeonRotationAdapter,
     "mongodb-atlas": _mongodb_atlas_adapter,
     "upstash": UpstashRotationAdapter,
-    "stripe": StripeRotationAdapter,
+    "stripe": _stripe_adapter,
     "sentry": SentryRotationAdapter,
     "zernio": _zernio_adapter,
 }

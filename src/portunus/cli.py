@@ -407,9 +407,26 @@ def _cmd_ask_rotate(tag_set, registry, broker) -> int:
     broker.audit.append("semantic_op", ref.sm_name, "requested:rotate")
     print(
         f"flagged {{{{secret:{ref.name}}}}} for rotation -- "
-        f"a human can rotate it via the UI or `portunus drop` a new value"
+        f"{_ask_rotate_next_step(ref)}"
     )
     return 0
+
+
+def _ask_rotate_next_step(ref) -> str:
+    """What to tell the requester after flagging. If the provider has an
+    automatic adapter (e.g. Stripe since PANT-1409), point at the one
+    command that rotates without the value ever entering chat; otherwise the
+    human paths. Metadata-only: never resolves the value."""
+    from .rotation import rotation_adapter_for
+
+    provider = ref.provider or (ref.sm_name.split(":")[0] if ":" in ref.sm_name else "")
+    adapter = rotation_adapter_for(provider) if provider else None
+    if adapter is not None and getattr(adapter, "capability", lambda: "stub")() == "auto":
+        return (
+            f"rotate it automatically with `portunus rotation run {ref.name}` "
+            f"(add --retire-old if the old value leaked)"
+        )
+    return "a human can rotate it via the UI or `portunus drop` a new value"
 
 
 def _cmd_ask_list(tag_set, registry, broker) -> int:
