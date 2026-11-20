@@ -231,6 +231,40 @@ Authorization: Bearer <new-token>
 
 ---
 
+### Multica workspace personal access token
+
+**Vault examples**: `dostal-tech-multica-pat-token`
+
+**Credential type**: Multica personal access token (`mul_...`), used by Hive planning dispatch. **Not** the per-run `mat_` agent token, which the server mints and expires on its own.
+
+**Source**: https://multica.ai/docs/auth-tokens, and the open-source server (`multica-ai/multica`: `server/cmd/server/router.go`, `server/internal/handler/personal_access_token.go`), re-checked 2026-11-20 (PANT-1128).
+
+**Status**: listed as `unknown` in the 2026-09-14 pass ("no public Multica API documentation for programmatic PAT management"). Multica has since published it, so this row moves to `auto`. Liveness is built (`multica` probe, [liveness.md](liveness.md#multica)). The rotation adapter is **not built yet** (`stub` in [rotation.md](rotation.md#multica-personal-access-tokens)). The `/api/tokens` routes need a human credential, and a `mul_` PAT is one, so the stored token can mint its own successor.
+
+**Concrete call sequence** (`<api>` = `https://api.multica.ai` or the self-hosted API address):
+
+```bash
+# 1. Create a replacement token (shown once)
+POST <api>/api/tokens
+Authorization: Bearer <current-pat>
+Body: {"name": "portunus-hive-dispatch", "expires_in_days": 90}
+# -> 201 {"id", "name", "token_prefix", "expires_at", ..., "token": "mul_..."}
+
+# 2. Verify
+GET <api>/api/me
+Authorization: Bearer <new-pat>          # 200; 401 = invalid
+
+# 3. Store new token in Portunus
+
+# 4. Revoke old token (idempotent 204)
+DELETE <api>/api/tokens/{old_id}         # old_id: match token_prefix in GET /api/tokens
+Authorization: Bearer <new-pat>
+```
+
+`POST <api>/api/tokens/current/renew` extends the calling PAT in place to 90 days from now, but only once fewer than 7 days remain. Earlier it's a no-op. It's a cheaper alternative to steps 1-4 for a token that only needs to stay alive.
+
+---
+
 ### Grafana Cloud organization API key / access policy token
 
 **Vault examples**: `monitoring-dev-grafana-cloud-api-token`
@@ -677,7 +711,6 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 | Google / Firebase non-SA, non-API-key | `firebase-storage-base`, `firebase-project-id`, `google-cloud-project` | Various | These are configuration values (URLs, project IDs), not credentials. Not rotateable. |
 | Grafana Cloud (stack-scoped data source credentials) | Prometheus remote write token, Loki URL + credentials | `monitoring-dev-grafana-cloud-prom-token`, `monitoring-dev-grafana-cloud-prom-username`, `monitoring-dev-grafana-cloud-loki-url` | Different from org-level Grafana Cloud API key (see `auto`). These are stack-instance credentials for data source push endpoints. Rotation via Grafana Cloud stack management API not confirmed. |
 | Healthchecks.io | API key / ping key | `*-healthchecks-api-key`, `*-healthchecks-ping-key`, `*-healthchecks-ping-url` | Healthchecks.io REST API (https://healthchecks.io/docs/api/) covers check management; API key rotation specifics not confirmed |
-| Multica | Workspace personal access token | `dostal-tech-multica-pat-token` | No public Multica API documentation for programmatic PAT management confirmed at research time |
 | Pexels | API key | `social-engine-dev-pexels-api-key`, `social-engine-prod-pexels-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
 | Pixabay | API key | `social-engine-dev-pixabay-api-key`, `social-engine-prod-pixabay-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
 | PostHog | Project API key / server API key | `*-posthog-api-key`, `*-posthog-server-key`, `*-posthog-key`, `*-posthog-host`, `*-posthog-tracking` | PostHog personal API keys (for personal developer access) ARE manageable via API (`/api/users/@me/personal_api_keys/`). The keys stored here appear to be project API keys (used by applications), which have a different management path. `*-posthog-tracking` and `*-posthog-host` are config values, not credentials. Project API key rotation not confirmed via API. |
