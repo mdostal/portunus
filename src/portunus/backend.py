@@ -110,6 +110,17 @@ class VaultBinding:
     `roles/iam.workloadIdentityUser` on it instead) -- the fully keyless,
     no-human-login path. Empty means "no impersonation." GCP-specific;
     ignored by other backend types.
+
+    `credential_file` is a path to a gcloud-loadable credential file -- a
+    service account key JSON or an external_account (WIF) config JSON --
+    handed to gcloud through CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE for this
+    project only. Neither kind is subject to a human session's reauth
+    policy, so this is the long-lived, non-interactive path for machines
+    without a harness OIDC token. Only the path is stored here, never the
+    file's contents; the file itself should be 0600. Used when no WIF token
+    is minted; takes precedence over `account` (gcloud ignores `--account`
+    under an override), and composes with `impersonate_service_account`.
+    Empty means "not used." GCP-specific; ignored by other backend types.
     """
 
     project: str
@@ -118,6 +129,7 @@ class VaultBinding:
     impersonate_service_account: str = ""
     backend: str = "gcp"
     sync_mode: str = "direct"
+    credential_file: str = ""
 
 
 def _vault_bindings_path(path: Optional[Path] = None) -> Path:
@@ -155,6 +167,7 @@ def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
                 impersonate_service_account=cfg.get("impersonate_service_account", ""),
                 backend=cfg.get("backend", "gcp"),
                 sync_mode=cfg.get("sync_mode", "direct"),
+                credential_file=cfg.get("credential_file", ""),
             )
             for proj, cfg in raw.items()
         }
@@ -197,11 +210,62 @@ def save_vault_bindings(
             "wif_audience": b.wif_audience, "account": b.account,
             "impersonate_service_account": b.impersonate_service_account,
             "backend": b.backend, "sync_mode": b.sync_mode,
+            "credential_file": b.credential_file,
         }
         for proj, b in bindings.items()
     }
     with flock_path(_vault_bindings_lock_path(path)):
         atomic_write(bindings_path, json.dumps(raw, indent=2))
+
+
+# Substrings gcloud prints when a user credential's session lapsed and only
+# an interactive `gcloud auth login` can renew it. Matched case-insensitively
+# against stderr (which names the secret at most, never a value).
+_GCLOUD_REAUTH_MARKERS = (
+    "reauthentication failed",
+    "cannot prompt during non-interactive execution",
+    "problem refreshing your current auth tokens",
+    "reauthentication is needed",
+    "please run:\n\n  $ gcloud auth login",
+    "invalid_grant",
+    "invalid_rapt",
+)
+
+
+def is_gcloud_reauth_error(stderr: str) -> bool:
+    """True iff gcloud's stderr says the credential needs an interactive
+    reauth -- the failure mode Portunus cannot fix by retrying."""
+    text = (stderr or "").lower()
+    return any(marker in text for marker in _GCLOUD_REAUTH_MARKERS)
+
+
+def gcp_reauth_remediation(project: str, binding: Optional[VaultBinding] = None) -> str:
+    """Self-service recovery text for a reauth-required failure. The first
+    three options are non-interactive and stop the failure from recurring;
+    the last one is the one-off interactive fallback. Names identities and
+    paths only, never a credential."""
+    proj = project or "<project>"
+    account = (binding.account if binding else "") or "<account>"
+    sa = (binding.impersonate_service_account if binding else "") or (
+        f"<sa>@{proj}.iam.gserviceaccount.com"
+    )
+    return (
+        f"GCP credentials for {proj} need an interactive reauth Portunus cannot perform. "
+        "Non-interactive fixes (any one, then re-run `portunus health`): "
+        f"(1) `portunus bindings set {proj} --credential-file <service-account-key-or-"
+        "external-account.json>`; "
+        f"(2) `portunus bindings set {proj} --account <identity-without-reauth-policy> "
+        f"--impersonate-service-account {sa}`; "
+        f"(3) `portunus bindings set {proj} --wif-audience <provider> "
+        f"--impersonate-service-account {sa}`. "
+        f"One-off interactive fallback: `gcloud auth login {account} --no-activate`."
+    )
+
+
+class GcpReauthRequired(BackendError):
+    """gcloud refused because a user credential needs interactive reauth.
+    The message carries gcp_reauth_remediation() so every surface (resolve,
+    health, sync) shows the self-service fix, not just the raw gcloud text."""
 
 
 class GcloudBackend:
@@ -249,6 +313,55 @@ class GcloudBackend:
             return self._binding_providers[project]
         return self.credential_provider
 
+    @staticmethod
+    def _identity(binding: Optional[VaultBinding], token_file) -> tuple:
+        """(leading gcloud flags, extra env or None) for one call.
+
+        Precedence: a minted WIF token file (already carries identity) >
+        the binding's credential_file (SA key / external_account config via
+        CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) > --account. Impersonation
+        composes with the latter two. Nothing set = ambient gcloud."""
+        if token_file:
+            return [f"--access-token-file={token_file}"], None
+        flags: list = []
+        env = None
+        if binding and binding.credential_file:
+            path = Path(binding.credential_file).expanduser()
+            if not path.is_file():
+                raise BackendError(
+                    f"credential_file for {binding.project} not found: {path}"
+                )
+            env = {**os.environ, "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": str(path)}
+        elif binding and binding.account:
+            # --account selects which already-locally-authenticated gcloud
+            # identity to use, independent of gcloud's single mutable
+            # "active account".
+            flags.append(f"--account={binding.account}")
+        if binding and binding.impersonate_service_account and (
+            binding.credential_file or binding.account
+        ):
+            # The base identity presents its own credential to mint a
+            # short-lived token FOR this service account (requires
+            # roles/iam.serviceAccountTokenCreator on the target) -- lets a
+            # stable, non-reauth-walled identity stand in for a human
+            # Workspace account whose session can expire.
+            flags.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+        return flags, env
+
+    def _run(self, cmd, env, **kwargs):
+        # env only when set: injected test runners predate the kwarg.
+        if env is not None:
+            kwargs["env"] = env
+        return self.runner(cmd, capture_output=True, text=True, timeout=self.timeout, **kwargs)
+
+    def _failure(self, what: str, sm_name: str, project: str, stderr: str) -> BackendError:
+        detail = f"gcloud {what} failed for {sm_name}: {(stderr or '').strip()[:200]}"
+        if is_gcloud_reauth_error(stderr):
+            return GcpReauthRequired(
+                f"{detail} -- {gcp_reauth_remediation(project, self.bindings.get(project))}"
+            )
+        return BackendError(detail)
+
     def access(self, sm_name: str, project: str = "") -> str:
         if shutil.which("gcloud") is None:
             raise BackendError("gcloud CLI not found on PATH")
@@ -256,34 +369,18 @@ class GcloudBackend:
         provider = self._credential_provider_for(effective_project)
         binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
-            cmd = ["gcloud"]
-            if token_file:
-                cmd.append(f"--access-token-file={token_file}")
-            elif binding and binding.account:
-                # Mutually exclusive with --access-token-file: a minted WIF
-                # token already carries identity. --account selects which
-                # already-locally-authenticated gcloud identity to use,
-                # independent of gcloud's single mutable "active account".
-                cmd.append(f"--account={binding.account}")
-                if binding.impersonate_service_account:
-                    # `account` presents its own credential to mint a
-                    # short-lived token FOR this service account (requires
-                    # roles/iam.serviceAccountTokenCreator on the target) --
-                    # lets a stable, non-reauth-walled identity stand in for
-                    # a human Workspace account whose session can expire.
-                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
             cmd.extend(["secrets", "versions", "access", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
             try:
-                proc = self.runner(cmd, capture_output=True, text=True, timeout=self.timeout)
+                proc = self._run(cmd, env)
             except subprocess.TimeoutExpired as exc:
                 raise BackendError(f"gcloud timeout for {sm_name}") from exc
         if proc.returncode != 0:
             # stderr may name the secret but never contains the value.
-            raise BackendError(
-                f"gcloud access failed for {sm_name}: {proc.stderr.strip()[:200]}"
-            )
+            raise self._failure("access", sm_name, effective_project, proc.stderr)
         return proc.stdout
 
     def latest_version(self, sm_name: str, project: str = "") -> str:
@@ -297,31 +394,25 @@ class GcloudBackend:
         provider = self._credential_provider_for(effective_project)
         binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
-            cmd = ["gcloud"]
-            if token_file:
-                cmd.append(f"--access-token-file={token_file}")
-            elif binding and binding.account:
-                cmd.append(f"--account={binding.account}")
-                if binding.impersonate_service_account:
-                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
             cmd.extend(["secrets", "versions", "describe", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
             cmd.append("--format=json")
             try:
-                proc = self.runner(cmd, capture_output=True, text=True, timeout=self.timeout)
+                proc = self._run(cmd, env)
             except subprocess.TimeoutExpired as exc:
                 raise BackendError(f"gcloud timeout for {sm_name}") from exc
         if proc.returncode != 0:
-            raise BackendError(
-                f"gcloud versions describe failed for {sm_name}: {proc.stderr.strip()[:200]}"
-            )
+            raise self._failure("versions describe", sm_name, effective_project, proc.stderr)
         return json.loads(proc.stdout or "{}").get("createTime", "")
 
     def add_version(self, sm_name: str, value: str, project: str = "") -> str:
         """Write `value` as a new version of an existing secret, under the
         same per-project identity selection as access(): WIF token file, or
-        --account [+ --impersonate-service-account], or ambient gcloud.
+        credential_file / --account [+ --impersonate-service-account], or
+        ambient gcloud.
 
         The value reaches gcloud only on stdin (`--data-file=-`), never argv,
         so it can't show up in `ps` or a shell history. Returns gcloud's
@@ -335,27 +426,18 @@ class GcloudBackend:
         provider = self._credential_provider_for(effective_project)
         binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
-            cmd = ["gcloud"]
-            if token_file:
-                cmd.append(f"--access-token-file={token_file}")
-            elif binding and binding.account:
-                cmd.append(f"--account={binding.account}")
-                if binding.impersonate_service_account:
-                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
             cmd.extend(["secrets", "versions", "add", sm_name, "--data-file=-"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
             cmd.append("--format=value(name)")
             try:
-                proc = self.runner(
-                    cmd, input=value, capture_output=True, text=True, timeout=self.timeout,
-                )
+                proc = self._run(cmd, env, input=value)
             except subprocess.TimeoutExpired as exc:
                 raise BackendError(f"gcloud timeout adding a version to {sm_name}") from exc
         if proc.returncode != 0:
-            raise BackendError(
-                f"gcloud versions add failed for {sm_name}: {proc.stderr.strip()[:200]}"
-            )
+            raise self._failure("versions add", sm_name, effective_project, proc.stderr)
         return (proc.stdout or "").strip()
 
     @contextmanager

@@ -106,6 +106,7 @@ VaultBinding fields:
 | `wif_audience` | WIF provider resource name — used to mint a short-lived access token via OIDC exchange |
 | `account` | `gcloud` account email to pass as `--account=`; selects one of multiple locally-authenticated identities independently of `gcloud`'s mutable active-account pointer |
 | `impersonate_service_account` | Service account to impersonate via `--impersonate-service-account=`; requires the `account` identity to hold `roles/iam.serviceAccountTokenCreator` |
+| `credential_file` | Path to a service account key or `external_account` config JSON, passed to `gcloud` via `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. A non-interactive identity that a reauth policy can't expire; takes precedence over `account` and composes with `impersonate_service_account`. See [Keyless GCP access](gcp-keyless.md#2c-long-lived-credential-file-no-oidc-issuer-no-stable-account) |
 | `backend` | `gcp` (default) — which backend adapter handles this project |
 | `sync_mode` | `direct` (live fetch every access) or `cached` (pull-only sync-down; see below) |
 

@@ -419,14 +419,17 @@ portunus sync ffe-cicd
 Configure per-project vault bindings (which backend serves a project's secrets).
 
 ```
-portunus bindings set <project> [--backend local|gcp|aws|...] [--sync-mode direct|cached] [--account <email>] [--wif-audience <audience>] [--impersonate-service-account <sa-email>]
+portunus bindings set <project> [--backend local|gcp|aws|...] [--sync-mode direct|cached] [--account <email>] [--wif-audience <audience>] [--impersonate-service-account <sa-email>] [--credential-file <path>|none]
 portunus bindings show [<project>] [--json]
 ```
 
 `sync-mode=cached` enables a pull-only local cache; `direct` (default) fetches live on every access.
 `--impersonate-service-account` makes every call act as that service account: through the IAM
 Credentials API after a WIF mint, or as gcloud's `--impersonate-service-account` alongside
-`--account`. See [Keyless GCP access](gcp-keyless.md).
+`--account`. `--credential-file` points gcloud at a service account key or `external_account`
+config JSON through `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. This is a non-interactive identity
+that never hits a reauth prompt. Only the absolute path is stored, and `none` clears it. See
+[Keyless GCP access](gcp-keyless.md).
 
 **Example:**
 ```sh

@@ -952,6 +952,12 @@ injection or write fails on it.
 Neither command ever touches a secret value — only account emails and gcloud's own credential
 metadata.
 
+To stop depending on a human session at all, bind the project to a non-interactive identity:
+`portunus bindings set <project> --credential-file <sa-key-or-external-account.json>`, or
+`--account <reauth-free identity> --impersonate-service-account <sa>`, or WIF. See
+[docs/gcp-keyless.md](docs/gcp-keyless.md). When a reauth does hit, the `backend:gcp` check in
+`portunus health` lists those fixes instead of only the raw `gcloud auth login` prompt.
+
 ### OAuth token broker: store a refresh token, mint access tokens on demand
 
 `portunus oauth store/list/remove` + `--backend oauth` let Portunus hold a provider-issued OAuth
