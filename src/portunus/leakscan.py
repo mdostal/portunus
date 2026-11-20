@@ -132,7 +132,7 @@ def get_values(
     values: Dict[str, str] = {}
     for ref in registry:
         try:
-            gated = broker.check_injectable(ref.name, requester=Identity.from_env())
+            gated = broker.check_injectable(ref.name, requester=Identity.from_env(), consume=False)
         except (NotInjectable, ApprovalRequired, NotAuthorized):
             continue
         chosen_backend = backend_for(gated) if backend_for is not None else backend

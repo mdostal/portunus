@@ -2870,7 +2870,7 @@ def cmd_sync(args) -> int:
     synced, fresh, failed = [], [], []
     for ref in registry.list_by_project(args.project):
         try:
-            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
+            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env(), consume=False)
         except (NotInjectable, ApprovalRequired, NotAuthorized):
             continue  # not currently injectable/authorized -- nothing to sync, not a failure
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
