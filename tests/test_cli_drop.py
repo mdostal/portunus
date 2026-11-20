@@ -127,9 +127,7 @@ def test_drop_accepts_backend_flag(home, capsys):
     assert ref.backend == "local"
 
 
-def test_drop_backend_pins_local_by_default(home, capsys):
-    """#246: drop writes the local vault, so the reference is pinned there --
-    never left "" to follow a (possibly remote) project binding."""
+def test_drop_backend_defaults_to_local_where_it_was_written(home, capsys):
     value_file = home / "value.txt"
     value_file.write_text(SECRET + "\n")
 

@@ -365,9 +365,9 @@ def test_bindings_set_without_local_values_needs_no_flag(home):
 
 # --- retag --backend -------------------------------------------------------------
 
-def test_retag_backend_pins_and_follow_clears(home, capsys):
+def test_retag_backend_pins_and_default_clears(home, capsys):
     Registry().add("x", "sm-x", project="demo")
     assert main(["retag", "x", "--backend", "local"]) == 0
     assert Registry().get("x").backend == "local"
-    assert main(["retag", "x", "--backend", "follow"]) == 0
+    assert main(["retag", "x", "--backend", "default"]) == 0
     assert Registry().get("x").backend == ""

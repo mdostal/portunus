@@ -306,10 +306,10 @@ portunus reg add linear-api dostal-linear --provider linear --project mdostal.co
 Update a reference's routing/metadata in place — never touches a value.
 
 ```
-portunus retag <name> [--org <o>] [--provider <p>] [--project <p>] [--env <e>] [--tags <k=v,...>] [--description <d>] [--purpose <p>] [--group <g>] [--related <r,...>] [--repo <repo>] [--source-files <f,...>] [--backend <kind>|follow]
+portunus retag <name> [--org <o>] [--provider <p>] [--project <p>] [--env <e>] [--tags <k=v,...>] [--description <d>] [--purpose <p>] [--group <g>] [--related <r,...>] [--repo <repo>] [--source-files <f,...>] [--backend <kind>|default]
 ```
 
-`--backend` pins where the reference resolves from; `follow` clears the pin so it follows the project's binding again.
+`--backend` pins where the reference resolves from; `default` clears the pin so it follows the project's binding again.
 
 **Example:**
 ```sh

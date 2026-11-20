@@ -74,7 +74,7 @@ from .leakscan import (
     summarize,
 )
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
-from .localvault import LocalEncryptedBackend, SessionExpired
+from .localvault import LocalEncryptedBackend, SessionExpired, written_backend_kind
 from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter, describe_file
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
@@ -482,6 +482,8 @@ def _print_reference_list(refs) -> None:
             f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
             f"(provider={ref.provider}, env={ref.env}, state={ref.state})"
         )
+        if ref.backend:
+            print(f"    backend:     {ref.backend}")
         if ref.description:
             print(f"    description: {ref.description}")
         if ref.purpose:
@@ -646,9 +648,10 @@ def cmd_retag(args) -> int:
         kwargs["repo"] = args.repo
     if source_files is not None:
         kwargs["source_files"] = source_files
-    if getattr(args, "backend", None) is not None:
-        # "follow" clears the pin (back to the project's binding).
-        kwargs["backend"] = "" if args.backend == "follow" else args.backend
+    if getattr(args, "backend", ""):
+        # "default" clears the pin so the ref follows its project's
+        # VaultBinding again -- metadata only, it never moves a value.
+        kwargs["backend"] = "" if args.backend == "default" else args.backend
 
     try:
         ref = registry.retag(args.name, **kwargs)
@@ -988,13 +991,6 @@ def cmd_session_remove(args) -> int:
     return 0
 
 
-def pinned_backend(requested: str) -> str:
-    """The backend a write path records on the reference: what the caller
-    asked for, else "local" -- where drop/prompt actually put the value
-    (#246). Never "" (which would follow the project's binding, possibly
-    to a remote store the value was never written to)."""
-    return requested or "local"
-
 
 def _collision_message(name: str, exc: AmbiguousMatch) -> str:
     others = [c for c in exc.candidates if c != name]
@@ -1085,7 +1081,7 @@ def cmd_drop(args) -> int:
             injected_as=injected_as, group=args.group, related=related,
             # Pin on write (#246): the value goes to the local vault, so the
             # reference says so -- never "" left to follow a remote binding.
-            backend=pinned_backend(args.backend), repo=args.repo,
+            backend=written_backend_kind(backend, args.backend or ""), repo=args.repo,
             source_files=source_files, reject_collisions=True,
         )
     except AmbiguousMatch as exc:
@@ -1096,7 +1092,8 @@ def cmd_drop(args) -> int:
     del value  # scrub our local reference promptly
     broker.audit.append("drop", ref.sm_name, "stored")
     print(
-        f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} (state=dropped; "
+        f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} "
+        f"(backend={ref.backend or 'default'}, state=dropped; "
         f"run `portunus state {ref.name} enabled` to allow injection)"
     )
     return 0
@@ -1175,7 +1172,7 @@ def cmd_drop_bulk(args) -> int:
                 description=entry.get("description", ""), purpose=entry.get("purpose", ""),
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
                 related=entry.get("related"),
-                backend=pinned_backend(entry.get("backend", "")),
+                backend=written_backend_kind(backend, entry.get("backend", "")),
                 reject_collisions=True,
             )
             backend.store(ref.sm_name, value)
@@ -3650,11 +3647,13 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--repo", default="", help="the git repo that consumes this secret")
     rt.add_argument("--source-files", default="",
                      help="comma-separated file paths in that repo, replaces the source_files list")
-    rt.add_argument("--backend", default=None,
-                     choices=("local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword",
-                              "azure", "oauth", "chrome", "bitwarden", "follow"),
-                     help="pin where this reference resolves from ('follow' clears the pin, so it "
-                          "follows the project's binding again)")
+    rt.add_argument(
+        "--backend", default="",
+        choices=("", "default", "local", "gcp", "aws", "vault", "infisical", "doppler",
+                 "onepassword", "azure", "oauth", "chrome", "bitwarden"),
+        help="pin which backend this reference resolves from ('default' clears the pin so it "
+             "follows the project's VaultBinding). Metadata only: it does not move the value",
+    )
     rt.set_defaults(func=cmd_retag)
 
     rtb = sub.add_parser(
