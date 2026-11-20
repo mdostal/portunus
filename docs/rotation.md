@@ -46,6 +46,7 @@ new one).
 | `youtrack` (JetBrains Hub permanent token) | `perm:...` token for the YouTrack REST API | **auto** | `YouTrackRotationAdapter` drives `create → verify → store` against the Hub REST API. `--retire-old` **deletes** the old token (Hub has no disable). Needs a Hub URL tag and `hub_token_id`; see below. |
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 | `google-api-key` | Google Cloud API key (`AIza...`) | **auto** | `GoogleCloudAPIKeyRotationAdapter`: copies the old key's restrictions → create → verify (`keys:lookupKey`, plus an optional live probe) → store. `--retire-old` **deletes** the old key, which Google can undelete for 30 days. Refuses a stored value that is a service-account JSON key. Needs `apikeys.googleapis.com` enabled; see [Google Cloud API keys](#google-cloud-api-keys) below. |
+| `multica` | Workspace personal access token (`mul_…`) | **stub** | Multica's API can mint (`POST /api/tokens`), list, revoke (`DELETE /api/tokens/{id}`) and extend (`POST /api/tokens/current/renew`) PATs with a PAT, so an adapter is possible but not built yet. Liveness: the `multica` probe. Until the adapter exists, re-issue by hand; see [Multica personal access tokens](#multica-personal-access-tokens). |
 | `sentry` | User / org / internal-integration auth token | **manual** | Sentry's token endpoints accept session auth only and reject any bearer token, so no admin credential can mint or revoke a token. `SentryRotationAdapter` is registered so `rotation run` prints the human re-issue steps. See `provider-rotation-matrix.md`. |
 | `n8n` (self-hosted) | Encryption key (`N8N_ENCRYPTION_KEY`) / basic-auth user + password | **manual** | Startup config, not provider tokens. The encryption key protects every credential stored in n8n: rotate it only as a planned, attended operation (decrypt all → re-encrypt all → restart), never on a schedule. Basic auth is ignored on n8n 1.0+. See the [n8n rotation runbook](n8n-rotation-runbook.md). |
 | `meetup` | OAuth client id/secret; legacy API key | **manual** | OAuth clients are managed only in Meetup's web UI (Meetup Pro required). API-key auth was retired on 2019-08-15, so a stored key can't work. See [Meetup](#meetup-oauth-client-and-retired-api-key). |
@@ -682,6 +683,51 @@ The reference needs `provider=youtrack` and these tags:
 The Hub URL is per install, so the adapter never assumes one.
 
 ---
+
+## Multica personal access tokens
+
+`dostal-tech-multica-pat-token` is a Multica personal access token (PAT, `mul_…`). Hive's
+planning dispatch authenticates with it. Status (re-checked 2026-11-20, PANT-1128):
+
+- **Liveness: built.** The `multica` probe (`GET /api/me`) reads `dead` on 401. See
+  [liveness.md](liveness.md#multica).
+- **Rotation: possible, no adapter yet (`stub`).** The 2026-09-14 matrix listed Multica as
+  `unknown` because Multica had published nothing about managing PATs. It has since: its docs
+  ([Authentication and tokens](https://multica.ai/docs/auth-tokens)) and the open-source server
+  (`server/cmd/server/router.go`, `server/internal/handler/personal_access_token.go` in
+  `multica-ai/multica`) expose these routes:
+
+  | Call | What it does |
+  |---|---|
+  | `POST /api/tokens` `{"name", "expires_in_days"}` | creates a PAT; the response carries the full token once |
+  | `GET /api/tokens` | lists PATs: id, name, `token_prefix`, `expires_at`, `last_used_at` (never the token) |
+  | `DELETE /api/tokens/{id}` | revokes a PAT (204; idempotent) |
+  | `POST /api/tokens/current/renew` | extends the PAT used for the request to 90 days from now, but only once fewer than 7 days remain. Earlier calls are a no-op (`renewed: false`) |
+
+  These routes require a human credential (`RequireHumanActor`). A `mul_` PAT counts as one, and
+  an agent run's `mat_` token doesn't (upstream MUL-8154). The self-hosted backend Hive uses
+  predates that guard: on 2026-11-20 it answered `GET /api/tokens` with 200 for a `mat_` run
+  token (metadata only, no token values). Upgrade it to close that gap. So the stored PAT can mint its own successor, and a
+  create → verify (`GET /api/me`) → store → revoke adapter can be built the same way as the
+  Vercel adapter. That adapter is a follow-up. Its create/verify/revoke path hasn't been run
+  against a real PAT yet.
+
+**Manual re-issue (until the adapter exists):**
+
+1. Sign in to the Multica web app as the account that owns the token, the same instance Hive
+   uses (`multica_url`, or Multica Cloud).
+2. Open **Settings → API Token** and create a token. Give it a name that says what it's for
+   (e.g. `portunus-hive-dispatch`) and pick an expiry. 90 days is preselected. A shorter expiry
+   needs re-issuing more often, while "never" doesn't expire at all, so treat it like a password.
+   The full token is shown once.
+3. Store it without echoing it: `portunus drop` (or the `portunus-prompt` flow so the value never
+   passes through an agent), replacing `dostal-tech-multica-pat-token`.
+4. Verify: `portunus liveness check dostal-tech-multica-pat-token` must read `live`.
+5. Back in **Settings → API Token**, revoke the old token. The list shows each token's prefix
+   and last-used time, so you can tell them apart. Revocation is immediate everywhere the old
+   value was copied.
+
+`multica auth logout` and web logout don't revoke a PAT on the server. Only step 5 does.
 
 ## Liveness checks
 
