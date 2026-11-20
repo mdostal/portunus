@@ -286,6 +286,67 @@ echo "unused" | portunus drop my-ig-login \
 
 ---
 
+## OS keystore (macOS Keychain, Secret Service, Windows Credential Manager)
+
+Resolves a secret from the operating system's own credential store, so a value you already keep
+there doesn't need a second copy in the local vault. **Read-only.** Portunus never creates,
+changes or deletes keystore items.
+
+| Platform | Store | How Portunus reads it |
+|----------|-------|-----------------------|
+| macOS | login (or default) Keychain | `security find-generic-password -s <service> [-a <account>] -w` |
+| Linux | Secret Service: GNOME Keyring, or KWallet 5.97+ | `secret-tool lookup service <service> [username <account>]` (package `libsecret-tools` / `libsecret`) |
+| Windows | Credential Manager, generic credentials | `CredReadW` on target name `<service>` |
+
+The value always comes back on the tool's stdout, never on a command line.
+
+### sm_name scheme
+
+```
+keychain:<service>[:<account>]
+```
+
+`<service>` and `<account>` are percent-decoded, so write a literal colon in a service name as
+`%3A` (e.g. `keychain:https%3A//api.example.com:bob`). Anything after the first unescaped colon
+is the account. On Linux the account maps to the `username` attribute, the convention
+python-keyring uses, so items stored with `keyring set <service> <user>` resolve as-is. On Windows,
+if you give an account, the credential's user name must match it. Otherwise the resolve fails
+rather than return a different user's secret.
+
+Without an account, macOS and Secret Service return the first matching item. Give the account
+when a service has more than one.
+
+```bash
+# macOS: an item created with `security add-generic-password -s github-token -a alice -w`
+echo "unused" | portunus drop gh-token "keychain:github-token:alice" --backend keychain --stdin
+portunus state gh-token enabled
+portunus resolve gh-token
+```
+
+### Locked stores fail closed
+
+- **macOS:** a locked keychain, or one that would need a GUI prompt, gives `the macOS keychain is
+  locked or access was denied`. Unlock it with `security unlock-keychain` and allow access.
+- **Linux:** no Secret Service on the session bus (common over SSH or in containers) gives `no
+  Secret Service is reachable`. `secret-tool` exits the same way for a missing item and for an
+  unlock prompt you dismissed, so that error names both causes.
+- An access tool that hangs on an unlock prompt times out after 30 s and is reported as locked.
+
+None of these fall back to the local vault or to another backend. `portunus health` reports
+whether the platform's access tool is available when any reference routes to `keychain`. It
+never reads an item, so it can't trigger an unlock prompt.
+
+### Known limitations
+
+- **No discovery or listing.** You address items by service and account; there is no
+  `portunus keychain list` yet.
+- **No write-back.** Change the item in the keystore itself.
+- **No in-memory cache.** Every resolve reads the store again, for the same reason as the Chrome
+  backend.
+- Tests use mocks only. No live macOS, Secret Service or Windows store was exercised in CI.
+
+---
+
 ## Stub backends
 
 The following backends are recognized by Portunus but not yet implemented. Each fails closed with a clear error rather than silently mis-routing to a different backend:
@@ -313,6 +374,7 @@ To request an adapter, use the [adapter-request template](https://github.com/mdo
 | Production with GCP, also need offline resilience or deploy-time snapshot | `gcp` + `sync_mode: cached` |
 | Testing against real, already-authenticated browser credentials (macOS/Linux) | `chrome` |
 | Logins kept in a Bitwarden personal/organization vault | `bitwarden` |
+| Secrets already in the OS keystore (macOS Keychain, GNOME Keyring/KWallet, Windows Credential Manager) | `keychain` |
 | Any other cloud provider | Wait for the stub to be implemented |
 
 A single vault can mix backends per-reference using VaultBindings — a development reference on `local` and a production reference on `gcp` coexist without conflict.
