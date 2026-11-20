@@ -515,3 +515,61 @@ def test_dialog_text_shows_purpose_and_group():
     for text in (req.text, req.card_text):
         assert "Purpose: CI releases" in text and "Group: github/deploy" in text
         assert "gh-token" in text and "GitHub deploy token" in text
+
+
+# --- card kind and secret types together (PANT-1404 meets GH #251) ---------
+
+TOTP_SEED = "OBXXE5DVNZ2XGLLUN52HALLTMVSWIIJB"  # base32 of a test-only key
+
+
+def test_kind_card_and_type_totp_reject_each_other(home, capsys):
+    rc, result, _ = _run(capsys, "sudo-pw", "dostal-sudo", "--kind", "card",
+                         "--type", "totp", "--surface", "t3")
+    assert rc != 0
+    assert "--kind card cannot be combined with --type totp" in result["error"]
+    _assert_untouched(home)
+
+
+def test_kind_card_and_recovery_code_reject_each_other(home, capsys):
+    rc, result, _ = _run(capsys, "sudo-pw", "dostal-sudo", "--kind", "card",
+                         "--type", "recovery-code")
+    assert rc != 0
+    assert "--kind card cannot be combined with --type recovery-code" in result["error"]
+    _assert_untouched(home)
+
+
+def test_t3_handoff_carries_the_secret_type_to_the_completing_call(home, capsys):
+    rc, result, _ = _run(capsys, "gh-2fa", "gh-2fa", "--type", "totp", "--surface", "t3")
+    assert rc == 0 and result["stored"] is False
+    assert result["then"]["arguments"]["secret_type"] == "totp"
+    cli = result["then"]["cli"]
+    assert cli[cli.index("--type") + 1] == "totp"
+
+
+def test_t3_completion_of_a_totp_key_stores_the_canonical_uri(home, card, capsys):
+    path = card(TOTP_SEED + "\n")
+    rc, result, captured = _run(capsys, "gh-2fa", "gh-2fa", "--type", "totp",
+                                "--value-file", str(path))
+    assert rc == 0
+    assert result["stored"] is True and result["secret_type"] == "totp"
+    assert not path.exists()
+    stored = LocalEncryptedBackend().access("gh-2fa")
+    assert stored.startswith("otpauth://totp/") and TOTP_SEED in stored
+    assert TOTP_SEED not in captured.out and TOTP_SEED not in captured.err
+    assert Registry().require("gh-2fa").secret_type == "totp"
+
+
+def test_t3_completion_of_an_invalid_totp_key_stores_nothing_and_keeps_the_file(home, card, capsys):
+    path = card("not a base32 key!\n")
+    rc, result, _ = _run(capsys, "gh-2fa", "gh-2fa", "--type", "totp",
+                         "--value-file", str(path))
+    assert rc != 0 and "nothing stored" in result["error"]
+    assert path.exists()
+    assert "gh-2fa" not in Registry()
+
+
+def test_t3_completion_of_a_recovery_code_is_gated(home, card, capsys):
+    rc, result, _ = _run(capsys, "gh-recovery", "gh-recovery", "--type", "recovery-code",
+                         "--value-file", str(card("abcd-1234\n")))
+    assert rc == 0
+    assert result["gated"] is True and result["secret_type"] == "recovery_code"

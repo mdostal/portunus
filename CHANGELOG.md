@@ -21,6 +21,11 @@ All notable changes to Portunus are documented in this file.
 - **Re-running `portunus prompt` on a gated reference keeps its gate (GH #251).**
 - **The T3 Code card and desktop dialogs show the reference's purpose and group (GH #251).**
   The card's reason leads with `Purpose: ...` and `Group: ...` when they are set.
+- **`prompt --type totp` / `recovery-code` work through a T3 Code card, and `--kind card` refuses
+  `--type` (GH #251 with PANT-1404).** The T3 handoff carries the secret type into its completing
+  call, which checks and stores the key the same way a desktop dialog does. An invalid key stores
+  nothing and leaves the card's file in place. A card and a secret type reject each other before
+  anything is asked.
 - **The UI defaults to port 7781, not 3000 (GH #251).** `ui open`, `prompt --surface ui` and the
   UI's npm scripts all read `PORTUNUS_UI_PORT` (default 7781).
 - **`reg rm` no longer purges a stored value other references still share (PANT-1407, GH #247).**
