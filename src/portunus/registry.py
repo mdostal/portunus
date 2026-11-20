@@ -53,6 +53,17 @@ class AmbiguousMatch(KeyError):
         super().__init__(f"ambiguous match: {candidates!r}")
 
 
+def _stored_dict(ref: "Reference") -> dict:
+    """The on-disk form of a Reference. `secret_type` (PANT-1404) is only
+    written when set: an older Portunus loads entries with Reference(**v)
+    and would fail on an unknown key, so a registry with no typed secrets
+    stays readable by it."""
+    data = ref.to_dict()
+    if not data.get("secret_type"):
+        data.pop("secret_type", None)
+    return data
+
+
 class RegistryLocked(RuntimeError):
     """Could not acquire the registry write lock within the timeout."""
 
@@ -135,7 +146,7 @@ class Registry:
         self._data = {k: Reference(**v) for k, v in raw.items()}
 
     def _flush(self) -> None:
-        atomic_write(self.path, json.dumps({k: v.to_dict() for k, v in self._data.items()}, indent=2))
+        atomic_write(self.path, json.dumps({k: _stored_dict(v) for k, v in self._data.items()}, indent=2))
 
     @contextmanager
     def _locked(self):

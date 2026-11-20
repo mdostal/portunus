@@ -38,8 +38,9 @@ All notable changes to Portunus are documented in this file.
   like any resolve (per use: `approve --ttl 1`, per session: `approve --ttl 2h`), and each code
   writes an `otp … issued` audit line. `recovery_code` references are gated by default and move to
   the new `used` state after the one resolve that hands them out. `leak-scan` searches for a totp
-  reference's base32 seed. RFC 6238 SHA1/SHA256/SHA512 vectors are tested. Registries that hold a
-  reference with `secret_type` set can't be read by older Portunus versions.
+  reference's base32 seed. RFC 6238 SHA1/SHA256/SHA512 vectors are tested. `secret_type` is only
+  written to `registry.json` when set; a registry that holds a totp or recovery-code reference
+  can't be read by older Portunus versions.
 
 - **`portunus doctor --fix-routing`**: finds stranded references and pins them local, pins them
   remote (`--prefer remote`) or pushes them into GCP (`--push`, verified). It is a dry run unless

@@ -484,3 +484,17 @@ def test_mcp_prompt_totp(home, local, monkeypatch):
     assert result["stored"] is True and result["secret_type"] == "totp"
     _assert_never_seen(json.dumps(result))
     assert set(mcp_server.portunus_otp(name="gh-2fa")) == {"code", "seconds_left", "period", "digits"}
+
+
+def test_registry_file_omits_empty_secret_type(home):
+    from portunus import Registry
+
+    registry = Registry()
+    registry.add("plain", "dostal-plain")
+    registry.add("gh-2fa", "dostal-gh-2fa", secret_type="totp")
+    raw = json.loads(registry.path.read_text())
+    assert "secret_type" not in raw["plain"]
+    assert raw["gh-2fa"]["secret_type"] == "totp"
+    reloaded = Registry()
+    assert reloaded.get("plain").secret_type == ""
+    assert reloaded.get("gh-2fa").secret_type == "totp"
