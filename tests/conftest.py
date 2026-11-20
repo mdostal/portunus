@@ -18,6 +18,11 @@ def _isolated_portunus_home(tmp_path_factory, monkeypatch):
     for name in ("T3CODE_THREAD_ID", "PORTUNUS_PROMPT_SURFACE", "PORTUNUS_T3_PARENTS",
                  "PORTUNUS_UI_URL", "PORTUNUS_UI_PORT"):
         monkeypatch.delenv(name, raising=False)
+    # ...and its agent markers would make `portunus approve` refuse (GH #251).
+    # Tests that exercise the refusal set one themselves.
+    for name in ("DOSTAL_AGENT", "PORTUNUS_AGENT", "AI_AGENT", "CLAUDECODE",
+                 "CLAUDE_CODE_ENTRYPOINT", "MULTICA_AGENT_ID", "MULTICA_AGENT_NAME"):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

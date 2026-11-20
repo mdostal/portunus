@@ -1485,26 +1485,168 @@ def _parse_ttl(raw: str):
     raise ValueError(f"invalid --ttl {raw!r}: use a tick count (3) or a duration (90s, 30m, 2h, 1d)")
 
 
+def _refuse_agent_approval(broker, name: str, what: str) -> Optional[int]:
+    """An agent may ask for an approval but never grant one (GH #251)."""
+    from . import approval as approval_mod
+
+    marker = approval_mod.agent_marker()
+    if not marker:
+        return None
+    ref = broker.registry.get(name) if name else None
+    broker.audit.append(what, ref.sm_name if ref else (name or "-"),
+                        f"refused:agent requester:{approval_mod.requester_name()} "
+                        f"marker:{marker}")
+    return _err(f"refused: {what} looks like it is running inside an agent ({marker} is "
+                "set). An agent cannot approve its own access. Ask for it with "
+                "`portunus request-approval` and let the human approve.")
+
+
+def _read_factor_code(args, prompt_text: str = "authenticator code: ") -> str:
+    code = getattr(args, "code", None)
+    if code:
+        return code.strip()
+    if not sys.stdin.isatty():
+        return ""
+    return getpass.getpass(prompt_text).strip()
+
+
 def cmd_approve(args) -> int:
+    from . import approval as approval_mod
+
     _, _, broker, _ = _build()
+    refused = _refuse_agent_approval(broker, args.name, "approve")
+    if refused is not None:
+        return refused
+    if broker.registry.get(args.name) is None:
+        return _err(f"unknown reference: {args.name}")
+    req = None
+    if args.request:
+        try:
+            req = approval_mod.load_request(args.request)
+        except approval_mod.RequestError as exc:
+            return _err(str(exc))
+        if req.name != args.name:
+            return _err(f"request {req.id} is for {req.name}, not {args.name}")
+        if req.status != "pending":
+            return _err(f"request {req.id} is {req.status}")
+        print(f"request {req.id}: {req.summary()}", file=sys.stderr)
+    factor = ""
+    if approval_mod.factor_enrolled():
+        code = _read_factor_code(args)
+        if not code or not approval_mod.verify_code(code):
+            ref = broker.registry.get(args.name)
+            broker.audit.append("approve", ref.sm_name,
+                                "refused:bad-code channel:cli"
+                                + (f" request:{req.id}" if req else ""))
+            return _err("refused: the authenticator code did not match (pass --code or "
+                        "type it when asked)")
+        factor = "totp"
+    else:
+        print("warning: no approval factor is enrolled, so anything that can run "
+              "`portunus` as you can approve. Run `portunus approval enroll` once.",
+              file=sys.stderr)
+    approver = os.environ.get("USER") or "unknown"
+    if req is not None:
+        broker.approve(args.name, ttl_seconds=approval_mod.WINDOW_SECONDS,
+                       approver=approver, once=True, requester=req.requester,
+                       channel="cli", request_id=req.id, factor=factor)
+        approval_mod.decide(req, "approved", approver, "cli")
+        print(f"approved request {req.id}: one resolve of {args.name} by {req.requester} "
+              f"within {approval_mod.WINDOW_SECONDS // 60} minutes")
+        return 0
     try:
         unit, amount = _parse_ttl(str(args.ttl))
     except ValueError as exc:
         return _err(str(exc))
     if amount <= 0:
         return _err("--ttl must be positive")
-    try:
-        if unit == "seconds":
-            broker.approve(args.name, ttl_seconds=amount)
-        else:
-            broker.approve(args.name, ttl=amount)
-    except KeyError:
-        return _err(f"unknown reference: {args.name}")
+    kwargs = dict(approver=approver, once=args.once, channel="cli", factor=factor)
     if unit == "seconds":
-        print(f"approved {args.name} for {args.ttl} (wall-clock)")
+        broker.approve(args.name, ttl_seconds=amount, **kwargs)
     else:
-        print(f"approved {args.name} for the next {amount} access(es)")
+        broker.approve(args.name, ttl=amount, **kwargs)
+    once = " (one resolve)" if args.once else ""
+    if unit == "seconds":
+        print(f"approved {args.name} for {args.ttl} (wall-clock){once}")
+    else:
+        print(f"approved {args.name} for the next {amount} access(es){once}")
     return 0
+
+
+def cmd_approval(args) -> int:
+    from . import approval as approval_mod
+
+    _, _, broker, _ = _build()
+    if args.action == "status":
+        pending = approval_mod.pending_requests()
+        out = {"factor_enrolled": approval_mod.factor_enrolled(),
+               "pending": [{"request_id": r.id, "name": r.name, "requester": r.requester,
+                            "summary": r.summary(),
+                            "expires_in_seconds": max(0, int(r.expires_at - time.time()))}
+                           for r in pending]}
+        if args.json:
+            print(json.dumps(out, indent=2))
+            return 0
+        print(f"approval factor: {'enrolled' if out['factor_enrolled'] else 'not enrolled'}")
+        if not pending:
+            print("no pending requests")
+        for r in out["pending"]:
+            print(f"  {r['request_id']}  {r['summary']}  "
+                  f"(expires in {r['expires_in_seconds'] // 60}m) -> "
+                  f"portunus approve {r['name']} --request {r['request_id']}")
+        return 0
+    refused = _refuse_agent_approval(broker, "", f"approval-{args.action}")
+    if refused is not None:
+        return refused
+    if not sys.stdin.isatty() and not getattr(args, "code", None):
+        return _err(f"`portunus approval {args.action}` needs a terminal")
+    if args.action == "remove":
+        if not approval_mod.factor_enrolled():
+            return _err("no approval factor is enrolled")
+        code = _read_factor_code(args, "current authenticator code: ")
+        if not approval_mod.verify_code(code):
+            return _err("refused: the authenticator code did not match")
+        approval_mod.remove_factor()
+        broker.audit.append("approval-remove", "-", "removed:totp")
+        print("approval factor removed")
+        return 0
+    # enroll
+    if approval_mod.factor_enrolled():
+        if not args.replace:
+            return _err("an approval factor is already enrolled (use --replace)")
+        code = _read_factor_code(args, "current authenticator code: ")
+        if not approval_mod.verify_code(code):
+            return _err("refused: the current authenticator code did not match")
+    secret = approval_mod.new_secret()
+    account = f"{os.environ.get('USER', 'user')}@{socket.gethostname()}"
+    print("Add this to an authenticator app on a device your agents cannot reach "
+          "(your phone, not this machine):")
+    print(f"  secret: {secret}")
+    print(f"  uri:    {approval_mod.provisioning_uri(secret, account)}")
+    confirm = getpass.getpass("type the 6-digit code it shows now: ").strip()
+    try:
+        approval_mod.enroll(secret, confirm)
+    except approval_mod.FactorError as exc:
+        return _err(str(exc))
+    broker.audit.append("approval-enroll", "-", "enrolled:totp")
+    print("approval factor enrolled. Approvals from T3 Code, a dialog or "
+          "`portunus approve` now need a code from that app.")
+    return 0
+
+
+def cmd_request_approval(args) -> int:
+    from . import approval as approval_mod
+
+    registry, _, broker, _ = _build()
+    out = approval_mod.run_request(
+        registry, broker, args.name, purpose=args.purpose or "", amount=args.amount or "",
+        merchant=args.merchant or "", surface=args.surface, request_id=args.request or "",
+        code_file=args.code_file or "", cli=True,
+    )
+    print(json.dumps(out, indent=2))
+    if out.get("error"):
+        return 1
+    return 0 if out.get("approved") or out.get("pending") else 1
 
 
 def cmd_grant(args) -> int:
@@ -4146,7 +4288,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="a tick count (default 3: audit-clock ticks, roughly accesses) or a wall-clock "
              "duration such as 90s, 30m, 2h, 1d",
     )
+    ap.add_argument("--once", action="store_true",
+                    help="the approval lets exactly one resolve through")
+    ap.add_argument("--request", metavar="ID",
+                    help="approve an agent's pending request: one resolve, by that "
+                         "requester, within 10 minutes")
+    ap.add_argument("--code", help="authenticator code (asked for when omitted)")
     ap.set_defaults(func=cmd_approve)
+
+    apf = sub.add_parser("approval", help="the human's approval factor and pending requests")
+    apf_sub = apf.add_subparsers(dest="action", required=True)
+    apf_en = apf_sub.add_parser("enroll", help="enroll an authenticator app (TOTP)")
+    apf_en.add_argument("--replace", action="store_true")
+    apf_en.add_argument("--code", help="current code, with --replace")
+    apf_st = apf_sub.add_parser("status", help="factor state and pending requests")
+    apf_st.add_argument("--json", action="store_true")
+    apf_rm = apf_sub.add_parser("remove", help="remove the enrolled factor")
+    apf_rm.add_argument("--code", help="current authenticator code")
+    apf.set_defaults(func=cmd_approval)
+
+    rqa = sub.add_parser("request-approval",
+                         help="ask the human to allow ONE use of a gated reference")
+    rqa.add_argument("name")
+    rqa.add_argument("--purpose", help="what the value is for (shown to the human)")
+    rqa.add_argument("--amount", help="amount, e.g. '$12.00' (shown to the human)")
+    rqa.add_argument("--merchant", help="who is paid (shown to the human)")
+    rqa.add_argument("--surface", default="auto",
+                     help="auto, t3, cli, or a dialog (osascript, kdialog, zenity, pinentry)")
+    rqa.add_argument("--request", metavar="ID", help="complete a pending t3 request")
+    rqa.add_argument("--code-file", help="the file the T3 Code card returned")
+    rqa.set_defaults(func=cmd_request_approval)
 
     gr = sub.add_parser(
         "grant", help="record an access widening in the audit log only (makes no IAM change)",

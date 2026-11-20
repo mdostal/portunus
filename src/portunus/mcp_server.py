@@ -829,6 +829,41 @@ def portunus_prompt(
 
 
 @mcp.tool()
+def portunus_request_approval(
+    name: str,
+    purpose: str = "",
+    amount: str = "",
+    merchant: str = "",
+    surface: str = "auto",
+    request_id: str = "",
+    code_file: str = "",
+) -> dict:
+    """Ask the HUMAN to allow ONE use of an approval-gated reference.
+
+    You cannot approve yourself: `portunus approve` refuses inside an agent.
+    Instead, call this with what the value is for (`purpose`, and for a
+    payment the `amount` and `merchant`). The human sees that text and
+    approves with a code from their authenticator app, which you cannot
+    reach. An approval lets exactly one resolve through, by you, within ten
+    minutes, and the audit log records requester, approver and channel.
+
+    In a T3 Code thread (surface t3) this is two calls: the first returns a
+    `card` to show with mcp__t3-code__request_secret; call this tool again
+    with `request_id` and `code_file` set to the path the card returned. Do
+    not read that file. With a desktop dialog the human answers inline.
+    Otherwise the result is pending with `ask_human_to_run`: tell the human
+    to run that command. Never returns a secret value.
+    """
+    from . import approval as approval_mod
+
+    registry, _audit, broker, _resolver = _build()
+    return approval_mod.run_request(
+        registry, broker, name, purpose=purpose, amount=amount, merchant=merchant,
+        surface=surface, request_id=request_id, code_file=code_file,
+    )
+
+
+@mcp.tool()
 def portunus_drop_bulk(entries: List[dict]) -> dict:
     """Create many LOCAL-VAULT secrets in one call -- the bulk counterpart
     to portunus_drop, for cases like importing ~100 candidate passwords/
