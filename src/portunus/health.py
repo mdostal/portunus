@@ -253,6 +253,7 @@ def _check_bindings(report: _Report, base: Path) -> Dict[str, VaultBinding]:
                 impersonate_service_account=cfg.get("impersonate_service_account", ""),
                 backend=cfg.get("backend", "gcp") if source is path else "gcp",
                 sync_mode=cfg.get("sync_mode", "direct") if source is path else "direct",
+                credential_file=cfg.get("credential_file", "") if source is path else "",
             )
             for proj, cfg in raw.items()
         }
@@ -346,6 +347,16 @@ def _check_gcp(report, refs, bindings, runner) -> None:
     try:
         backend.latest_version(ref.sm_name, project=ref.project)
     except (BackendError, ValueError) as exc:
+        # GcpReauthRequired's message already carries the self-service,
+        # non-interactive fixes (gcp_reauth_remediation).
         report.add("backend:gcp", False, f"latest_version probe on {ref.name} failed: {exc}")
         return
-    report.add("backend:gcp", True, f"latest_version probe on {ref.name} ok")
+    detail = f"latest_version probe on {ref.name} ok"
+    if not (binding and (binding.credential_file or binding.impersonate_service_account)):
+        # Healthy now, but on a human user credential that a reauth policy
+        # will eventually expire -- say so before it degrades.
+        who = f"account {binding.account}" if binding and binding.account else "ambient gcloud user"
+        detail += (f" (on {who}, which can expire into an interactive reauth; for a "
+                   f"non-interactive identity: `portunus bindings set {ref.project or '<project>'} "
+                   "--credential-file <key.json>` or --impersonate-service-account)")
+    report.add("backend:gcp", True, detail)

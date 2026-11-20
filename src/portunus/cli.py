@@ -36,7 +36,8 @@ from .backend import (
     AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, ChromeBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
-    VaultBinding, VaultServerBackend, load_vault_bindings, save_vault_bindings,
+    VaultBinding, VaultServerBackend, gcp_reauth_remediation, load_vault_bindings,
+    save_vault_bindings,
 )
 from .backup import ExportError, export_archive, import_archive
 from .paths import home
@@ -1423,17 +1424,27 @@ def cmd_auth_login(args) -> int:
     return 0
 
 
-def _probe_gcloud_account(account: str, impersonate_service_account: str = "") -> bool:
-    """True iff gcloud can mint a token for `account` right now, without a
-    prompt. Being listed in `gcloud auth list` is not enough: a Workspace
-    account whose session hit its reauth policy is still listed but fails
-    every call. The minted token lands in proc.stdout and is dropped here --
-    only the exit code is used."""
-    cmd = ["gcloud", "auth", "print-access-token", f"--account={account}"]
+def _probe_gcloud_account(
+    account: str, impersonate_service_account: str = "", credential_file: str = "",
+) -> bool:
+    """True iff gcloud can mint a token for `account` (or, when set, the
+    `credential_file` identity) right now, without a prompt. Being listed in
+    `gcloud auth list` is not enough: a Workspace account whose session hit
+    its reauth policy is still listed but fails every call. The minted token
+    lands in proc.stdout and is dropped here -- only the exit code is used."""
+    cmd = ["gcloud", "auth", "print-access-token"]
+    kwargs = {}
+    if credential_file:
+        kwargs["env"] = {
+            **os.environ,
+            "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": str(Path(credential_file).expanduser()),
+        }
+    else:
+        cmd.append(f"--account={account}")
     if impersonate_service_account:
         cmd.append(f"--impersonate-service-account={impersonate_service_account}")
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, **kwargs)
     except subprocess.TimeoutExpired:
         return False
     return proc.returncode == 0
@@ -1461,6 +1472,12 @@ def _binding_credential_state(binding, credentialed=None):
     listed-or-not check and relies on the mint probe alone."""
     if binding.wif_audience:
         return "wif", _wif_credential_state()
+    if binding.credential_file:
+        if not Path(binding.credential_file).expanduser().is_file():
+            return "credential-file", "missing"
+        if _probe_gcloud_account("", binding.impersonate_service_account, binding.credential_file):
+            return "credential-file", "ok"
+        return "credential-file", "expired"
     if binding.account:
         if credentialed is not None and binding.account not in credentialed:
             return "account", "missing"
@@ -1550,7 +1567,9 @@ def cmd_auth_status(args) -> int:
 
     have_gcloud = shutil.which("gcloud") is not None
     credentialed = set()
-    if have_gcloud and any(b.account and not b.wif_audience for b in bindings.values()):
+    if have_gcloud and any(
+        b.account and not b.wif_audience and not b.credential_file for b in bindings.values()
+    ):
         try:
             proc = subprocess.run(
                 ["gcloud", "auth", "list", "--format=json"], capture_output=True, text=True, timeout=30,
@@ -1569,6 +1588,7 @@ def cmd_auth_status(args) -> int:
             "mode": mode,
             "state": state,
             "impersonate_service_account": binding.impersonate_service_account,
+            "credential_file": binding.credential_file,
         }
 
     unusable = [p for p, info in report.items() if info["state"] not in ("ok", "ready", "unchecked")]
@@ -1585,16 +1605,27 @@ def cmd_auth_status(args) -> int:
             who = info["account"] or "(no account set)"
             if info["mode"] == "wif":
                 who = "wif"
+            elif info["mode"] == "credential-file":
+                who = f"credential-file {info['credential_file']}"
             if info["impersonate_service_account"]:
                 who += f" -> {info['impersonate_service_account']}"
             print(f"{project}: {who} -- {labels[info['state']]}")
         for project in unusable:
             info = report[project]
-            if info["state"] == "expired":
+            if info["mode"] == "credential-file":
+                if info["state"] == "missing":
+                    print(f"  fix: credential file not found -- re-point it with "
+                          f"`portunus bindings set {project} --credential-file <path>`")
+                else:
+                    print("  fix: the credential file was rejected (revoked/disabled key, or a "
+                          "missing impersonation grant) -- issue a new key and re-point it with "
+                          f"`portunus bindings set {project} --credential-file <path>`")
+            elif info["state"] == "expired":
                 print(
                     f"  fix: gcloud auth login {info['account']} --no-activate"
                     "  (keeps your active account unchanged)"
                 )
+                print(f"  avoid next time: {gcp_reauth_remediation(project, bindings[project])}")
             elif info["state"] == "missing" and info["account"]:
                 print(f"  fix: gcloud auth login {info['account']} --no-activate")
     if args.strict and unusable:
@@ -1619,7 +1650,10 @@ def cmd_gcp_add_version(args) -> int:
         if state not in ("ok", "ready", "unchecked"):
             hint = ""
             if mode == "account":
-                hint = f" -- run `gcloud auth login {binding.account} --no-activate`"
+                hint = f" -- {gcp_reauth_remediation(args.project, binding)}"
+            elif mode == "credential-file":
+                hint = (" -- check the file, or re-point it with "
+                        f"`portunus bindings set {args.project} --credential-file <path>`")
             return _err(f"credential preflight failed for {args.project}: {mode}/{state}{hint}")
     if args.stdin:
         value = _clean_value(sys.stdin.read(), args.keep_whitespace)
@@ -1691,13 +1725,16 @@ def cmd_discover(args) -> int:
     registry, _audit, _broker, resolver = _build()
     account = ""
     impersonate_service_account = ""
+    credential_file = ""
     binding = load_vault_bindings().get(args.project)
     if binding:
         account = binding.account
         impersonate_service_account = binding.impersonate_service_account
+        credential_file = binding.credential_file
     try:
         discovered = list_gcp_secrets(
-            args.project, account=account, impersonate_service_account=impersonate_service_account
+            args.project, account=account, impersonate_service_account=impersonate_service_account,
+            credential_file=credential_file,
         )
     except DiscoverError as exc:
         return _err(str(exc))
@@ -1765,16 +1802,31 @@ def cmd_bindings_set(args) -> int:
     )
     backend = args.backend if args.backend else (existing.backend if existing else "gcp")
     sync_mode = args.sync_mode if args.sync_mode else (existing.sync_mode if existing else "direct")
+    credential_file = existing.credential_file if existing else ""
+    cred_arg = getattr(args, "credential_file", "")
+    if cred_arg == "none":
+        credential_file = ""
+    elif cred_arg:
+        # Store an absolute path (the MCP server / daemon may run from another
+        # cwd). The file is read by gcloud, never by Portunus.
+        cred_path = Path(cred_arg).expanduser().resolve()
+        if not cred_path.is_file():
+            return _err(f"--credential-file not found: {cred_path}")
+        if cred_path.stat().st_mode & 0o077:
+            print(f"warning: {cred_path} is readable by group/other -- run `chmod 600 {cred_path}`",
+                  file=sys.stderr)
+        credential_file = str(cred_path)
     bindings[args.project] = VaultBinding(
         project=args.project, wif_audience=wif_audience, account=account,
         impersonate_service_account=impersonate_service_account,
-        backend=backend, sync_mode=sync_mode,
+        backend=backend, sync_mode=sync_mode, credential_file=credential_file,
     )
     save_vault_bindings(bindings)
     print(
         f"binding set: {args.project} (backend={backend}, sync_mode={sync_mode}, "
         f"account={account or '-'}, wif_audience={wif_audience or '-'}, "
-        f"impersonate_service_account={impersonate_service_account or '-'})"
+        f"impersonate_service_account={impersonate_service_account or '-'}, "
+        f"credential_file={credential_file or '-'})"
     )
     return 0
 
@@ -2311,6 +2363,7 @@ def cmd_bindings_show(args) -> int:
                 "account": b.account, "wif_audience": b.wif_audience,
                 "impersonate_service_account": b.impersonate_service_account,
                 "backend": b.backend, "sync_mode": b.sync_mode,
+                "credential_file": b.credential_file,
             }
             for proj, b in bindings.items()
         }))
@@ -2322,7 +2375,8 @@ def cmd_bindings_show(args) -> int:
         print(
             f"  {proj}  backend={b.backend}  sync_mode={b.sync_mode}  "
             f"account={b.account or '-'}  wif_audience={b.wif_audience or '-'}  "
-            f"impersonate_service_account={b.impersonate_service_account or '-'}"
+            f"impersonate_service_account={b.impersonate_service_account or '-'}  "
+            f"credential_file={b.credential_file or '-'}"
         )
     return 0
 
@@ -3662,6 +3716,10 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_set.add_argument("--impersonate-service-account", default="",
                           help="service account email to act as: via the IAM Credentials API "
                                "after a WIF mint, or gcloud --impersonate-service-account with --account")
+    bnd_set.add_argument("--credential-file", default="",
+                          help="service account key or external_account (WIF) config JSON gcloud loads "
+                               "for this project -- non-interactive, never hits a reauth prompt; "
+                               "only the path is stored ('none' clears it)")
     bnd_set.set_defaults(func=cmd_bindings_set)
     bnd_show = bnd_sub.add_parser("show", help="show one or all bindings (real values, not presence-only)")
     bnd_show.add_argument("project", nargs="?", default="")
