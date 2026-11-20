@@ -126,7 +126,7 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
         elif kind == "vault":
             inst = VaultServerBackend()
         elif kind == "infisical":
-            inst = InfisicalBackend()
+            inst = InfisicalBackend(local_backend=_for_kind("local"), audit=audit)
         elif kind == "doppler":
             inst = DopplerBackend()
         elif kind == "onepassword":
