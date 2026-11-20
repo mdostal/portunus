@@ -198,7 +198,9 @@ access tokens: same cycle, `--retire-old` deletes because Vercel has no disable)
 from an App the operator owns, reset in place; every other GitHub subtype is refused as
 manual/not-applicable, decided per reference by `capability_for(ref)`). `StripeRotationAdapter` (Stripe API keys: roll through the v2 IAM preview API with a grace
 window, then decrypt → verify → store; `--retire-old` expires the old key). All run via
-`portunus rotation run <ref>`. No stub adapters remain. The per-provider
+`portunus rotation run <ref>`. No stub adapters remain. **Sentry is manual**: it has no
+bearer-token rotation API, so its adapter raises `RotationAdapterError` with the human re-issue
+steps and reports `capability() == "manual"`. The per-provider
 capability matrix lives in [`docs/rotation.md`](rotation.md), and
 `tests/test_rotation_docs_drift.py` fails if an `auto` adapter isn't listed as auto there.
 

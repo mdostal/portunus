@@ -40,6 +40,15 @@ All notable changes to Portunus are documented in this file.
   message. `portunus bitwarden status` and `portunus health` report the lock state. Bitwarden
   Secrets Manager (`bws`) is not covered yet. See docs/backends.md (Bitwarden vault).
 
+- **Stripe liveness probe and key-type check (`stripe`, PANT-1134, #195).** `portunus liveness
+  check` now probes a stored Stripe `sk_`/`rk_` key with `GET /v1/balance` and names the key's
+  type from its prefix (for example `live restricted key`) without exposing anything after it.
+  401 is `dead`. A restricted key without Balance read gets 403 and reads `live`, because Stripe
+  accepted it. `pk_`, `whsec_` and `sk_org_` values are never sent. The provider matrix is
+  corrected: the `POST /v1/restricted_keys` API that early research expected for restricted keys
+  doesn't exist, so restricted keys rotate the same way as standard secret keys (the v2 IAM call
+  or the Dashboard) and no separate restricted-key adapter was built.
+
 - **Stripe API key rotation (`StripeRotationAdapter`, PANT-1409).** `portunus rotation run <ref>`
   now rolls a Stripe secret, restricted or publishable key without the Dashboard. It uses Stripe's
   v2 IAM API (`POST /v2/iam/api_keys/{id}/rotate`), which is a **public preview**. The adapter

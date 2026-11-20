@@ -570,7 +570,9 @@ Stripe's Dashboard provides a "Roll API key" action for standard keys. At the ti
 
 **Update (PANT-1409, 2026-11):** Stripe's v2 IAM API (public preview, `Stripe-Version: 2026-11-18.preview`) adds `POST /v2/iam/api_keys/{id}/rotate` and `/expire` for secret and publishable keys. Portunus's `StripeRotationAdapter` uses it, so the capability is now **auto**. Caveat: Stripe documents the API for Stripe Apps with `api_key_write`; whether a merchant's own secret key may call it is unconfirmed. See [rotation.md § Stripe API keys](rotation.md#stripe-api-keys).
 
-**Stripe restricted keys** (`rk_...`) are a different credential type with a documented API for creation and deletion (`POST /v1/restricted_keys`, `DELETE /v1/restricted_keys/{id}`). None of the stored keys appear to be restricted keys based on naming convention. If any are confirmed to be restricted keys, the finding for that credential changes to `auto`.
+**Correction 2026-11-20 (PANT-1134):** an earlier version of this entry said restricted keys (`rk_...`) had a documented creation/deletion API (`POST /v1/restricted_keys`, `DELETE /v1/restricted_keys/{id}`) and would rotate through it. That's wrong. The Stripe API reference has no such resource (`https://docs.stripe.com/api/restricted_keys` returns 404). A restricted key is a `secret_key` to the v2 IAM API, so it rotates through the same `POST /v2/iam/api_keys/{id}/rotate` call as a standard secret key (with the preview caveat above), or in the Dashboard ([API keys](https://docs.stripe.com/keys#rolling-keys), [Restricted API keys](https://docs.stripe.com/keys/restricted-api-keys)). There's no separate restricted-key adapter.
+
+**Liveness** is separate and real: the `stripe` probe (`GET /v1/balance`) checks `sk_`/`rk_` keys and names the key type from the prefix (for example `live restricted key`), without logging anything after the prefix. Running `portunus liveness check <ref>` on each Stripe reference is how to confirm which stored keys are standard and which are restricted.
 
 ---
 
@@ -786,5 +788,5 @@ The following secret names in `ffe-cicd` store configuration values (URLs, IDs, 
 
 - **AWS credentials**: No AWS access keys, secret keys, or session tokens. `AWSSecretsManagerBackend` is a stub (backend.py); no AWS-backed references exist.
 - **HashiCorp Vault / Infisical / Doppler / 1Password / Azure Key Vault tokens**: All stub backends (backend.py); no references backed by these providers.
-- **Stripe restricted API keys** (`rk_...`): Not observed; if present, rotation capability would be `auto`.
+- **Stripe restricted API keys** (`rk_...`): Not observed by name. They rotate the same way as standard secret keys, through `StripeRotationAdapter` (see the Stripe entry above); there's no separate `/v1/restricted_keys` API.
 - **OAuth refresh token bundles** (`oauth:*` namespace): Not stored via `portunus oauth store`; the `OAuthBackend` machinery exists (auth.py, backend.py) but is unused in this vault.
