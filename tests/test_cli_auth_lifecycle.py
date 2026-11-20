@@ -99,11 +99,11 @@ def test_auth_status_json_shape(home, monkeypatch, capsys, gcloud_on_path):
     assert rc == 0
     assert out["a"] == {
         "account": "one@example.com", "authenticated": True,
-        "mode": "account", "state": "ok", "impersonate_service_account": "",
+        "mode": "account", "state": "ok", "impersonate_service_account": "", "credential_file": "",
     }
     assert out["b"] == {
         "account": "two@example.com", "authenticated": False,
-        "mode": "account", "state": "missing", "impersonate_service_account": "",
+        "mode": "account", "state": "missing", "impersonate_service_account": "", "credential_file": "",
     }
 
 

@@ -10,9 +10,11 @@ which returns names/labels/create-time, never `versions access`.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from .registry import Registry
@@ -48,6 +50,7 @@ def list_gcp_secrets(
     account: str = "",
     impersonate_service_account: str = "",
     runner: Optional[Runner] = None,
+    credential_file: str = "",
     timeout: float = 30.0,
 ) -> List[DiscoveredSecret]:
     """List secret names + labels + create-time for `project`. Never a value.
@@ -64,18 +67,28 @@ def list_gcp_secrets(
     VaultBinding.impersonate_service_account in backend.py: a stable,
     non-reauth-walled identity standing in for a human account whose
     session can expire.
+
+    `credential_file`, when set, is handed to gcloud via
+    CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE instead of `--account` (see
+    VaultBinding.credential_file) -- the non-interactive, no-reauth path.
     """
     if shutil.which("gcloud") is None:
         raise DiscoverError("gcloud CLI not found on PATH")
     run = runner or _default_runner
     cmd = ["gcloud"]
-    if account:
+    kwargs = {}
+    if credential_file:
+        kwargs["env"] = {
+            **os.environ,
+            "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": str(Path(credential_file).expanduser()),
+        }
+    elif account:
         cmd.append(f"--account={account}")
-        if impersonate_service_account:
-            cmd.append(f"--impersonate-service-account={impersonate_service_account}")
+    if impersonate_service_account and (credential_file or account):
+        cmd.append(f"--impersonate-service-account={impersonate_service_account}")
     cmd.extend(["secrets", "list", f"--project={project}", "--format=json"])
     try:
-        proc = run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired as exc:
         raise DiscoverError(f"gcloud timeout listing secrets for {project}") from exc
     if proc.returncode != 0:
