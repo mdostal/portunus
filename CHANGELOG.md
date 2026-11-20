@@ -21,6 +21,15 @@ All notable changes to Portunus are documented in this file.
   lets a merchant's own key call the preview API is unconfirmed; a 401/403/404 says so. See
   docs/rotation.md, "Stripe API keys". Stripe was the last stub adapter.
 
+- **MongoDB Atlas database-user rotation (PANT-1131).** A new `mongodb-atlas` rotation adapter rotates
+  the user inside a stored Atlas connection URI through the Atlas Admin API v2, authenticating with a
+  service account (Bearer) or a legacy API key (Digest). The default `new-user` mode is non-destructive.
+  It creates a sibling user with the same roles and scopes, verifies it with a real connection, then
+  stores the new URI and any companion username/password refs. `--retire-old` deletes the old user.
+  If verification fails, the new user is removed and nothing is stored. `password` mode changes the
+  password in place and requires `--retire-old`. Verification uses the new optional `mongodb` extra
+  (`pymongo`). See docs/rotation.md (MongoDB Atlas connection URIs).
+
 - **Upstash Redis REST token rotation (PANT-1129, #200).** Research settled the open question: the
   Developer API's `POST /v2/redis/reset-password/{id}` regenerates the database password **and**
   both REST tokens (standard and read-only), so they are one credential. New
