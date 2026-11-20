@@ -71,7 +71,7 @@ from .leakscan import (
     summarize,
 )
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
-from .localvault import LocalEncryptedBackend, SessionExpired
+from .localvault import LocalEncryptedBackend, SessionExpired, written_backend_kind
 from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter, describe_file
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
@@ -461,6 +461,8 @@ def _print_reference_list(refs) -> None:
             f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
             f"(provider={ref.provider}, env={ref.env}, state={ref.state})"
         )
+        if ref.backend:
+            print(f"    backend:     {ref.backend}")
         if ref.description:
             print(f"    description: {ref.description}")
         if ref.purpose:
@@ -1033,14 +1035,16 @@ def cmd_drop(args) -> int:
         args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
         org=args.org, provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
         description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related, backend=args.backend, repo=args.repo,
+        group=args.group, related=related,
+        backend=written_backend_kind(backend, args.backend or ""), repo=args.repo,
         source_files=source_files,
     )
     backend.store(ref.sm_name, value)
     del value  # scrub our local reference promptly
     broker.audit.append("drop", ref.sm_name, "stored")
     print(
-        f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} (state=dropped; "
+        f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} "
+        f"(backend={ref.backend or 'default'}, state=dropped; "
         f"run `portunus state {ref.name} enabled` to allow injection)"
     )
     return 0
@@ -1118,7 +1122,8 @@ def cmd_drop_bulk(args) -> int:
                 env=entry.get("env", ""), tags=entry.get("tags"),
                 description=entry.get("description", ""), purpose=entry.get("purpose", ""),
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
-                related=entry.get("related"), backend=entry.get("backend", ""),
+                related=entry.get("related"),
+                backend=written_backend_kind(backend, entry.get("backend", "")),
             )
             backend.store(ref.sm_name, value)
             del value

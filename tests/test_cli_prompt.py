@@ -93,7 +93,7 @@ def test_prompt_stores_value_and_returns_metadata_only(home, monkeypatch, capsys
     assert rc == 0
     result = json.loads(captured.out)
     assert result == {"name": "sudo-pw", "state": "dropped", "stored": True,
-                      "gated": False, "surface": "kdialog"}
+                      "gated": False, "surface": "kdialog", "backend": "local"}
     # Whitespace kept: only the dialog's own newline is removed.
     assert LocalEncryptedBackend().access("dostal-sudo") == SECRET
     # The human-facing text names the secret; the argv never carries a value.
@@ -276,7 +276,7 @@ def test_mcp_prompt_tool(home, monkeypatch):
     _use_runner(monkeypatch, FakeRunner((0, SECRET + "\n")))
     result = mcp_server.portunus_prompt(name="sudo-pw", sm_name="dostal-sudo", enable=True)
     assert result == {"name": "sudo-pw", "state": "enabled", "stored": True,
-                      "gated": False, "surface": "kdialog"}
+                      "gated": False, "surface": "kdialog", "backend": "local"}
     assert SECRET.strip() not in json.dumps(result)
     tool_names = {t.name for t in mcp_server.mcp._tool_manager.list_tools()}
     assert "portunus_prompt" in tool_names
