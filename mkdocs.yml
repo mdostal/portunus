@@ -62,6 +62,7 @@ nav:
   - n8n Rotation Runbook: n8n-rotation-runbook.md
   - Mobile Credentials Runbook: mobile-credentials-runbook.md
   - Zernio Rotation Runbook: zernio-rotation.md
+  - Inbox Password Reset: inbox-reset.md
   - Liveness & Parity: liveness.md
   - Reference:
     - CLI Reference: cli-reference.md

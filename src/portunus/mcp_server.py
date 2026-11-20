@@ -229,7 +229,9 @@ def portunus_rotation_status(provider: str = "") -> dict:
     (Redis REST token via password reset; needs --retire-old), `github`
     (OAuth App token reset; other GitHub token types are refused per
     reference as manual/not-applicable) and `stripe` (API key roll via the
-    v2 IAM preview API). Manual (no programmatic path exists): sentry."""
+    v2 IAM preview API), `github-password` (web-account password reset
+    through the account's inbox, `portunus reset`). Manual (no programmatic
+    path exists): sentry."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)

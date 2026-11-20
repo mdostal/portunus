@@ -2535,6 +2535,57 @@ def cmd_rotate_zernio(args) -> int:
     return 0
 
 
+def cmd_reset(args) -> int:
+    """Reset a web account's password through the account's own inbox
+    (PANT-1402): request the reset email, read the link with the inbox's
+    API key, store a new password, submit it headless. Metadata only on
+    stdout/stderr -- never the password or the reset link. See
+    docs/inbox-reset.md."""
+    from .inbox_reset import HumanCheckRequired, InboxPasswordReset, ResetError
+
+    registry, audit, broker, resolver = _build()
+    ref = registry.get(args.name)
+    if ref is None:
+        return _err(f"no reference {args.name!r} in registry")
+    interactive = sys.stdin.isatty()
+    flow = InboxPasswordReset(resolver, registry=registry, audit=audit)
+
+    def show(report) -> None:
+        if args.json:
+            print(json.dumps({"ref_name": report.ref_name, "provider": report.provider,
+                              "dry_run": report.dry_run,
+                              "steps": [{"name": s.name, "detail": s.detail} for s in report.steps],
+                              "warnings": list(report.warnings),
+                              "needs_person": report.needs_person}, indent=2))
+            return
+        print(f"reset {report.provider} {report.ref_name} -- {'plan' if report.dry_run else 'done'}")
+        for step in report.steps:
+            print(f"  {step.name:<9} {step.detail}")
+        for warning in report.warnings:
+            print(f"  warning   {warning}")
+        if report.needs_person:
+            print(f"  person    {report.needs_person}")
+
+    try:
+        plan = flow.reset(ref, dry_run=True, force=args.force)
+        if args.dry_run:
+            show(plan)
+            return 0
+        if not args.yes:
+            show(plan)
+            if not interactive:
+                return _err("not a terminal -- review the plan above and re-run with --yes")
+            if input("run it? [y/N] ").strip().lower() not in ("y", "yes"):
+                return _err("cancelled")
+        show(flow.reset(ref, force=args.force))
+    except HumanCheckRequired as exc:
+        _err(f"stopped for a person: {exc}")
+        return 2
+    except ResetError as exc:
+        return _err(str(exc))
+    return 0
+
+
 def _ago(ts) -> str:
     if not ts:
         return "-"
@@ -4574,6 +4625,21 @@ def build_parser() -> argparse.ArgumentParser:
     rz.add_argument("--yes", action="store_true", help="skip the confirm prompt (required without a terminal)")
     rz.add_argument("--json", action="store_true")
     rz.set_defaults(func=cmd_rotate_zernio)
+
+    rs = sub.add_parser(
+        "reset",
+        help="reset a web account's password through the account's own inbox (GitHub); "
+             "see docs/inbox-reset.md",
+    )
+    rs.add_argument("name", help="the reference holding the account's password, tagged "
+                                 "reset_email / reset_inbox_ref (reset_provider defaults to its provider)")
+    rs.add_argument("--dry-run", action="store_true",
+                    help="check the inbox and the reset page and print the plan; change nothing")
+    rs.add_argument("--yes", action="store_true", help="skip the confirm prompt (required without a terminal)")
+    rs.add_argument("--force", action="store_true",
+                    help="start even though an earlier reset of this reference did not finish")
+    rs.add_argument("--json", action="store_true")
+    rs.set_defaults(func=cmd_reset)
 
     lv = sub.add_parser(
         "liveness",

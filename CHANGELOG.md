@@ -6,6 +6,14 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **`portunus reset <name>`: reset a web account's password through its inbox (PANT-1402, GH #256).**
+  For accounts whose email is an inbox Portunus can read (AgentMail first), Portunus requests the
+  provider's reset email, reads the link with the inbox's API key, and stores a new random
+  password before submitting the reset form headless. GitHub is the first recipe. A captcha or
+  other human check stops the flow before anything changes (exit 2). A refused password puts the
+  previous value back. Each reset is recorded in the audit log, the `github-password` rotation
+  binding, and the `password_reset_at`/`password_reset_by` tags. Also reachable from
+  `rotation run`. See docs/inbox-reset.md.
 - **OS keystore backend: `backend=keychain` (PANT-1403, GH #254).** Resolves a reference straight
   from the operating system's own store instead of a copy in the local vault: macOS Keychain
   (`security find-generic-password`), Linux Secret Service, which covers GNOME Keyring and KWallet
