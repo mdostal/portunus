@@ -26,6 +26,11 @@ from .paths import home
 from .registry import Registry, Reference
 
 
+def _label(name: str, sm_name: str) -> str:
+    """`ref-name (vault-key)`, or just the name when the two are the same."""
+    return name if not sm_name or sm_name == name else f"{name} ({sm_name})"
+
+
 class NotInjectable(RuntimeError):
     """Raised when a reference's lifecycle state forbids injection."""
 
@@ -105,18 +110,21 @@ class Broker:
         if state not in ("enabled", "locked"):
             self.audit.append("resolve", ref.sm_name, f"denied-{state}")
             hints = {
-                "dropped": "re-enable it",
+                "dropped": f"re-enable it: portunus state {name} enabled",
                 "requested": "a human must fulfill it via `portunus drop`",
                 "used": "a one-time recovery code that was already handed out",
             }
+            # Lead with the reference name the caller typed (GH #257): the
+            # vault key alone is hard to match back to `{{secret:NAME}}`.
             raise NotInjectable(
-                f"{ref.sm_name} is {state} — not injectable "
+                f"{_label(name, ref.sm_name)} is {state} — not injectable "
                 f"({hints.get(state, 'contact the owner')})"
             )
         if ref.approval == "required" and not self._has_valid_approval(name):
             self.audit.append("resolve", ref.sm_name, "pending-approval")
             raise ApprovalRequired(
-                f"{ref.sm_name} needs approval — a human must run: portunus approve {name}"
+                f"{_label(name, ref.sm_name)} needs approval — a human must run: "
+                f"portunus approve {name}"
             )
         if requester is not None:
             decision = roles.evaluate(roles.load_policies(), requester, ref)
@@ -194,6 +202,73 @@ class Broker:
         os.chmod(token, 0o600)
         self.audit.append("approve", ref.sm_name, f"approved:{approver}")
         return token
+
+    def approval_status(self, name: str) -> dict:
+        """Read-only view of one reference's gate (GH #257, the UI's gate
+        controls): whether it is gated, whether an approval is live and
+        until when, and whether an access is waiting on a human. Never
+        deletes an expired token (unlike ``_has_valid_approval``), never
+        touches a value.
+
+        ``pending`` is true when the gate is on, no approval is live, and
+        the audit log holds a ``pending-approval`` denial newer than the
+        last ``approve`` of this reference -- someone tried and is waiting.
+        """
+        ref = self.registry.require(name)
+        status = {
+            "name": ref.name,
+            "sm_name": ref.sm_name,
+            "state": ref.state or "enabled",
+            "gated": ref.approval == "required",
+            "approved": False,
+            "approved_by": "",
+            "expires_at": None,   # epoch seconds, wall-clock approvals
+            "ticks_left": None,   # audit-clock approvals
+            "pending": False,
+            "last_requested_seq": None,
+            "last_requested_ts": None,
+        }
+        token = self.approvals_dir / name
+        if token.exists():
+            exp = None
+            exp_at = None
+            for part in token.read_text().split():
+                key, _, raw = part.partition("=")
+                if key == "approved_by":
+                    status["approved_by"] = raw
+                    continue
+                try:
+                    if key == "exp":
+                        exp = int(raw)
+                    elif key == "exp_at":
+                        exp_at = int(raw)
+                except ValueError:
+                    pass
+            if exp_at is not None:
+                if time.time() <= exp_at:
+                    status["approved"] = True
+                    status["expires_at"] = exp_at
+            elif exp is not None:
+                left = exp - self._clock_now()
+                if left >= 0:
+                    status["approved"] = True
+                    status["ticks_left"] = left
+            if not status["approved"]:
+                status["approved_by"] = ""
+        last_approve = -1
+        last_pending = None
+        for entry in self.audit.entries():
+            if entry.get("secret") != ref.sm_name:
+                continue
+            if entry.get("action") == "approve":
+                last_approve = int(entry.get("seq", 0))
+            elif entry.get("action") == "resolve" and entry.get("result") == "pending-approval":
+                last_pending = entry
+        if last_pending is not None and int(last_pending.get("seq", 0)) > last_approve:
+            status["last_requested_seq"] = last_pending.get("seq")
+            status["last_requested_ts"] = last_pending.get("ts")
+            status["pending"] = status["gated"] and not status["approved"]
+        return status
 
     def _has_valid_approval(self, name: str) -> bool:
         token = self.approvals_dir / name
