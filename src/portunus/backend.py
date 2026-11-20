@@ -584,22 +584,32 @@ class VaultServerBackend:
 
 
 class InfisicalBackend:
-    """Infisical -- STUB. No real calls.
-
-    Interface-conformant placeholder, matching AWSSecretsManagerBackend's
-    own restraint. Researched (portunus-swappable-trio): Infisical's core
-    (self-hosted secrets engine, CLI, SDKs) is genuinely MIT-licensed --
-    the cleanest license of the researched candidates. Fully self-hostable
-    and container-native (Docker Compose/Helm), fitting this project's
-    no-OS-lock posture. No running Infisical instance is validated against
-    yet, so this stays a stub.
+    """Infisical, read-only, via universal auth (machine identity) -- see
+    infisical.py. `sm_name` is either a full address
+    `"infisical:<project-id>:<environment>:<path/NAME>"`, or a plain
+    `NAME` / `folder/NAME` resolved through the reference project's Infisical
+    mapping (`portunus infisical map`). Missing credentials, a rejected login,
+    a denied read or an unreachable server all fail closed; nothing falls
+    back to another store (a bound reference's local-vault fallback on
+    NOT_FOUND is the router's existing #246 rule, not this class's).
     """
 
+    def __init__(self, local_backend=None, http=None, config_path=None,
+                 audit: Optional[AuditChain] = None):
+        from . import infisical  # local import keeps backend importable without urllib setup
+        self._mod = infisical
+        self.config_path = config_path
+        self.audit = audit
+        reader = local_backend.access if local_backend is not None else None
+        self.client = infisical.Client(http=http, local_reader=reader)
+
     def access(self, sm_name: str, project: str = "") -> str:
-        raise BackendError(
-            "Infisical backend is not yet implemented -- "
-            "request it: https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
-        )
+        try:
+            mappings = self._mod.load_mappings(self.config_path)
+            addr = self._mod.parse_address(sm_name, project, mappings)
+            return self.client.get_secret(addr)
+        except self._mod.InfisicalError as exc:
+            raise BackendError(str(exc)) from exc
 
 
 class DopplerBackend:

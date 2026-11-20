@@ -31,7 +31,7 @@ graph TD
     subgraph ARCA["ARCA — the vault store (per-reference/per-project router)"]
         Router["backend router<br/>(_make_backend_router)"]
         Real["Real backends<br/>Local · GCP (+ sync-down cache)"]
-        Stub["Honest stubs<br/>AWS · Vault · Infisical · Doppler · 1Password · Azure"]
+        Stub["Honest stubs<br/>AWS · Vault · Doppler · 1Password · Azure"]
     end
 
     Audit[("Audit chain<br/>(audit.py)<br/>tamper-evident hash chain")]

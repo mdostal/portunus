@@ -17,6 +17,15 @@ All notable changes to Portunus are documented in this file.
   URL as `?fulfill=`, can enable the reference on save, and works at narrow widths. New CLI
   command `portunus approvals [--name] [--pending] [--json]`; new routes `/api/approvals`,
   `/api/approve`, `/api/gate`, `/api/state`.
+- **Infisical backend: `backend=infisical` is now a real adapter (PANT-1403, GH #254).** It used
+  to be a stub that always failed. It is read-only and logs in with a machine identity through
+  universal auth. Credentials come from `INFISICAL_TOKEN`, from
+  `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`/`_SECRET`, or from the local vault. Address a secret with
+  `infisical:<project-id>:<env>:<path/NAME>`, or map a Portunus project with
+  `portunus infisical map <project> --project-id ... --env ...` and use plain names through
+  `bindings set <project> --backend infisical`. Missing credentials, a rejected login, a denied
+  read or an unreachable server all fail closed. `portunus infisical status [--check]` and
+  `portunus health` report mappings and where credentials come from.
 - **`portunus reset <name>`: reset a web account's password through its inbox (PANT-1402, GH #256).**
   For accounts whose email is an inbox Portunus can read (AgentMail first), Portunus requests the
   provider's reset email, reads the link with the inbox's API key, and stores a new random
