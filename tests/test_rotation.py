@@ -17,7 +17,6 @@ from portunus.rotation import (
     RotationResult,
     VercelRotationAdapter,
     GitHubRotationAdapter,
-    StripeRotationAdapter,
     audit_rotate,
     capability_for_status,
     load_rotation_bindings,
@@ -32,19 +31,6 @@ def test_rotation_binding_defaults_to_stub_status():
     binding = RotationBinding(provider="vercel")
     assert binding.status == "stub"
     assert binding.account == ""
-
-
-@pytest.mark.parametrize("adapter_cls,provider_name", [
-    (StripeRotationAdapter, "Stripe"),
-])
-def test_stub_adapters_unconditionally_raise(adapter_cls, provider_name):
-    adapter = adapter_cls()
-    with pytest.raises(RotationAdapterError) as exc_info:
-        adapter.rotate(ref=None)
-    message = str(exc_info.value)
-    assert provider_name in message
-    assert "github.com" in message
-    assert "adapter-request" in message
 
 
 def test_rotation_bindings_round_trip(home):
@@ -71,6 +57,7 @@ def test_rotation_bindings_file_is_0600(home):
 def test_rotation_adapter_for_resolves_by_provider():
     assert isinstance(rotation_adapter_for("vercel"), VercelRotationAdapter)
     assert isinstance(rotation_adapter_for("github"), GitHubRotationAdapter)
+    from portunus.stripe_rotation import StripeRotationAdapter
     assert isinstance(rotation_adapter_for("stripe"), StripeRotationAdapter)
 
 
@@ -254,26 +241,8 @@ def test_rotation_result_field_set_includes_key_id():
     assert "key_id" in field_names
 
 
-@pytest.mark.parametrize("adapter_cls", [
-    StripeRotationAdapter,
-])
-def test_stub_adapters_capability_returns_unknown(adapter_cls):
-    assert adapter_cls().capability() == "unknown"
-
-
 def test_oauth_adapter_capability_returns_auto():
     assert OAuthRefreshRotationAdapter().capability() == "auto"
-
-
-@pytest.mark.parametrize("adapter_cls", [
-    StripeRotationAdapter,
-])
-def test_stub_adapters_rotate_accepts_retire_old_kwarg(adapter_cls):
-    """retire_old=False must be accepted without TypeError -- existing tests
-    still verify that rotate() raises RotationAdapterError."""
-    adapter = adapter_cls()
-    with pytest.raises(RotationAdapterError):
-        adapter.rotate(ref=None, retire_old=False)
 
 
 def test_audit_rotate_ok_appends_rotate_action(home):
