@@ -220,7 +220,8 @@ def portunus_rotation_status(provider: str = "") -> dict:
     through a single job), `gcp` (service-account key create/verify/
     store), `resend` (API key), `grafana-cloud` (access policy token),
     `youtrack` (JetBrains Hub permanent token), `vercel` (access token),
-    `neon` (Postgres role-password reset; needs --retire-old) and `github`
+    `neon` (Postgres role-password reset; needs --retire-old), `upstash`
+    (Redis REST token via password reset; needs --retire-old) and `github`
     (OAuth App token reset; other GitHub token types are refused per
     reference as manual/not-applicable). Stub adapters:
     stripe. Manual (no

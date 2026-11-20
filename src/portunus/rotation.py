@@ -54,6 +54,12 @@ Real adapters:
   Neon to apply it, and verifies it with a real connect + `SELECT 1`. A
   reset is destructive by design, so it requires --retire-old.
 
+- `UpstashRotationAdapter` resets an Upstash Redis database's password
+  through the Developer API, which also regenerates its standard and
+  read-only REST tokens; stores the new REST token (and, when tagged, the
+  read-only one) and verifies it with a REST `PING`. Destructive by design
+  (the old tokens are revoked at once), so it requires --retire-old.
+
 Stub adapters (`StripeRotationAdapter`) still raise unconditionally. A
 future real adapter would authenticate using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
@@ -2726,6 +2732,330 @@ class NeonRotationAdapter:
         return f"HTTP {status}" + (f" {code}: {message}" if code or message else "")
 
 
+# --- Upstash Redis REST token (PANT-1129) ------------------------------------
+# Developer API (https://upstash.com/docs/devops/developer-api), HTTP Basic
+# auth with EMAIL:API_KEY:
+#   GET  /v2/redis/database/{id}        -> Database {endpoint, rest_token, ...}
+#   POST /v2/redis/reset-password/{id}  -> Database with the NEW password,
+#                                          rest_token and read_only_rest_token
+# Upstash: "You can revoke both Standard and Read Only tokens by resetting
+# password of your database." The reset restarts the database (briefly
+# unavailable), closes every TCP connection, and leaves ACL users' passwords
+# and REST tokens unchanged. `rest_token` is "omitted when credential
+# protection is on ... or when the API key or your team role is read-only".
+
+UPSTASH_API = "https://api.upstash.com/v2"
+
+UpstashTransport = Callable[[str, str, Dict[str, str], Optional[dict], float], Tuple[int, dict]]
+
+
+def _default_upstash_transport(
+    method: str, url: str, headers: Dict[str, str], body: Optional[dict], timeout: float
+) -> Tuple[int, dict]:
+    return _json_http(method, url, headers, body, timeout, "Upstash API")
+
+
+def _upstash_rest_url(endpoint: str) -> str:
+    """REST base URL from the Database `endpoint` field, which Upstash
+    documents as either a slug (``beloved-stallion-58500``) or a full host."""
+    host = endpoint.strip().strip("/")
+    if host.startswith("https://"):
+        host = host[len("https://"):]
+    if not host or "/" in host or "@" in host or host.startswith("http://"):
+        return ""
+    return "https://" + (host if "." in host else f"{host}.upstash.io")
+
+
+class UpstashRotationAdapter:
+    """Real Upstash Redis REST token rotation, via the Developer API's
+    reset-password endpoint.
+
+    A reset replaces the database's password AND both REST tokens (standard
+    and read-only) in place -- the old ones stop working immediately, so
+    there is no add-new-then-retire path. Same posture as the Neon role
+    reset and the GitHub OAuth App reset: an exception to Portunus's
+    non-destructive default, so the adapter refuses unless the caller passes
+    ``retire_old=True`` (``--retire-old``), and the new token is STORED FIRST
+    and verified second.
+
+    Phases (in order):
+    1. check   -- ``GET /redis/database/{id}``; refuses (nothing reset) when
+                  the response carries no ``rest_token`` (credential
+                  protection on, or a read-only API key) or when it is not
+                  the stored token (wrong database id, an ACL-user token the
+                  reset would not touch, or a token already rotated
+                  elsewhere).
+    2. reset   -- ``POST /redis/reset-password/{id}``; the response carries
+                  the new tokens.
+    3. store   -- the new standard REST token to the ref, and, when
+                  ``upstash_read_only_token_ref`` is tagged, the new
+                  read-only token to that ref.
+    4. verify  -- ``GET {rest_url}/ping`` with the new token must return
+                  ``{"result": "PONG"}``, retried while the database restarts.
+
+    Tags:
+    - ``upstash_database_id`` -- required; the database's id (Console:
+      the database's Details page, or ``GET /v2/redis/databases``).
+    - ``upstash_api_key_ref`` -- required; name of another reference holding
+      a Read/Write Developer API key (Console: Account -> Management API).
+    - ``upstash_email_ref`` or ``upstash_email`` -- one is required; the
+      account email the API key belongs to (basic-auth username). A ref name
+      or the literal address.
+    - ``upstash_rest_url_ref`` -- optional; reference holding the REST URL
+      used to verify. Defaults to the URL derived from ``endpoint``.
+    - ``upstash_read_only_token_ref`` -- optional; reference holding the
+      read-only token, which the reset also revokes.
+
+    Every ref written must live in the local backend, checked before the
+    reset. No token, password or API key is ever returned, logged, or put in
+    an error message.
+    """
+
+    def __init__(
+        self,
+        transport: Optional[UpstashTransport] = None,
+        local_backend=None,
+        audit=None,
+        sleep: Callable[[float], None] = time.sleep,
+        timeout: float = 30.0,
+        verify_attempts: int = 10,
+    ):
+        self._transport = transport or _default_upstash_transport
+        self._local_backend = local_backend
+        self._audit = audit
+        self._sleep = sleep
+        self._timeout = timeout
+        self._verify_attempts = max(1, verify_attempts)
+
+    def capability(self) -> str:
+        return "auto"
+
+    def rotate(self, ref, resolver=None, retire_old: bool = False) -> RotationResult:
+        if ref is None or not hasattr(ref, "sm_name"):
+            raise RotationAdapterError(
+                "Upstash rotation needs a registry reference (with tags), not a bare name"
+            )
+        if resolver is None:
+            raise RotationAdapterError(
+                "Upstash rotation needs a resolver to read the stored REST token"
+            )
+        ref_name = getattr(ref, "name", ref.sm_name)
+        tags = getattr(ref, "tags", None) or {}
+
+        database_id = tags.get("upstash_database_id", "")
+        api_key_ref = tags.get("upstash_api_key_ref", "")
+        email_ref = tags.get("upstash_email_ref", "")
+        email = tags.get("upstash_email", "")
+        missing = [t for t, v in (("upstash_database_id", database_id),
+                                  ("upstash_api_key_ref", api_key_ref),
+                                  ("upstash_email_ref or upstash_email", email_ref or email))
+                   if not v]
+        if missing:
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r} needs tags {', '.join(missing)} -- see "
+                "docs/rotation.md (Upstash Redis REST tokens)"
+            )
+        if not retire_old:
+            raise RotationAdapterError(
+                f"Upstash password reset for {ref_name!r} revokes the current standard AND "
+                "read-only REST tokens immediately and restarts the database (there is no "
+                "add-then-retire path) -- re-run with --retire-old to acknowledge."
+            )
+        if getattr(ref, "backend", "") not in ("", "local"):
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r}: reference lives in backend {ref.backend!r}, "
+                "but this adapter can only store to the local vault -- refusing before reset, "
+                "which would otherwise leave no valid token stored."
+            )
+        ro_ref = tags.get("upstash_read_only_token_ref", "")
+
+        local_backend = self._local_backend
+        if local_backend is None:
+            from .localvault import LocalEncryptedBackend
+            local_backend = LocalEncryptedBackend()
+
+        templates = ["{{secret:%s}}" % api_key_ref,
+                     "{{secret:%s}}" % email_ref if email_ref else None,
+                     "{{secret:%s}}" % ref_name]
+        rest_url_ref = tags.get("upstash_rest_url_ref", "")
+
+        def _with_secrets(api_key, email_value, old_token):
+            if rest_url_ref:
+                return resolver.resolve_call(
+                    "{{secret:%s}}" % rest_url_ref,
+                    lambda url: self._check_reset_store_verify(
+                        ref, ref_name, database_id, api_key, email_value, old_token,
+                        url.strip(), ro_ref, local_backend),
+                )
+            return self._check_reset_store_verify(
+                ref, ref_name, database_id, api_key, email_value, old_token, "", ro_ref,
+                local_backend)
+
+        def _chain(i, values):
+            if i == len(templates):
+                api_key, email_value, old_token = values
+                return _with_secrets(api_key, email_value or email, old_token)
+            if templates[i] is None:
+                return _chain(i + 1, values + [""])
+            return resolver.resolve_call(templates[i], lambda v: _chain(i + 1, values + [v]))
+
+        _chain(0, [])
+        return RotationResult(
+            provider="upstash",
+            ref_name=ref_name,
+            key_id=database_id,
+            phase="verified",
+            retired_old=True,
+        )
+
+    # --- phases ---------------------------------------------------------------
+
+    def _check_reset_store_verify(self, ref, ref_name, database_id, api_key, email, old_token,
+                                  rest_url, ro_ref, local_backend) -> None:
+        import hmac
+
+        auth = "Basic " + base64.b64encode(f"{email.strip()}:{api_key.strip()}".encode()).decode()
+        db_path = quote(database_id, safe="")
+
+        # --- 1. CHECK: right database, and the API will hand back tokens -------
+        status, body = self._api(auth, "GET", f"/redis/database/{db_path}")
+        if status != 200:
+            self._audit_append(ref.sm_name, f"err:get-database-{status}")
+            raise RotationAdapterError(
+                f"Upstash get-database failed for {ref_name!r}: {self._describe(status, body)} "
+                "-- nothing was reset"
+            )
+        current = str(body.get("rest_token") or "")
+        if not current:
+            self._audit_append(ref.sm_name, "err:no-rest-token-in-api")
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r}: the Developer API returned no rest_token "
+                "for this database -- credential protection is on, or the API key / team role "
+                "is read-only. A reset would revoke the token without handing Portunus the new "
+                "one, so nothing was reset."
+            )
+        matches = hmac.compare_digest(current.encode(), old_token.strip().encode())
+        del current
+        if not matches:
+            self._audit_append(ref.sm_name, "err:token-mismatch")
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r}: the stored value is not the current REST "
+                f"token of database {database_id!r} (wrong upstash_database_id, an ACL-user "
+                "token the reset would not change, or already rotated elsewhere) -- nothing "
+                "was reset."
+            )
+        endpoint = str(body.get("endpoint") or "")
+
+        # --- 2. RESET (not retried: a second reset would revoke the first) ------
+        status, body = self._api(auth, "POST", f"/redis/reset-password/{db_path}")
+        new_token = str(body.get("rest_token") or "") if status == 200 else ""
+        if not new_token:
+            self._audit_append(ref.sm_name, f"err:reset-{status}")
+            if status == 200:
+                raise RotationAdapterError(
+                    f"Upstash rotation for {ref_name!r}: reset-password succeeded but returned "
+                    "no rest_token -- the old token is revoked; copy the new one from the "
+                    "Upstash Console (database -> REST API) and re-store it."
+                )
+            raise RotationAdapterError(
+                f"Upstash reset-password failed for {ref_name!r}: "
+                f"{self._describe(status, body)} -- nothing was changed on Portunus's side"
+            )
+        new_ro = str(body.get("read_only_rest_token") or "")
+        endpoint = str(body.get("endpoint") or "") or endpoint
+        if hmac.compare_digest(new_token.encode(), old_token.strip().encode()):
+            del new_token, new_ro
+            self._audit_append(ref.sm_name, "err:token-unchanged")
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r}: reset-password returned the same REST "
+                "token -- nothing was stored; check the database in the Upstash Console."
+            )
+
+        # --- 3. STORE: the old token is already revoked -- store first --------
+        try:
+            local_backend.store(ref.sm_name, new_token)
+        except Exception as exc:
+            del new_token, new_ro
+            self._audit_append(ref.sm_name, "err:store-failed-after-reset")
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r}: Upstash reset the password but storing the "
+                f"new REST token failed ({type(exc).__name__}) -- the old token is already "
+                "revoked; copy the new one from the Upstash Console (database -> REST API) and "
+                "re-store it."
+            ) from None
+        ro_problem = ""
+        if ro_ref:
+            if not new_ro:
+                ro_problem = "the reset returned no read_only_rest_token"
+            else:
+                try:
+                    local_backend.store(ro_ref, new_ro)
+                except Exception as exc:
+                    ro_problem = f"storing it failed ({type(exc).__name__})"
+        del new_ro
+
+        # --- 4. VERIFY: PING with the new token ---------------------------------
+        url = rest_url or _upstash_rest_url(endpoint)
+        ok, reason = (self._verify(url, new_token) if url.startswith("https://")
+                      else (False, "no usable REST URL"))
+        del new_token
+        if not ok:
+            self._audit_append(ref.sm_name, "warn:verify-failed")
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r}: new REST token stored, but PING with it "
+                f"failed ({reason}) -- investigate before relying on it."
+                + (f" Also: read-only token ref {ro_ref!r} was NOT updated: {ro_problem}."
+                   if ro_problem else "")
+            )
+        if ro_problem:
+            self._audit_append(ref.sm_name, "warn:read-only-token-not-stored")
+            raise RotationAdapterError(
+                f"Upstash rotation for {ref_name!r}: new REST token stored and verified, but "
+                f"read-only token ref {ro_ref!r} was NOT updated ({ro_problem}) -- the old "
+                "read-only token is revoked; copy the new one from the Upstash Console."
+            )
+        self._audit_append(ref.sm_name, f"ok:database={database_id}")
+
+    def _verify(self, rest_url: str, token: str) -> Tuple[bool, str]:
+        """(True, "") when PING answers PONG, else (False, short reason) --
+        never response text."""
+        reason = ""
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json",
+                   "User-Agent": "portunus-rotation"}
+        for attempt in range(self._verify_attempts):
+            if attempt:
+                self._sleep(2.0)
+            try:
+                status, body = self._transport(
+                    "GET", rest_url.rstrip("/") + "/ping", headers, None, self._timeout)
+            except RotationAdapterError:
+                reason = "REST endpoint unreachable"
+                continue
+            if status == 200 and body.get("result") == "PONG":
+                return True, ""
+            reason = f"HTTP {status}"
+        return False, reason
+
+    # --- helpers --------------------------------------------------------------
+
+    def _api(self, auth: str, method: str, path: str) -> Tuple[int, dict]:
+        headers = {"Authorization": auth, "Accept": "application/json",
+                   "User-Agent": "portunus-rotation"}
+        return self._transport(method, UPSTASH_API + path, headers, None, self._timeout)
+
+    def _audit_append(self, sm_name: str, result: str) -> None:
+        if self._audit:
+            self._audit.append("rotate:upstash-rest-token", sm_name, result)
+
+    @staticmethod
+    def _describe(status: int, resp: dict) -> str:
+        # Only an error string -- never the body, which on success carries
+        # the database's password and tokens.
+        err = resp.get("error") if isinstance(resp, dict) else ""
+        err = str(err)[:200] if isinstance(err, str) else ""
+        return f"HTTP {status}" + (f": {err}" if err else "")
+
+
 class StripeRotationAdapter:
     """Stripe -- STUB. No real calls."""
 
@@ -2784,6 +3114,7 @@ _ADAPTERS = {
     "vercel": VercelRotationAdapter,
     "github": GitHubRotationAdapter,
     "neon": NeonRotationAdapter,
+    "upstash": UpstashRotationAdapter,
     "stripe": StripeRotationAdapter,
     "sentry": SentryRotationAdapter,
     "zernio": _zernio_adapter,
