@@ -1470,3 +1470,77 @@ class ClerkLivenessAdapter(CredentialKindLivenessAdapter):
 
 
 register_liveness_adapter("clerk", ClerkLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Multica (PANT-1128, GH #201). A workspace personal access token (`mul_...`)
+# authenticates the Multica REST API; the cheapest authenticated read is
+# `GET /api/me`. Self-hosted instances answer on their own API host.
+# ---------------------------------------------------------------------------
+
+# Reference tag: the Multica API base URL, for a self-hosted instance.
+MULTICA_URL_TAG = "multica_url"
+MULTICA_DEFAULT_URL = "https://api.multica.ai"
+
+
+class MulticaLivenessAdapter(HTTPLivenessAdapter):
+    """Multica: `GET <api>/api/me` with the PAT as a bearer token. It returns
+    only the token owner's own profile, with no workspace or issue data. The
+    auth middleware answers a missing, unknown, revoked or expired token with
+    401 `invalid token` (a bogus `mul_` token got 401 from both
+    api.multica.ai and a self-hosted backend on 2026-11-20). Its 403s are a
+    temporarily disabled user or a CSRF failure, not a bad token, so they
+    stay unknown.
+
+    The API base comes from the `multica_url` tag (a self-hosted instance's
+    public API address), else `https://api.multica.ai`. A token checked
+    against the wrong instance reads 401, a false dead, so set the tag for
+    self-hosted tokens. A tag that isn't an http(s) URL reads unknown with
+    no request.
+
+    A value that isn't a `mul_` PAT reads unknown without a request: the
+    server would answer 401 for it, and a `mat_` run token or a session JWT
+    stored here by mistake isn't the credential this reference names."""
+
+    PATH = "/api/me"
+    NOT_PAT = -1  # boundary sentinel: never a real HTTP status
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__("multica",
+                         HTTPProbe(url=MULTICA_DEFAULT_URL + self.PATH, dead_statuses=(401,)),
+                         transport=transport, timeout=timeout)
+
+    @staticmethod
+    def base_url(ref) -> str:
+        """The API base for `ref`, or "" when the tag is not an http(s) URL."""
+        tagged = ((getattr(ref, "tags", None) or {}).get(MULTICA_URL_TAG, "") or "").strip()
+        if not tagged:
+            return MULTICA_DEFAULT_URL
+        parsed = urllib.parse.urlsplit(tagged)
+        if (parsed.scheme not in ("http", "https") or not parsed.netloc or "@" in parsed.netloc
+                or parsed.query or parsed.fragment):
+            return ""
+        return tagged.rstrip("/")
+
+    def check(self, ref, resolver) -> LivenessResult:
+        base = self.base_url(ref)
+        if not base:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"{MULTICA_URL_TAG!r} tag is not an http(s) URL -- not probed")
+        url = base + self.PATH
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if not value.startswith("mul_"):
+                return self.NOT_PAT
+            return self._transport("GET", url, self.probe.headers_for(value), self._timeout)
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NOT_PAT:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: stored value is not a Multica PAT (no mul_ prefix)")
+        return LivenessResult(ref.name, self.provider, self.probe.classify(code), http_status=code,
+                              detail=f"GET {url} -> {code}")
+
+
+register_liveness_adapter("multica", MulticaLivenessAdapter)

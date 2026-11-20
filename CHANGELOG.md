@@ -6,6 +6,15 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Multica PAT liveness probe (`multica`, PANT-1128, GH #201).** `portunus liveness check`
+  now probes a stored Multica personal access token with `GET <api>/api/me`, which returns only
+  the owner's profile. 401 is `dead` and every other failure is `unknown`. The API base comes from
+  the `multica_url` tag (self-hosted), else `https://api.multica.ai`. A value without the `mul_`
+  prefix is not sent. The rotation docs now record that Multica publishes PAT management routes
+  (`/api/tokens` create/list/revoke, `/api/tokens/current/renew`), so Multica moves from
+  `unknown` to a `stub` capability with a manual re-issue runbook. The rotation adapter is a
+  follow-up. See docs/liveness.md and docs/rotation.md, "Multica personal access tokens".
+
 - **Bitwarden vault backend + discovery (PANT-1147, #164).** Portunus can now see into a Bitwarden
   personal/organization vault through the official `bw` CLI. `portunus bitwarden list [--search Q]`
   and the new `portunus_bitwarden_search` MCP tool enumerate items as metadata only (id, name,
