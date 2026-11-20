@@ -155,8 +155,17 @@ def load(path: Optional[Path] = None) -> Dict[str, FederationProfile]:
         raw = json.loads(p.read_text())
     except json.JSONDecodeError as exc:
         raise FederationError(f"{p.name} is not valid JSON") from exc
+    if not isinstance(raw, dict):
+        raise FederationError(f"{p.name} must be a JSON object")
+    profiles = raw.get("profiles")
+    if profiles is None:
+        profiles = {}
+    if not isinstance(profiles, dict):
+        raise FederationError(f"{p.name}: 'profiles' must be an object")
     out: Dict[str, FederationProfile] = {}
-    for name, body in (raw.get("profiles") or {}).items():
+    for name, body in profiles.items():
+        if not isinstance(body, dict):
+            raise FederationError(f"{p.name}: profile {name!r} must be an object")
         out[name] = FederationProfile(name=name, **{k: v for k, v in body.items() if k in _FIELDS})
     return out
 

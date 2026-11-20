@@ -353,7 +353,9 @@ class TokenRefresher:
                 minted = self.run_once()
                 self._say(f"refreshed {self.path} {minted.describe()}")
                 wait = self.delay()
-            except AuthError as exc:
+            except (AuthError, OSError) as exc:
+                # A transient write failure must not kill the refresher thread
+                # while the child keeps running on a soon-to-expire token.
                 self._say(f"refresh failed, retrying in {RETRY_SECONDS}s: {exc}")
                 wait = float(RETRY_SECONDS)
 

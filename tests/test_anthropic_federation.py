@@ -181,3 +181,10 @@ def test_run_exec_mint_failure_does_not_start_child(home):
     with pytest.raises(af.FederationError, match="could not mint"):
         af.run_exec(p, ["true"], minter=minter, popen=lambda *a, **k: started.append(a))
     assert started == []
+
+
+@pytest.mark.parametrize("body", ["[]", '"x"', '{"profiles": []}', '{"profiles": {"m": "oops"}}'])
+def test_load_rejects_wrong_shape_with_federation_error(home, body):
+    (home / "anthropic-federation.json").write_text(body)
+    with pytest.raises(af.FederationError):
+        af.load()

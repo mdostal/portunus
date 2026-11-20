@@ -208,3 +208,39 @@ def test_refresher_rewrites_file_and_survives_failure(tmp_path, monkeypatch):
     text = log.getvalue()
     assert "refresh failed" in text and "refreshed" in text
     assert first.token not in text and second.token not in text
+
+
+def test_refresher_survives_transient_write_oserror(tmp_path, monkeypatch):
+    first = it._wrap(make_jwt(good_claims(email="one@x")), "gcloud", "aud")
+    second = it._wrap(make_jwt(good_claims(email="two@x")), "gcloud", "aud")
+    minter = SeqMinter([first, first, second])
+    log = io.StringIO()
+    out = tmp_path / "tok.jwt"
+    r = it.TokenRefresher(minter, out, log=log)
+    r.run_once()
+
+    real_write = it.write_token_file
+    calls = {"n": 0}
+
+    def flaky_write(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("disk hiccup")
+        return real_write(*a, **kw)
+
+    monkeypatch.setattr(it, "write_token_file", flaky_write)
+    waits = []
+
+    class FakeEvent:
+        def wait(self, seconds):
+            waits.append(seconds)
+            return len(waits) > 2
+
+        def set(self):
+            pass
+
+    r._stop = FakeEvent()
+    r.loop()
+    assert out.read_text().strip() == second.token
+    assert waits[1] == it.RETRY_SECONDS
+    assert "refresh failed" in log.getvalue()
