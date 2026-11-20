@@ -33,6 +33,7 @@ from .leakscan import (
 )
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .search import search_references
+from . import bitwarden
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
@@ -329,6 +330,35 @@ def portunus_parity_check(names: Optional[List[str]] = None, all: bool = False,
     if error:
         return {"error": error}
     return {"results": [r.to_dict() for r in results]}
+
+
+@mcp.tool()
+def portunus_bitwarden_search(query: str = "", register: bool = False) -> dict:
+    """Read-only: search the human's Bitwarden vault (via the `bw` CLI) for
+    items -- returns id, name, username, URIs and custom-field NAMES only,
+    never a password or other value. Use when portunus_search comes up empty
+    for a login that may live in Bitwarden (e.g. a social-media account).
+
+    With register=True, login items are written as state=requested,
+    backend=bitwarden placeholders (never injectable until a human enables
+    them; name collisions are reported, never overwritten), so later
+    portunus_search calls find them. Requires an unlocked vault (BW_SESSION
+    exported in Portunus's environment); returns {"error": ...} otherwise.
+    Mirrors `portunus bitwarden list [--search Q] [--register] --json`."""
+    try:
+        items = bitwarden.list_items(query)
+    except bitwarden.BitwardenError as exc:
+        return {"error": str(exc)}
+    out: dict = {"items": [i.to_dict() for i in items]}
+    if register:
+        registry, audit, _broker, _resolver = _build()
+        report = bitwarden.register_items(registry, items)
+        for name in report.registered:
+            audit.append("bitwarden_register", name, "requested")
+        out.update(registered=report.registered,
+                   already_registered=report.already_registered,
+                   conflicts=report.conflicts)
+    return out
 
 
 @mcp.tool()

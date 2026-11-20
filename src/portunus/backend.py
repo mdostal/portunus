@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Protocol, runtime_checkable
 
-from . import chrome_crypto, chrome_discovery
+from . import bitwarden, chrome_crypto, chrome_discovery
 from .auth import (
     AuditChain,
     AuthError,
@@ -758,6 +758,30 @@ class ChromeBackend:
             return chrome_crypto.decrypt_blob(key, blob)
         except chrome_crypto.ChromeCryptoError as exc:
             raise BackendError(f"chrome backend: {exc}") from exc
+
+
+class BitwardenBackend:
+    """Reads one field of one item from the human's own Bitwarden vault via
+    the official `bw` CLI (see bitwarden.py). `sm_name` encodes
+    `"bitwarden:<item-id>[:<field>]"` -- field defaults to `password`;
+    `username`, `totp` (current code), `notes`, or any custom field name also
+    work. Read-only: Portunus never writes to the Bitwarden vault.
+
+    Needs an unlocked vault (`BW_SESSION` exported by the human); fails
+    closed with a remediation message otherwise. No in-memory cache, same
+    rationale as ChromeBackend.
+    """
+
+    def __init__(self, audit: Optional[AuditChain] = None, runner=None):
+        self.audit = audit or AuditChain()
+        self.runner = runner
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        try:
+            item_id, fld = bitwarden.parse_sm_name(sm_name)
+            return bitwarden.get_field(item_id, fld, runner=self.runner)
+        except bitwarden.BitwardenError as exc:
+            raise BackendError(str(exc)) from exc
 
 
 class SyncingBackend:

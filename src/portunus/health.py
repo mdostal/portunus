@@ -272,6 +272,20 @@ def _backend_kind(ref: Reference, bindings: Dict[str, VaultBinding], fallback: s
     return binding.backend if binding is not None else fallback
 
 
+def _check_bitwarden(report, refs) -> None:
+    from . import bitwarden  # local import: health stays importable without it
+    try:
+        st = bitwarden.status()
+    except bitwarden.BitwardenError as exc:
+        report.add("backend:bitwarden", False, str(exc))
+        return
+    ok = st.get("status") == "unlocked"
+    detail = f"{len(refs)} references; bw vault is {st.get('status') or 'unknown'}"
+    if not ok:
+        detail += f" -- {bitwarden.LOCKED_REMEDIATION}"
+    report.add("backend:bitwarden", ok, detail)
+
+
 def _check_backends(report, base, refs, bindings, runner) -> None:
     fallback = os.environ.get("PORTUNUS_BACKEND", "local")
     fallback = "gcp" if fallback == "gcloud" else fallback
@@ -290,6 +304,8 @@ def _check_backends(report, base, refs, bindings, runner) -> None:
             _check_gcp(report, routed[kind], bindings, runner)
         elif kind == "oauth":
             report.add("backend:oauth", True, "served from the local vault")
+        elif kind == "bitwarden":
+            _check_bitwarden(report, routed[kind])
         elif kind in _STUB_BACKENDS:
             report.add(f"backend:{kind}", False,
                        f"{len(routed[kind])} references route to {kind}, which is a "
