@@ -240,6 +240,9 @@ via `portunus rotation run <ref-name> [--retire-old]`. The reference must have:
   Split refs stay split on purpose: their consumers read separate env vars, and merging them
   into one JSON ref would break every consumer.
 
+To register the `gcp` rotation binding and prove a first rotation end to end, follow the
+[Rotation Bindings Runbook](rotation-bindings-runbook.md).
+
 Prefer Workload Identity Federation where possible -- WIF credentials require no rotation.
 
 ### GitHub (per credential subtype)
