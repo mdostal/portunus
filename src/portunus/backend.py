@@ -42,6 +42,54 @@ class BackendError(RuntimeError):
     """Raised when a backend cannot return a value (missing / access denied)."""
 
 
+# Markers a remote store's error carries when the SECRET itself is absent
+# (as opposed to auth/network/CLI failures): GCP's gRPC status, AWS's
+# exception name. Deliberately narrow -- "gcloud CLI not found on PATH" or
+# "credential_file ... not found" must NOT count as a missing secret.
+_NOT_FOUND_MARKERS = ("NOT_FOUND", "ResourceNotFoundException", "not found or has no versions")
+
+
+def is_not_found(exc: BaseException) -> bool:
+    """True when `exc` says the remote store has no such secret."""
+    text = str(exc)
+    return any(marker in text for marker in _NOT_FOUND_MARKERS)
+
+
+def _local_has(local, sm_name: str) -> bool:
+    """Key presence in the local tier, without decrypting when possible."""
+    has = getattr(local, "has", None)
+    if has is not None:
+        return bool(has(sm_name))
+    try:
+        local.access(sm_name)
+        return True
+    except BackendError:
+        return False
+
+
+def _warn_local_only(audit, sm_name: str, where: str) -> None:
+    """A reference was served from the local vault because its routed
+    remote said NOT_FOUND. Loud on stderr (never stdout -- MCP stdio and
+    `resolve --json` own stdout) and in the audit chain; never the value."""
+    msg = (f"portunus: warning: {sm_name} is not in {where}; served the local-vault copy "
+           f"instead (last_sync_result=local-only). Pin or migrate it: "
+           f"`portunus doctor --fix-routing` (dry run), then add --apply")
+    print(msg, file=sys.stderr)
+    if audit is not None:
+        try:
+            audit.append("credential-access", sm_name, f"warn:local-only:not-in-{where}")
+        except Exception:  # noqa: BLE001 - a warning must never fail the resolve
+            pass
+
+
+def _remote_hint(exc: BackendError, sm_name: str, where: str) -> BackendError:
+    """Same error, plus where the value actually is and the one fix."""
+    return BackendError(
+        f"{exc} -- note: {sm_name} has a value in the LOCAL vault, but this reference "
+        f"routes to {where}; run `portunus doctor --fix-routing` to pin or migrate it"
+    )
+
+
 @runtime_checkable
 class SecretBackend(Protocol):
     def access(self, sm_name: str, project: str = "") -> str:
@@ -440,6 +488,42 @@ class GcloudBackend:
             raise self._failure("versions add", sm_name, effective_project, proc.stderr)
         return (proc.stdout or "").strip()
 
+    def create_secret(self, sm_name: str, value: str, project: str = "") -> str:
+        """Create `sm_name` (automatic replication) with `value` as its first
+        version. Value on stdin only, same as add_version()."""
+        if shutil.which("gcloud") is None:
+            raise BackendError("gcloud CLI not found on PATH")
+        if not value:
+            raise BackendError("refusing to create a secret with an empty value")
+        effective_project = project or self.project
+        provider = self._credential_provider_for(effective_project)
+        binding = self.bindings.get(effective_project)
+        with self._access_token_file(provider) as token_file:
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
+            cmd.extend(["secrets", "create", sm_name, "--data-file=-",
+                        "--replication-policy=automatic"])
+            if effective_project:
+                cmd.append(f"--project={effective_project}")
+            cmd.append("--format=value(name)")
+            try:
+                proc = self._run(cmd, env, input=value)
+            except subprocess.TimeoutExpired as exc:
+                raise BackendError(f"gcloud timeout creating {sm_name}") from exc
+        if proc.returncode != 0:
+            raise self._failure("secrets create", sm_name, effective_project, proc.stderr)
+        return (proc.stdout or "").strip()
+
+    def push(self, sm_name: str, value: str, project: str = "") -> str:
+        """add_version(), creating the secret first if GCP says NOT_FOUND --
+        the "move a local-only value into GCP" path (#246)."""
+        try:
+            return self.add_version(sm_name, value, project=project)
+        except BackendError as exc:
+            if not is_not_found(exc):
+                raise
+        return self.create_secret(sm_name, value, project=project)
+
     @contextmanager
     def _access_token_file(self, provider: Optional[GCPWorkloadIdentityAuth]):
         if provider is None:
@@ -799,12 +883,23 @@ class SyncingBackend:
     match serves straight from the local cache with zero remote value-fetch;
     a mismatch (or first sync) fetches the real value, caches it, and
     updates the marker.
+
+    Local-only values (#246): `drop`/`prompt`/rotations write the local
+    vault under the PLAIN `sm_name`; this cache tier uses
+    `f"{project}:{sm_name}"`. When the remote says NOT_FOUND and there is
+    no cache entry but a plain local value exists, that value is served
+    with `last_sync_result="local-only"` and a stderr + audit warning --
+    never a bare remote NOT_FOUND. Any other remote failure with a plain
+    local value present raises with a hint naming the real location.
     """
 
-    def __init__(self, remote: SecretBackend, local: SecretBackend, state_path: Path):
+    def __init__(self, remote: SecretBackend, local: SecretBackend, state_path: Path,
+                 audit: Optional[AuditChain] = None, where: str = "gcp"):
         self.remote = remote
         self.local = local
         self.state_path = Path(state_path)
+        self.audit = audit
+        self.where = where
         # "synced" | "fresh" -- which path the most recent access() took.
         # Metadata about the cache's own behavior, never a value; lets
         # `portunus sync`/`portunus_sync` report synced vs. already_fresh
@@ -819,11 +914,26 @@ class SyncingBackend:
     def _save_state(self, state: Dict[str, str]) -> None:
         atomic_write(self.state_path, json.dumps(state, indent=2))
 
+    def _local_only(self, exc: BackendError, sm_name: str) -> str:
+        """Remote failed and the cache tier has nothing: serve a plain local
+        value on NOT_FOUND, else re-raise (with a hint if one exists)."""
+        if not _local_has(self.local, sm_name):
+            raise exc
+        if not is_not_found(exc):
+            raise _remote_hint(exc, sm_name, self.where) from exc
+        value = self.local.access(sm_name)
+        self.last_sync_result = "local-only"
+        _warn_local_only(self.audit, sm_name, self.where)
+        return value
+
     def access(self, sm_name: str, project: str = "") -> str:
         cache_key = f"{project}:{sm_name}"
         latest_version = getattr(self.remote, "latest_version", None)
         if latest_version is None:
-            value = self.remote.access(sm_name, project=project)
+            try:
+                value = self.remote.access(sm_name, project=project)
+            except BackendError as exc:
+                return self._local_only(exc, sm_name)
             self.local.store(cache_key, value)
             self.last_sync_result = "synced"
             return value
@@ -831,7 +941,12 @@ class SyncingBackend:
         state = self._load_state()
         try:
             marker = latest_version(sm_name, project=project)
-        except BackendError as network_exc:
+        except BackendError as remote_exc:
+            if is_not_found(remote_exc):
+                # The remote has no such secret: a cache entry is stale by
+                # definition (deleted upstream), so only a plain local value
+                # -- one that was never in the remote -- may be served.
+                return self._local_only(remote_exc, sm_name)
             # Remote unreachable (network/DNS/timeout). Serve the last-known-
             # good local copy if one exists, rather than hard-failing -- this
             # is what keeps a cached-mode project usable while disconnected.
@@ -844,7 +959,7 @@ class SyncingBackend:
             try:
                 value = self.local.access(cache_key)
             except BackendError:
-                raise network_exc from None
+                return self._local_only(remote_exc, sm_name)
             self.last_sync_result = "stale-offline"
             return value
         if state.get(cache_key) == marker:
@@ -855,9 +970,51 @@ class SyncingBackend:
             except BackendError:
                 pass  # marker recorded but local copy missing -- refetch below
 
-        value = self.remote.access(sm_name, project=project)
+        try:
+            value = self.remote.access(sm_name, project=project)
+        except BackendError as exc:
+            return self._local_only(exc, sm_name)
         self.local.store(cache_key, value)
         state[cache_key] = marker
         self.last_sync_result = "synced"
         self._save_state(state)
+        return value
+
+
+class LocalFallbackBackend:
+    """Wraps a remote store (GCP direct, AWS, ...) for references whose value
+    may live in the local vault instead (#246): `access` asks the remote
+    first; on a remote NOT_FOUND with a plain local value present, serves
+    that with `last_sync_result="local-only"` and a stderr + audit warning.
+    Any other remote failure re-raises, with a hint when a local value
+    exists. The cached-gcp route gets the same behavior inside
+    SyncingBackend itself."""
+
+    def __init__(self, remote: SecretBackend, local: SecretBackend,
+                 audit: Optional[AuditChain] = None, where: str = "remote"):
+        self.remote = remote
+        self.local = local
+        self.audit = audit
+        self.where = where
+        self.last_sync_result: str = ""
+
+    def __getattr__(self, name):
+        # latest_version/add_version/... pass through to the real remote.
+        if name == "remote":  # not yet set (copy/pickle): no recursion
+            raise AttributeError(name)
+        return getattr(self.remote, name)
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        try:
+            value = self.remote.access(sm_name, project=project)
+        except BackendError as exc:
+            if not _local_has(self.local, sm_name):
+                raise
+            if not is_not_found(exc):
+                raise _remote_hint(exc, sm_name, self.where) from exc
+            value = self.local.access(sm_name)
+            self.last_sync_result = "local-only"
+            _warn_local_only(self.audit, sm_name, self.where)
+            return value
+        self.last_sync_result = "remote"
         return value

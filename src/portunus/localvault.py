@@ -111,6 +111,10 @@ class LocalEncryptedBackend:
                 f"local vault: cannot decrypt {sm_name} (wrong master key or corrupt data)"
             ) from exc
 
+    def has(self, sm_name: str) -> bool:
+        """Key presence only -- nothing is decrypted."""
+        return sm_name in self._load()
+
     def remove(self, sm_name: str) -> bool:
         with self._locked():
             data = self._load()

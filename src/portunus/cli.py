@@ -36,10 +36,13 @@ from .backend import (
     AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
+    LocalFallbackBackend,
     VaultBinding, VaultServerBackend, gcp_reauth_remediation, load_vault_bindings,
     save_vault_bindings,
 )
 from .backup import ExportError, export_archive, import_archive
+from . import routing as routing_mod
+from .routing import REMOTE_STORE_KINDS
 from .paths import home
 from .profiles import PROVIDERS as PROFILE_PROVIDERS, ProfileError, add_profile, emit_mcp_headers, load_profiles, remove_profile, use_profile
 from .rotation import (
@@ -136,17 +139,31 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
         if "synced-gcp" not in instances:
             instances["synced-gcp"] = SyncingBackend(
                 _for_kind("gcp"), _for_kind("local"), home() / "sync-state.json",
+                audit=audit, where="gcp",
             )
         return instances["synced-gcp"]
 
+    def _with_local_fallback(kind: str):
+        """A remote store, but a reference whose value was written to the
+        local vault (drop/prompt/rotation) still resolves: on a remote
+        NOT_FOUND the plain local value is served, loudly (#246)."""
+        if kind not in REMOTE_STORE_KINDS:
+            return _for_kind(kind)
+        key = f"fallback-{kind}"
+        if key not in instances:
+            instances[key] = LocalFallbackBackend(
+                _for_kind(kind), _for_kind("local"), audit=audit, where=kind,
+            )
+        return instances[key]
+
     def router(ref):
         if ref.backend:
-            return _for_kind(ref.backend)
+            return _with_local_fallback(ref.backend)
         binding = vault_bindings.get(ref.project)
         if binding is not None:
             if binding.backend == "gcp" and binding.sync_mode == "cached":
                 return _synced_gcp()
-            return _for_kind(binding.backend)
+            return _with_local_fallback(binding.backend)
         return fallback_backend
 
     return router
