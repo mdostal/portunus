@@ -31,6 +31,14 @@ from . import prompt as prompt_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
+from . import anthropic_federation
+from .identity_token import (
+    DEFAULT_REFRESH_MARGIN as IDENTITY_TOKEN_REFRESH_MARGIN,
+    SOURCES as IDENTITY_TOKEN_SOURCES,
+    IdentityTokenMinter,
+    TokenRefresher,
+    decode_claims as decode_identity_claims,
+)
 from . import bitwarden, chrome_discovery
 from .backend import (
     AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, DopplerBackend,
@@ -3315,6 +3323,217 @@ def cmd_update_run(args) -> int:
 
 
 # --- parser --------------------------------------------------------------
+
+# --- identity tokens / Anthropic Workload Identity Federation (PANT-1406) ---
+def _sleep_until_signal(refresher) -> int:
+    """Run `refresher.loop()` in the foreground until SIGTERM/SIGINT."""
+    import signal as _signal
+
+    def _stop(_signum, _frame):
+        refresher.stop()
+
+    for s in (_signal.SIGTERM, _signal.SIGINT):
+        try:
+            _signal.signal(s, _stop)
+        except (ValueError, OSError):
+            pass
+    try:
+        refresher.loop()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def cmd_identity_token_mint(args) -> int:
+    """Mint an OIDC identity token into --out (0600) and report its claims --
+    never the token. --watch keeps it fresh until interrupted."""
+    try:
+        minter = IdentityTokenMinter(
+            audience=args.audience, source=args.source, service_account=args.service_account,
+            account=args.account, wif_audience=args.wif_audience,
+            token_source=EnvOIDCTokenSource() if args.source == "wif" else None,
+        )
+        refresher = TokenRefresher(minter, Path(args.out), margin=args.refresh_margin)
+        minted = refresher.run_once()
+    except AuthError as exc:
+        return _err(str(exc))
+    print(f"wrote {refresher.path} {minted.describe()}")
+    if not args.watch:
+        return 0
+    sys.stdout.flush()
+    return _sleep_until_signal(refresher)
+
+
+def _fed_profile_dict(p) -> dict:
+    from dataclasses import asdict as _asdict
+    d = _asdict(p)
+    d["token_file"] = str(p.resolved_token_file())
+    return d
+
+
+def cmd_fed_set(args) -> int:
+    try:
+        p = anthropic_federation.upsert(
+            args.name, organization_id=args.organization_id, federation_rule_id=args.rule_id,
+            service_account_id=args.service_account_id, workspace_id=args.workspace_id,
+            token_file=args.token_file, audience=args.audience, source=args.source,
+            impersonate_service_account=args.impersonate_service_account,
+            gcloud_account=args.gcloud_account, wif_audience=args.wif_audience,
+            refresh_margin=args.refresh_margin, note=args.note,
+        )
+    except anthropic_federation.FederationError as exc:
+        return _err(str(exc))
+    print(f"saved anthropic federation profile {p.name} (rule {p.federation_rule_id}, token file {p.resolved_token_file()})")
+    return 0
+
+
+def cmd_fed_list(args) -> int:
+    try:
+        profiles = anthropic_federation.load()
+    except anthropic_federation.FederationError as exc:
+        return _err(str(exc))
+    if args.json:
+        print(json.dumps([_fed_profile_dict(p) for _, p in sorted(profiles.items())], indent=2))
+        return 0
+    if not profiles:
+        print("no anthropic federation profiles (add one: portunus anthropic-federation set NAME ...)")
+    for name, p in sorted(profiles.items()):
+        sa = p.service_account_id or "-"
+        print(f"{name}\torg={p.organization_id}\trule={p.federation_rule_id}\tsvac={sa}\tsource={p.source}"
+              + (f"\t{p.note}" if p.note else ""))
+    return 0
+
+
+def cmd_fed_show(args) -> int:
+    try:
+        p = anthropic_federation.get(args.name)
+    except anthropic_federation.FederationError as exc:
+        return _err(str(exc))
+    d = _fed_profile_dict(p)
+    if args.json:
+        print(json.dumps(d, indent=2))
+    else:
+        for k, v in d.items():
+            print(f"{k}: {v}")
+    return 0
+
+
+def cmd_fed_remove(args) -> int:
+    try:
+        anthropic_federation.remove(args.name)
+    except anthropic_federation.FederationError as exc:
+        return _err(str(exc))
+    print(f"removed anthropic federation profile {args.name} (token file left in place)")
+    return 0
+
+
+def cmd_fed_env(args) -> int:
+    """Shell lines (or JSON) that point a workload at the profile. IDs and a
+    path only -- the env carries no secret."""
+    try:
+        p = anthropic_federation.get(args.name)
+    except anthropic_federation.FederationError as exc:
+        return _err(str(exc))
+    if args.json:
+        print(json.dumps({"set": anthropic_federation.federation_vars(p),
+                          "unset": anthropic_federation.unset_vars(p)}, indent=2))
+    else:
+        print("\n".join(anthropic_federation.shell_lines(p)))
+    return 0
+
+
+def cmd_fed_refresh(args) -> int:
+    try:
+        p = anthropic_federation.get(args.name)
+        minter = p.minter(token_source=EnvOIDCTokenSource() if p.source == "wif" else None)
+        refresher = TokenRefresher(minter, p.resolved_token_file(), margin=p.refresh_margin)
+        minted = refresher.run_once()
+    except (anthropic_federation.FederationError, AuthError) as exc:
+        return _err(str(exc))
+    print(f"wrote {refresher.path} {minted.describe()}")
+    if not args.watch:
+        return 0
+    sys.stdout.flush()
+    return _sleep_until_signal(refresher)
+
+
+def _token_file_state(p) -> dict:
+    path = p.resolved_token_file()
+    state = {"profile": p.name, "token_file": str(path), "present": path.exists()}
+    if not path.exists():
+        return state
+    try:
+        claims = decode_identity_claims(path.read_text())
+    except (OSError, AuthError) as exc:
+        state["error"] = str(exc)
+        return state
+    exp = int(claims.get("exp", 0) or 0)
+    state.update(aud=claims.get("aud", ""), email=claims.get("email", ""), expires_at=exp,
+                 remaining_seconds=exp - int(time.time()) if exp else None)
+    return state
+
+
+def cmd_fed_status(args) -> int:
+    """What would stop a federated run: outranking creds in this env, an
+    apiKeyHelper in Claude settings, a missing/expired token file. Names only."""
+    try:
+        profiles = anthropic_federation.load()
+        if args.name:
+            profiles = {args.name: anthropic_federation.get(args.name)}
+    except anthropic_federation.FederationError as exc:
+        return _err(str(exc))
+    env_conflicts = anthropic_federation.conflicts()
+    settings_conflicts = anthropic_federation.claude_settings_conflicts()
+    tokens = [_token_file_state(p) for _, p in sorted(profiles.items())]
+    if args.json:
+        print(json.dumps({"env_conflicts": env_conflicts, "settings_conflicts": settings_conflicts,
+                          "profiles": tokens}, indent=2))
+    else:
+        if env_conflicts:
+            print("outranking credentials in this environment (exec strips them; a bare `claude` would use them): "
+                  + ", ".join(env_conflicts))
+        for c in settings_conflicts:
+            print(f"Claude settings outrank federation: {c}")
+        for t in tokens:
+            if not t["present"]:
+                print(f"{t['profile']}: no token file yet ({t['token_file']}); run `portunus anthropic-federation refresh {t['profile']}`")
+            elif "error" in t:
+                print(f"{t['profile']}: token file unreadable: {t['error']}")
+            else:
+                rem = t["remaining_seconds"]
+                state = "EXPIRED" if rem is not None and rem <= 0 else f"{rem}s left"
+                print(f"{t['profile']}: {t['token_file']} aud={t['aud']} email={t['email']} {state}")
+    bad = settings_conflicts or any(
+        not t["present"] or "error" in t or (t.get("remaining_seconds") or 0) <= 0 for t in tokens)
+    return 1 if (args.strict and bad) else 0
+
+
+def cmd_fed_verify(args) -> int:
+    """Mint a fresh JWT in memory and do one live exchange at Anthropic.
+    Reports only token_type/expires_in/scope; neither token is shown or kept."""
+    try:
+        p = anthropic_federation.get(args.name)
+        minted = p.minter(token_source=EnvOIDCTokenSource() if p.source == "wif" else None).mint()
+        result = anthropic_federation.exchange(p, minted.token)
+    except (anthropic_federation.FederationError, AuthError) as exc:
+        return _err(str(exc))
+    print(f"exchange ok for {p.name}: {minted.describe()} -> "
+          + " ".join(f"{k}={v}" for k, v in result.items()))
+    return 0
+
+
+def cmd_fed_exec(args) -> int:
+    cmd = list(args.command or [])
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    try:
+        p = anthropic_federation.get(args.name)
+        minter = p.minter(token_source=EnvOIDCTokenSource() if p.source == "wif" else None)
+        return anthropic_federation.run_exec(p, cmd, minter=minter)
+    except (anthropic_federation.FederationError, AuthError) as exc:
+        return _err(str(exc))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="portunus", description=__doc__.split("\n")[0])
     p.add_argument("--version", action="version", version=f"portunus {__version__}")
@@ -3744,6 +3963,70 @@ def build_parser() -> argparse.ArgumentParser:
     auth_status.add_argument("--strict", action="store_true",
                              help="exit 1 if any binding's credential is missing or expired")
     auth_status.set_defaults(func=cmd_auth_status)
+
+    idt_p = sub.add_parser("identity-token", help="mint OIDC identity tokens for another system into a file (never printed)")
+    idt_sub = idt_p.add_subparsers(dest="identity_token_cmd", required=True)
+    idt_mint = idt_sub.add_parser("mint", help="mint an identity token for --audience into --out (0600), optionally keep it fresh")
+    idt_mint.add_argument("--audience", required=True, help="the token's aud, e.g. https://api.anthropic.com")
+    idt_mint.add_argument("--out", required=True, help="file to write the JWT to (atomically, 0600)")
+    idt_mint.add_argument("--source", choices=IDENTITY_TOKEN_SOURCES, default="gcloud")
+    idt_mint.add_argument("--service-account", default="",
+                          help="GCP service account the token is for (gcloud: impersonated; wif: generateIdToken target)")
+    idt_mint.add_argument("--account", default="", help="gcloud: which local login does the impersonating")
+    idt_mint.add_argument("--wif-audience", default="", help="wif: the GCP workload identity provider audience")
+    idt_mint.add_argument("--watch", action="store_true", help="keep refreshing until interrupted")
+    idt_mint.add_argument("--refresh-margin", type=int, default=IDENTITY_TOKEN_REFRESH_MARGIN,
+                          help="refresh this many seconds before exp (or at half-life, whichever is first)")
+    idt_mint.set_defaults(func=cmd_identity_token_mint)
+
+    fed_p = sub.add_parser("anthropic-federation",
+                           help="Anthropic Workload Identity Federation: per-org profiles, env, refresh, exec")
+    fed_sub = fed_p.add_subparsers(dest="fed_cmd", required=True)
+    fed_set = fed_sub.add_parser("set", help="create or update a profile (IDs from the Console; no secret)")
+    fed_set.add_argument("name")
+    fed_set.add_argument("--organization-id", help="Anthropic organization UUID")
+    fed_set.add_argument("--rule-id", help="federation rule ID (fdrl_...)")
+    fed_set.add_argument("--service-account-id", help="Anthropic service account ID (svac_...)")
+    fed_set.add_argument("--workspace-id", help="workspace ID (wrkspc_...), needed if the rule covers several")
+    fed_set.add_argument("--token-file", help="JWT path (default PORTUNUS_HOME/anthropic-federation/NAME.jwt)")
+    fed_set.add_argument("--audience", help="identity token audience (default https://api.anthropic.com)")
+    fed_set.add_argument("--source", choices=IDENTITY_TOKEN_SOURCES)
+    fed_set.add_argument("--impersonate-service-account", help="GCP service account the identity token is minted for")
+    fed_set.add_argument("--gcloud-account", help="gcloud source: which local login impersonates")
+    fed_set.add_argument("--wif-audience", help="wif source: GCP workload identity provider audience")
+    fed_set.add_argument("--refresh-margin", type=int)
+    fed_set.add_argument("--note")
+    fed_set.set_defaults(func=cmd_fed_set)
+    fed_list = fed_sub.add_parser("list", help="list profiles")
+    fed_list.add_argument("--json", action="store_true")
+    fed_list.set_defaults(func=cmd_fed_list)
+    fed_show = fed_sub.add_parser("show", help="show one profile")
+    fed_show.add_argument("name")
+    fed_show.add_argument("--json", action="store_true")
+    fed_show.set_defaults(func=cmd_fed_show)
+    fed_rm = fed_sub.add_parser("remove", help="remove a profile")
+    fed_rm.add_argument("name")
+    fed_rm.set_defaults(func=cmd_fed_remove)
+    fed_env = fed_sub.add_parser("env", help="print unset/export lines that point a shell at the profile")
+    fed_env.add_argument("name")
+    fed_env.add_argument("--json", action="store_true")
+    fed_env.set_defaults(func=cmd_fed_env)
+    fed_ref = fed_sub.add_parser("refresh", help="mint the profile's identity token into its token file")
+    fed_ref.add_argument("name")
+    fed_ref.add_argument("--watch", action="store_true", help="keep refreshing until interrupted")
+    fed_ref.set_defaults(func=cmd_fed_refresh)
+    fed_st = fed_sub.add_parser("status", help="outranking credentials, Claude apiKeyHelper, token file freshness")
+    fed_st.add_argument("name", nargs="?", default="")
+    fed_st.add_argument("--json", action="store_true")
+    fed_st.add_argument("--strict", action="store_true", help="exit 1 on a settings conflict or missing/expired token")
+    fed_st.set_defaults(func=cmd_fed_status)
+    fed_ver = fed_sub.add_parser("verify", help="one live token exchange at Anthropic; reports expiry/scope only")
+    fed_ver.add_argument("name")
+    fed_ver.set_defaults(func=cmd_fed_verify)
+    fed_exec = fed_sub.add_parser("exec", help="run a command federated: fresh token kept refreshed, conflicting creds stripped")
+    fed_exec.add_argument("name")
+    fed_exec.add_argument("command", nargs=argparse.REMAINDER, help="-- cmd args...")
+    fed_exec.set_defaults(func=cmd_fed_exec)
 
     prof_p = sub.add_parser("profile", help="several logins per provider (gcloud, posthog), one active, swapped with `use`")
     prof_sub = prof_p.add_subparsers(dest="profile_cmd", required=True)
@@ -4292,7 +4575,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # write would be pointless at best, protocol-adjacent noise at worst);
     # `update` already does its own live check -- a stale passive notice on
     # top of it would be confusing, not helpful.
-    skip_notify = args.cmd in ("mcp", "update", "health", "prompt", "_tty-entry")
+    skip_notify = args.cmd in ("mcp", "update", "health", "prompt", "_tty-entry", "identity-token", "anthropic-federation")
     if not args.home:
         rc = args.func(args)
         if not skip_notify:
