@@ -868,6 +868,51 @@ portunus session remove <site> <account>
 
 ---
 
+## Browser field fill
+
+Type a secret into a field of an open browser tab over the Chrome DevTools Protocol, without the
+value passing through the caller. Output is only how many characters were typed into which origin.
+Works with any Chrome/Chromium started with `--remote-debugging-port`, and with any embedded
+browser that exposes a CDP endpoint. The endpoint must be on loopback.
+
+### `browser allow` / `browser disallow` / `browser origins`
+
+Set the exact origins (scheme, host, port; no wildcards) a reference may be typed into. With an
+empty list nothing is typed. These are human controls: there is no MCP tool for them.
+
+```
+portunus browser allow <name> <origin>...
+portunus browser disallow <name> [<origin>...] [--all]
+portunus browser origins <name> [--json]
+```
+
+### `browser fill`
+
+```
+portunus browser fill <name>[#key] --field KEY=SELECTOR[@ORIGIN] [--field ...] [--tab <id|url/title substring>] [--cdp <url>] [--json]
+```
+
+- `KEY` picks a field of a JSON-object secret (a card: `number`, `exp_month`, `exp_year`, `cvc`,
+  `name`, `postal`; aliases `postal_code`/`zip`, `cvv`; derived `expiry` (MM/YY), `exp_mm`,
+  `exp_yy`, `exp_yyyy`). An empty `KEY` (`=#password`) types the key from `<name>#key`, or the
+  whole value.
+- `SELECTOR` is a CSS selector that must match exactly one element across the tab and all its
+  frames, including cross-origin iframes such as Stripe's. `@ORIGIN` restricts it to one frame.
+- The tab's top-level origin and the origin of every target frame must be on the allow-list. Both
+  are checked before the value is fetched, and each frame's origin is checked again right before
+  and after typing.
+- A gated reference needs `portunus approve` first. Each field is recorded in the audit log as
+  `browser_fill` with the frame and top-level origins.
+- `--cdp` defaults to `$PORTUNUS_BROWSER_CDP`, then `http://127.0.0.1:9222`.
+
+```
+portunus browser allow free-reign-card-1 https://shop.example https://js.stripe.com
+portunus browser fill free-reign-card-1 --tab shop.example \
+  --field number='input[name=cardnumber]' --field expiry='input[name=exp-date]' --field cvc='input[name=cvc]'
+```
+
+---
+
 ## GCP
 
 ### `auth gcp`
