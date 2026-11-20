@@ -4,6 +4,16 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **OS keystore backend: `backend=keychain` (PANT-1403, GH #254).** Resolves a reference straight
+  from the operating system's own store instead of a copy in the local vault: macOS Keychain
+  (`security find-generic-password`), Linux Secret Service, which covers GNOME Keyring and KWallet
+  (`secret-tool lookup`), and Windows Credential Manager (`CredReadW`). Every platform uses the same
+  address, `keychain:<service>[:<account>]`. It is read-only. A locked or unreachable keystore fails
+  closed with a clear error and never falls back to another backend. `portunus health` reports
+  whether the platform's access tool is available.
+
 ### Fixed
 
 - **`reg rm` no longer purges a stored value other references still share (PANT-1407, GH #247).**
