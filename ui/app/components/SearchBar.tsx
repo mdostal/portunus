@@ -4,7 +4,12 @@ import { useState } from "react";
 import type { PortunusReference } from "../types";
 import StatePill from "./StatePill";
 
-export default function SearchBar() {
+export default function SearchBar({
+  onSelect,
+}: {
+  /** Opens a result in the detail drawer (GH #257). */
+  onSelect?: (ref: PortunusReference) => void;
+} = {}) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<PortunusReference[] | null>(null);
@@ -58,7 +63,13 @@ export default function SearchBar() {
           {results.map((ref) => (
             <li key={ref.name} className="result-card">
               <div className="result-row-head">
-                <span className="ref-name">{ref.name}</span>
+                {onSelect ? (
+                  <button className="link-btn ref-name" onClick={() => onSelect(ref)}>
+                    {ref.name}
+                  </button>
+                ) : (
+                  <span className="ref-name">{ref.name}</span>
+                )}
                 <StatePill state={ref.state} />
               </div>
               {ref.sm_name && <span className="chip">{ref.sm_name}</span>}

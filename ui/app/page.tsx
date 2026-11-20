@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import type { AddSecretDraft, LeakSummary, PortunusReference } from "./types";
+import type { AddSecretDraft, ApprovalStatus, LeakSummary, PortunusReference } from "./types";
 import Console from "./components/Console";
 import VaultMap from "./components/VaultMap";
 import AskBar from "./components/AskBar";
@@ -14,8 +14,28 @@ import SettingsPage from "./components/SettingsPage";
 import SetupWizard from "./components/SetupWizard";
 import AboutPage from "./components/AboutPage";
 import SearchBar from "./components/SearchBar";
+import RequestsView from "./components/RequestsView";
+import { fetchApprovals } from "./actions";
 
-type Tab = "console" | "map" | "project" | "settings" | "about" | "search";
+type Tab = "console" | "requests" | "map" | "project" | "settings" | "about" | "search";
+const TABS: Tab[] = ["console", "requests", "map", "project", "settings", "about", "search"];
+
+/** Rewrite the query string in place (no navigation, no reload). Next.js
+ * keeps useSearchParams in step with native history.replaceState. Empty
+ * values are removed. */
+function replaceParams(update: Record<string, string | null>) {
+  const params = new URLSearchParams(window.location.search);
+  for (const [k, v] of Object.entries(update)) {
+    if (v) params.set(k, v);
+    else params.delete(k);
+  }
+  const qs = params.toString();
+  window.history.replaceState(
+    window.history.state,
+    "",
+    window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash,
+  );
+}
 
 /** {a: "1", b: "2"} -> "a=1,b=2" -- same convention as DetailDrawer's own
  * local dictToKvString (not imported from there to keep this a plain,
@@ -70,7 +90,30 @@ export default function Home() {
 }
 
 function HomeInner() {
-  const [tab, setTab] = useState<Tab>("console");
+  const searchParams = useSearchParams();
+  // Deep-link state lives in the URL (GH #257) so a reload, or a preview
+  // pane re-opening the page, lands where the human was:
+  //   ?tab=requests   which tab
+  //   ?q=<text>       Console filter; an exact reference name also opens it
+  //   ?project=<p>    only that project's references (fixed for the load)
+  //   ?fulfill=<ref>  the fill form for a requested reference
+  const initialTab = searchParams.get("tab") as Tab | null;
+  const [tab, setTabState] = useState<Tab>(
+    initialTab && TABS.includes(initialTab) ? initialTab : "console",
+  );
+  const [query, setQueryState] = useState(() => searchParams.get("q") || "");
+  const [project] = useState(() => (searchParams.get("project") || "").trim());
+  const [approvals, setApprovals] = useState<Record<string, ApprovalStatus>>({});
+  const qParamHandled = useRef(false);
+
+  const setTab = useCallback((t: Tab) => {
+    setTabState(t);
+    replaceParams({ tab: t === "console" ? null : t });
+  }, []);
+  const setQuery = useCallback((q: string) => {
+    setQueryState(q);
+    replaceParams({ q: q || null });
+  }, []);
   const [askOpen, setAskOpen] = useState(false);
   const [refs, setRefs] = useState<PortunusReference[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +128,6 @@ function HomeInner() {
   // deep link (Story 04's `portunus ui open --fulfill`).
   const [fulfillDraft, setFulfillDraft] = useState<PortunusReference | null>(null);
   const [fulfillError, setFulfillError] = useState<string | null>(null);
-  const searchParams = useSearchParams();
   const fulfillParamHandled = useRef(false);
   // First-run setup wizard (Slice 8) -- null while unknown (avoids a flash
   // of the wizard OR the main app before we actually know), then true/false
@@ -121,11 +163,21 @@ function HomeInner() {
     refreshLeakMap();
   }, [refreshLeakMap]);
 
+  const refreshApprovals = useCallback(() => {
+    fetchApprovals(project)
+      .then(setApprovals)
+      .catch(() => setApprovals({}));
+  }, [project]);
+
+  useEffect(() => {
+    refreshApprovals();
+  }, [refreshApprovals]);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/registry");
+      const res = await fetch(project ? `/api/registry?project=${encodeURIComponent(project)}` : "/api/registry");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "failed to load registry");
       setRefs(data);
@@ -140,6 +192,40 @@ function HomeInner() {
     refresh();
   }, [refresh]);
 
+  // After a gate/approve/enable/drop: reload the list and the gate status.
+  const refreshAll = useCallback(() => {
+    refresh();
+    refreshApprovals();
+  }, [refresh, refreshApprovals]);
+
+  // Keep the open drawer on the fresh copy of its reference after a reload,
+  // so a just-changed state or gate shows at once.
+  useEffect(() => {
+    setSelected((cur) => (cur ? refs.find((r) => r.name === cur.name) || cur : cur));
+  }, [refs]);
+
+  // ?q=<exact reference name> opens that reference (GH #257): a deep link
+  // such as ?q=free-reign-card-1 lands on the one entry, not the full list.
+  useEffect(() => {
+    if (qParamHandled.current || refs.length === 0) return;
+    qParamHandled.current = true;
+    const q = (searchParams.get("q") || "").trim();
+    const exact = q && refs.find((r) => r.name === q);
+    if (exact) setSelected(exact);
+  }, [refs, searchParams]);
+
+  const openFulfill = useCallback((ref: PortunusReference) => {
+    setFulfillDraft(ref);
+    setSelected(null);
+    replaceParams({ fulfill: ref.name });
+  }, []);
+  const closeForms = useCallback(() => {
+    setAddDraftProvider(null);
+    setRotateDraft(null);
+    setFulfillDraft(null);
+    replaceParams({ fulfill: null });
+  }, []);
+
   // Runs once, after the first successful registry load -- never re-fires
   // on a later refresh() (e.g. right after the human successfully submits
   // the fulfill form), which would otherwise misreport a just-fulfilled
@@ -152,14 +238,21 @@ function HomeInner() {
     const ref = refs.find((r) => r.name === name);
     if (!ref) {
       setFulfillError(`No reference named "${name}" was found.`);
+      replaceParams({ fulfill: null });
       return;
     }
     if (ref.state !== "requested") {
       setFulfillError(`"${name}" is not a pending request (current state: ${ref.state}).`);
+      replaceParams({ fulfill: null });
+      setSelected(ref);
       return;
     }
     setFulfillDraft(ref);
   }, [refs, searchParams]);
+
+  const waitingCount =
+    refs.filter((r) => r.state === "requested").length +
+    refs.filter((r) => r.approval === "required" && approvals[r.name]?.pending).length;
 
   const addOpen = addDraftProvider !== null || rotateDraft !== null || fulfillDraft !== null;
 
@@ -186,6 +279,12 @@ function HomeInner() {
         <nav className="tabs">
           <button className={`tab-btn ${tab === "console" ? "active" : ""}`} onClick={() => setTab("console")}>
             Console
+          </button>
+          <button
+            className={`tab-btn ${tab === "requests" ? "active" : ""}`}
+            onClick={() => setTab("requests")}
+          >
+            Requests{waitingCount > 0 && <span className="tab-count">{waitingCount}</span>}
           </button>
           <button className={`tab-btn ${tab === "map" ? "active" : ""}`} onClick={() => setTab("map")}>
             Vault Map
@@ -218,6 +317,12 @@ function HomeInner() {
 
       <div className="layout">
         <main className="main">
+          {project && (
+            <p className="scope-banner" data-testid="scope-banner">
+              Showing project <strong>{project}</strong> only.{" "}
+              <a href="?">Show all projects</a>
+            </p>
+          )}
           {loading && <p className="inline-status">loading registry…</p>}
           {error && <p className="inline-status error">✗ {error}</p>}
           {fulfillError && (
@@ -229,7 +334,23 @@ function HomeInner() {
             </p>
           )}
           {!loading && !error && tab === "console" && (
-            <Console refs={refs} onSelect={setSelected} leakMap={leakMap} />
+            <Console
+              refs={refs}
+              onSelect={setSelected}
+              leakMap={leakMap}
+              approvals={approvals}
+              query={query}
+              onQueryChange={setQuery}
+            />
+          )}
+          {!loading && !error && tab === "requests" && (
+            <RequestsView
+              refs={refs}
+              approvals={approvals}
+              onFill={openFulfill}
+              onSelect={setSelected}
+              onChanged={refreshAll}
+            />
           )}
           {!loading && !error && tab === "map" && (
             <VaultMap
@@ -241,7 +362,9 @@ function HomeInner() {
           )}
           {tab === "project" && <ProjectExplorer onSelect={setSelected} leakMap={leakMap} />}
           {!loading && !error && tab === "settings" && <SettingsPage refs={refs} />}
-          {tab === "search" && <SearchBar />}
+          {tab === "search" && (
+            <SearchBar onSelect={(r) => setSelected(refs.find((x) => x.name === r.name) || r)} />
+          )}
           {tab === "about" && <AboutPage />}
         </main>
 
@@ -258,10 +381,9 @@ function HomeInner() {
               setRotateDraft(ref);
               setSelected(null);
             }}
-            onFulfill={(ref) => {
-              setFulfillDraft(ref);
-              setSelected(null);
-            }}
+            onFulfill={openFulfill}
+            approvalStatus={approvals[selected.name]}
+            onAccessChanged={refreshAll}
             onMoved={() => {
               setSelected(null);
               refresh();
@@ -286,16 +408,11 @@ function HomeInner() {
               ? referenceToDraft(fulfillDraft)
               : { provider: addDraftProvider || "" }
           }
-          onClose={() => {
-            setAddDraftProvider(null);
-            setRotateDraft(null);
-            setFulfillDraft(null);
-          }}
+          fulfilling={fulfillDraft !== null && rotateDraft === null}
+          onClose={closeForms}
           onAdded={() => {
-            setAddDraftProvider(null);
-            setRotateDraft(null);
-            setFulfillDraft(null);
-            refresh();
+            closeForms();
+            refreshAll();
           }}
         />
       )}

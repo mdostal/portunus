@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AuditEntry, LeakFindingDetail, LeakSummary, PortunusReference, PortunusView } from "../types";
+import type { ApprovalStatus, AuditEntry, LeakFindingDetail, LeakSummary, PortunusReference, PortunusView } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
 import LeakBadge from "./LeakBadge";
 import InjectControls from "./InjectControls";
 import ImpactPanel from "./ImpactPanel";
+import GateControls from "./GateControls";
+import GateBadge from "./GateBadge";
 
 /** {a: "1", b: "2"} -> "a=1,b=2" -- the same k=v,k2=v2 convention tags/
  * injected_as already use everywhere else (AddSecretForm, /api/retag). A
@@ -48,7 +50,11 @@ export default function DetailDrawer({
   onFulfill,
   onMoved,
   onSelectRelated,
+  approvalStatus,
+  onAccessChanged = () => {},
 }: {
+  approvalStatus?: ApprovalStatus;
+  onAccessChanged?: () => void;
   reference: PortunusReference;
   allRefs: PortunusReference[];
   leakSummary?: LeakSummary;
@@ -293,9 +299,19 @@ export default function DetailDrawer({
         </button>
       </div>
       <StatePill state={reference.state} />
+      <GateBadge reference={reference} status={approvalStatus} />
       <RotationBadge reference={reference} prominent />
       <CompletenessBadge reference={reference} prominent />
       <LeakBadge summary={leakSummary} prominent />
+
+      {reference.state === "requested" && (
+        <button className="btn solid" onClick={() => onFulfill(reference)}>
+          Fill this request…
+        </button>
+      )}
+      {reference.state !== "requested" && (
+        <GateControls reference={reference} status={approvalStatus} onChanged={onAccessChanged} />
+      )}
 
       {leakDetail?.severity && (
         <div className="leak-history">

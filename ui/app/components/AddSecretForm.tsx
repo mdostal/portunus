@@ -11,7 +11,12 @@ export default function AddSecretForm({
   initial,
   onClose,
   onAdded,
+  fulfilling = false,
 }: {
+  /** Filling an agent's state=requested placeholder (GH #257): the title
+   * says so, and "enable now" is offered (default on) so the filled value
+   * is usable without a second trip to the CLI. */
+  fulfilling?: boolean;
   initial?: Partial<AddSecretDraft>;
   onClose: () => void;
   onAdded: () => void;
@@ -38,6 +43,7 @@ export default function AddSecretForm({
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [enableAfter, setEnableAfter] = useState(fulfilling);
 
   function field<K extends keyof AddSecretDraft>(key: K) {
     return {
@@ -63,6 +69,21 @@ export default function AddSecretForm({
         return;
       }
       setValue(""); // scrub locally the moment we're done with it
+      if (enableAfter) {
+        // `portunus state <name> enabled` -- the explicit step drop leaves
+        // to a human, taken here because the human just asked for it.
+        const en = await fetch("/api/state", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: draft.name, state: "enabled" }),
+        });
+        const enData = await en.json().catch(() => ({}));
+        if (!en.ok) {
+          setStatus(`✓ stored, but enabling failed: ${enData.error || en.status} -- enable it from the drawer`);
+          onAdded();
+          return;
+        }
+      }
       setStatus(`✓ ${data.message}`);
       onAdded();
     } catch (err) {
@@ -73,10 +94,18 @@ export default function AddSecretForm({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+    // A click outside the form does NOT close it (GH #257): in a narrow
+    // embedded preview a stray click on the page lost a half-filled
+    // request. Only the Close button (or Escape) dismisses it.
+    <div
+      className="modal-backdrop"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <form className="modal" onSubmit={submit} data-testid="add-secret-form">
         <div className="modal-head">
-          <h3>Add secret</h3>
+          <h3>{fulfilling ? `Fill request: ${draft.name}` : "Add secret"}</h3>
           <button type="button" className="btn quiet" onClick={onClose}>
             Close
           </button>
@@ -187,6 +216,17 @@ export default function AddSecretForm({
             value={value}
             onChange={(e) => setValue(e.target.value)}
           />
+        </label>
+        <label className="oauth-source-choice">
+          <input
+            type="checkbox"
+            checked={enableAfter}
+            onChange={(e) => setEnableAfter(e.target.checked)}
+          />
+          <span>
+            Enable it now (<code>portunus state {draft.name || "<name>"} enabled</code>) so it can be
+            injected. Leave unchecked to keep it stored but not injectable.
+          </span>
         </label>
         <button className="btn solid" type="submit" disabled={busy}>
           {busy ? "Dropping…" : "Drop into Arca"}
