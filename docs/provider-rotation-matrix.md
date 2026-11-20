@@ -398,7 +398,9 @@ Note: GitHub App installation tokens rotate automatically (1-hour TTL) and are n
 
 **Source**: https://stripe.com/docs/keys#rolling-keys
 
-Stripe's Dashboard provides a "Roll API key" action for standard keys. No Stripe REST API endpoint exists for creating new standard API keys or rolling existing ones programmatically.
+Stripe's Dashboard provides a "Roll API key" action for standard keys. At the time of this survey, no Stripe REST API endpoint exists for creating new standard API keys or rolling existing ones programmatically.
+
+**Update (PANT-1409, 2026-11):** Stripe's v2 IAM API (public preview, `Stripe-Version: 2026-11-18.preview`) adds `POST /v2/iam/api_keys/{id}/rotate` and `/expire` for secret and publishable keys. Portunus's `StripeRotationAdapter` uses it, so the capability is now **auto**. Caveat: Stripe documents the API for Stripe Apps with `api_key_write`; whether a merchant's own secret key may call it is unconfirmed. See [rotation.md § Stripe API keys](rotation.md#stripe-api-keys).
 
 **Stripe restricted keys** (`rk_...`) are a different credential type with a documented API for creation and deletion (`POST /v1/restricted_keys`, `DELETE /v1/restricted_keys/{id}`). None of the stored keys appear to be restricted keys based on naming convention. If any are confirmed to be restricted keys, the finding for that credential changes to `auto`.
 

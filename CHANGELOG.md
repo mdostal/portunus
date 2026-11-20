@@ -6,6 +6,21 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Stripe API key rotation (`StripeRotationAdapter`, PANT-1409).** `portunus rotation run <ref>`
+  now rolls a Stripe secret, restricted or publishable key without the Dashboard. It uses Stripe's
+  v2 IAM API (`POST /v2/iam/api_keys/{id}/rotate`), which is a **public preview**. The adapter
+  always rotates with a grace window (default 7 days) and generates a throwaway RSA keypair for
+  each run, so Stripe returns the new secret encrypted to it. It decrypts the secret inside the
+  resolver boundary and verifies it (metadata `active`, and a secret key must authenticate
+  `GET /v1/balance`). Only then does it store the value through the boundary-only backend write.
+  On success the reference's `stripe_key_id` is updated, `rotation_requested` is cleared, and a
+  `locked` reference returns to `enabled`. `--retire-old` expires the old key right after the
+  store. Any failure before the store leaves the stored value, the registry and the old Stripe
+  key untouched, and the error carries only Stripe's error type, code and message. Needs the
+  `stripe_key_id` tag; `stripe_admin_ref` authorizes publishable-key rotation. Whether Stripe
+  lets a merchant's own key call the preview API is unconfirmed; a 401/403/404 says so. See
+  docs/rotation.md, "Stripe API keys". Stripe was the last stub adapter.
+
 - **Account profiles, with one-command swaps (`portunus profile`).** Keep several logins for the
   same service and switch which is active. A `gcloud` profile is a logged-in account email;
   `portunus profile use gcloud <name>` runs `gcloud config set account` after checking the
