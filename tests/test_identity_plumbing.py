@@ -12,9 +12,9 @@ def _spy_check_injectable(monkeypatch):
     calls = []
     original = Broker.check_injectable
 
-    def spy(self, name, requester=None):
-        calls.append({"name": name, "requester": requester})
-        return original(self, name, requester=requester)
+    def spy(self, name, requester=None, **kwargs):
+        calls.append({"name": name, "requester": requester, **kwargs})
+        return original(self, name, requester=requester, **kwargs)
 
     monkeypatch.setattr(Broker, "check_injectable", spy)
     return calls

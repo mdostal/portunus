@@ -300,3 +300,182 @@ def pending_requests(now: Optional[float] = None) -> List[ApprovalRequest]:
         if req.status == "pending":
             out.append(req)
     return out
+
+
+# --- the request flow (CLI `request-approval`, MCP portunus_request_approval) -
+
+MAX_BAD_CODES = 3
+_CODE_FILE_PLACEHOLDER = "<file path returned by the card>"
+
+
+def _grant(broker, req: ApprovalRequest, approver: str, channel: str, factor: str) -> dict:
+    broker.approve(req.name, ttl_seconds=WINDOW_SECONDS, approver=approver, once=True,
+                   requester=req.requester, channel=channel, request_id=req.id,
+                   factor=factor)
+    decide(req, "approved", approver, channel)
+    return {"approved": True, "request_id": req.id, "name": req.name,
+            "channel": channel, "uses": 1, "window_seconds": WINDOW_SECONDS,
+            "note": f"one resolve of {req.name} by {req.requester} within "
+                    f"{WINDOW_SECONDS // 60} minutes"}
+
+
+def _deny(broker, req: ApprovalRequest, approver: str, channel: str, why: str) -> None:
+    ref = broker.registry.get(req.name)
+    broker.audit.append("approve", ref.sm_name if ref else req.name,
+                        f"denied:{why} requester:{req.requester} channel:{channel} "
+                        f"request:{req.id}")
+    decide(req, "denied", approver, channel)
+
+
+def _bad_code(broker, req: ApprovalRequest, channel: str) -> dict:
+    tries = int(req.extra.get("bad_codes", "0")) + 1
+    req.extra["bad_codes"] = str(tries)
+    if tries >= MAX_BAD_CODES:
+        _deny(broker, req, "", channel, "bad-code")
+        return {"error": "the code did not match three times; the request is denied",
+                "request_id": req.id, "approved": False}
+    _write(req)
+    ref = broker.registry.get(req.name)
+    broker.audit.append("approve", ref.sm_name if ref else req.name,
+                        f"refused:bad-code requester:{req.requester} channel:{channel} "
+                        f"request:{req.id}")
+    return {"error": "the code did not match; nothing approved", "request_id": req.id,
+            "approved": False, "tries_left": MAX_BAD_CODES - tries}
+
+
+def human_instruction(req: ApprovalRequest) -> str:
+    return f"portunus approve {req.name} --request {req.id}"
+
+
+def _t3_handoff(req: ApprovalRequest, cli: bool) -> dict:
+    from .prompt import T3_CARD_TOOL, T3_LABEL_MAX, T3_SURFACE, _one_line
+
+    then: dict = {"tool": "portunus_request_approval",
+                  "arguments": {"name": req.name, "request_id": req.id,
+                                "code_file": _CODE_FILE_PLACEHOLDER}}
+    if cli:
+        then["cli"] = ["portunus", "request-approval", req.name, "--request", req.id,
+                       "--code-file", _CODE_FILE_PLACEHOLDER]
+    return {
+        "approved": False, "pending": True, "surface": T3_SURFACE, "request_id": req.id,
+        "name": req.name, "summary": req.summary(),
+        "card": {"tool": T3_CARD_TOOL, "arguments": {
+            "label": _one_line(req.summary(), T3_LABEL_MAX),
+            "reason": "To allow this ONCE, type the 6-digit code from your authenticator "
+                      "app. Dismiss the card to refuse.",
+            "delivery": "file"}},
+        "then": then,
+        "note": "Call the card tool, then call portunus_request_approval again with "
+                "code_file set to the path it returned. Do not read that file. If the "
+                "human dismisses the card, the request stays pending and expires.",
+    }
+
+
+def _ask_by_dialog(broker, req: ApprovalRequest, surface: str, *, runner=None, which=None,
+                   timeout: int = 300) -> dict:
+    import shutil
+    import subprocess
+
+    from .prompt import PromptCancelled, _ask_dialog
+
+    runner = runner or subprocess.run
+    which = which or shutil.which
+    channel = f"dialog:{surface}"
+    text = (f"{req.summary()}.\n\nTo allow this ONCE, type the 6-digit code from your "
+            "authenticator app. Cancel to refuse.")
+    for _ in range(MAX_BAD_CODES):
+        try:
+            code = _ask_dialog(surface, text, "Portunus approval", runner, timeout, which)
+        except PromptCancelled:
+            _deny(broker, req, os.environ.get("USER", "unknown"), channel, "cancelled")
+            return {"approved": False, "denied": True, "request_id": req.id,
+                    "channel": channel}
+        if verify_code(code):
+            return _grant(broker, req, os.environ.get("USER", "unknown"), channel, "totp")
+        text = (f"{req.summary()}.\n\nThat code did not match. Type the current 6-digit "
+                "code from your authenticator app, or Cancel to refuse.")
+    _deny(broker, req, "", channel, "bad-code")
+    return {"error": "the code did not match three times; the request is denied",
+            "request_id": req.id, "approved": False}
+
+
+def complete_with_code_file(broker, req: ApprovalRequest, code_file: str) -> dict:
+    """Step two of the t3 channel: the card saved what the human typed."""
+    from .prompt import PromptError, read_value_file
+
+    try:
+        code = read_value_file(code_file).strip()
+    except PromptError as exc:
+        return {"error": str(exc), "request_id": req.id, "approved": False}
+    try:
+        os.unlink(code_file)
+    except OSError:
+        pass
+    if verify_code(code):
+        return _grant(broker, req, os.environ.get("USER", "unknown"), "t3", "totp")
+    return _bad_code(broker, req, "t3")
+
+
+def run_request(registry, broker, name: str, purpose: str = "", amount: str = "",
+                merchant: str = "", surface: str = "auto", request_id: str = "",
+                code_file: str = "", cli: bool = False, env=None, **dialog_kwargs) -> dict:
+    """Ask the human to allow ONE use of a gated reference. Never returns a
+    value. See the module docstring for the flow."""
+    from .prompt import (DIALOG_SURFACES, T3_SURFACE, PromptError, available_surfaces,
+                         choose_surface)
+
+    ref = registry.get(name)
+    if ref is None:
+        return {"error": f"unknown reference: {name}"}
+    if request_id:
+        try:
+            req = load_request(request_id)
+        except RequestError as exc:
+            return {"error": str(exc)}
+        if req.name != name:
+            return {"error": f"request {request_id} is for {req.name}, not {name}"}
+        if req.status != "pending":
+            return {"error": f"request {request_id} is {req.status}", "request_id": req.id,
+                    "approved": req.status == "approved"}
+        if not code_file:
+            return {"error": "code_file is required to complete a request "
+                             "(the path the T3 Code card returned)"}
+        return complete_with_code_file(broker, req, code_file)
+    if code_file:
+        return {"error": "code_file completes a request; pass request_id too"}
+    if ref.approval != "required":
+        return {"approved": True, "needed": False, "name": name,
+                "note": f"{name} is not gated; no approval is needed"}
+    try:
+        req = create_request(name, purpose, amount, merchant, env=env)
+    except RequestError as exc:
+        return {"error": str(exc)}
+    broker.audit.append("approval_request", ref.sm_name,
+                        f"requested:{req.id} requester:{req.requester}")
+    pending = {"approved": False, "pending": True, "request_id": req.id, "name": name,
+               "summary": req.summary(), "expires_in_seconds": REQUEST_TTL,
+               "ask_human_to_run": human_instruction(req)}
+    try:
+        surface = choose_surface(surface, env)
+    except PromptError as exc:
+        return {**pending, "warning": str(exc)}
+    if surface == "cli" or not factor_enrolled():
+        if surface not in ("auto", "cli"):
+            pending["warning"] = ("no approval factor is enrolled, so only the human's own "
+                                  "terminal can approve: they run `portunus approval enroll` "
+                                  "once to approve from T3 Code or a dialog")
+        pending["surface"] = "cli"
+        return pending
+    if surface == T3_SURFACE:
+        return _t3_handoff(req, cli)
+    if surface == "auto":
+        options = [s for s in available_surfaces(env=env) if s in DIALOG_SURFACES]
+        if not options:
+            pending["surface"] = "cli"
+            return pending
+        surface = options[0]
+    if surface not in DIALOG_SURFACES:
+        pending["surface"] = "cli"
+        pending["warning"] = f"{surface} cannot take an approval; ask the human instead"
+        return pending
+    return _ask_by_dialog(broker, req, surface, **dialog_kwargs)
