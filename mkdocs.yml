@@ -52,6 +52,7 @@ nav:
   - Architecture: architecture.md
   - Backends & Configuration: backends.md
   - Keyless GCP Access: gcp-keyless.md
+  - Keyless Claude Access (Anthropic WIF): anthropic-wif.md
   - Security:
     - Access Control (Petitio): access-control.md
     - Audit Log: audit.md
