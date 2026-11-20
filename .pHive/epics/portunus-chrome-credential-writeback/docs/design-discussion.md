@@ -195,4 +195,4 @@ macOS re-checks are open (see `spike-results.md`).
   *new* username, Chrome's "Save password?" click still applies on top of that.
 - **Blocker for Story 05 on Linux (spike F7):** fix the `chrome_crypto` Linux key derivation
   (1 iteration; v10 with no keyring = AES with the `peanuts` key). Without the fix, the
-  verify-by-read-back step cannot succeed on Linux. Tracked separately.
+  verify-by-read-back step cannot succeed on Linux. Tracked in mdostal/portunus#266.

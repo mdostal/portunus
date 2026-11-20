@@ -183,7 +183,7 @@ the Secret Service/KWallet branch almost certainly fails the same way. That part
 not live-tested** (no keyring here; `docs/backends.md` already says the Linux path was
 mock-only). The no-keyring case is not "unencrypted": it is AES with the public fixed key
 `peanuts`. That is still effectively unprotected, so the docs' warning stands, but the code path
-is wrong. Not fixed here (spike, no production code). Filed as a follow-up (see the PR).
+is wrong. Not fixed here (spike, no production code). Filed as mdostal/portunus#266.
 
 ## What Stories 02-05 should take from this
 
