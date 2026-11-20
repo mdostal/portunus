@@ -61,6 +61,9 @@ def _stored_dict(ref: "Reference") -> dict:
     data = ref.to_dict()
     if not data.get("secret_type"):
         data.pop("secret_type", None)
+    # Same rule for allowed_origins (PANT-1400): only written when set.
+    if not data.get("allowed_origins"):
+        data.pop("allowed_origins", None)
     return data
 
 
@@ -103,6 +106,9 @@ class Reference:
     secret_type: str = ""  # "" (opaque secret) | "totp" | "recovery_code" -- see totp.py.
                             # A totp reference never resolves through {{secret:NAME}};
                             # only `portunus otp` / portunus_otp hand out its current code.
+    allowed_origins: list = field(default_factory=list)  # web origins this secret may be
+                            # typed into by `portunus browser fill` (PANT-1400), e.g.
+                            # ["https://checkout.stripe.com"]. Empty = never typed into a page.
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -268,6 +274,14 @@ class Registry:
         with self._locked():
             ref = self.require(name)
             ref.state = state
+        return ref
+
+    def set_allowed_origins(self, name: str, origins: List[str]) -> Reference:
+        """Replace the web origins `portunus browser fill` may type this
+        reference into (PANT-1400). The caller normalizes the origins."""
+        with self._locked():
+            ref = self.require(name)
+            ref.allowed_origins = list(dict.fromkeys(origins))
         return ref
 
     def set_approval(self, name: str, required: bool) -> Reference:
