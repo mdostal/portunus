@@ -546,6 +546,46 @@ This is a boundary sink. It refuses to write when stdout is a terminal or when
 audited as `mcp-headers posthog:<profile>`. Use a PostHog personal API key made with the
 "MCP Server" scope preset, not an all-access key.
 
+## Anthropic Workload Identity Federation
+
+Keyless Claude access: a Google-signed identity token in a 0600 file, kept fresh, plus the env
+vars that point Claude Code or an Anthropic SDK at it. See [Keyless Claude access](anthropic-wif.md).
+Tokens are never printed.
+
+### `identity-token mint`
+
+```bash
+portunus identity-token mint --audience https://api.anthropic.com --out FILE \
+  [--source gcloud|metadata|wif] [--service-account SA] [--account LOGIN] \
+  [--wif-audience AUD] [--watch] [--refresh-margin SECONDS]
+```
+
+Writes the JWT atomically at 0600 and prints its non-secret claims (aud, email, sub, exp).
+`--watch` keeps refreshing at half-life, or `--refresh-margin` seconds before `exp` if that
+comes first, until interrupted.
+
+### `anthropic-federation`
+
+```bash
+portunus anthropic-federation set NAME --organization-id UUID --rule-id fdrl_… \
+  [--service-account-id svac_…] [--workspace-id wrkspc_…] [--impersonate-service-account SA] \
+  [--gcloud-account LOGIN] [--source gcloud|metadata|wif] [--wif-audience AUD] \
+  [--token-file PATH] [--audience AUD] [--refresh-margin S] [--note TEXT]
+portunus anthropic-federation list|show NAME [--json]
+portunus anthropic-federation remove NAME
+portunus anthropic-federation env NAME [--json]      # unset conflicting creds, export ANTHROPIC_*
+portunus anthropic-federation refresh NAME [--watch]
+portunus anthropic-federation status [NAME] [--json] [--strict]
+portunus anthropic-federation verify NAME            # one live exchange; expiry/scope only
+portunus anthropic-federation exec NAME -- CMD ARGS…
+```
+
+`exec` mints the token and refreshes it for the life of the child. It strips `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_PROFILE`, `ANTHROPIC_IDENTITY_TOKEN`
+and `CLAUDE_CODE_USE_*`, which would otherwise outrank federation. It returns the child's exit
+code. `status` names (never shows) conflicting env vars and reports any `apiKeyHelper` in
+Claude settings.
+
 ## MCP / agent
 
 ### `mcp`
