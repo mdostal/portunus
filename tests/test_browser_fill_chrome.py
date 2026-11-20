@@ -132,6 +132,14 @@ def _resolver(home, allowed, approval=""):
     return Resolver(reg, backend, broker), audit
 
 
+def _without_noise(text, site):
+    """Drop the test servers' origins (random ports) so a short secret can't
+    match a port number by chance."""
+    for origin in (site["top"], site["frame"]):
+        text = text.replace(origin, "<origin>")
+    return text
+
+
 def _values(endpoint, expression_by_frame):
     """Read field values back through CDP -- test-only, to prove they landed."""
     from portunus.browser_fill import _Page, _pick_tab
@@ -155,7 +163,7 @@ def test_card_fields_land_in_a_cross_site_iframe_and_the_result_has_no_value(hom
         parse_field_spec("expiry=input[name=exp]"),
         parse_field_spec("cvc=input[name=cvc]"),
     ], tab="checkout", cdp=chrome)
-    blob = json.dumps(result)
+    blob = _without_noise(json.dumps(result), site)
     for secret in ("4242424242424242", "987", "07/31"):
         assert secret not in blob
     assert [f["typed"] for f in result["fields"]] == [16, 5, 3]
@@ -174,8 +182,16 @@ def test_card_fields_land_in_a_cross_site_iframe_and_the_result_has_no_value(hom
 
     log = audit.path.read_text()
     assert log.count("browser_fill") == 3 and site["frame"] in log and site["top"] in log
-    for secret in ("4242424242424242", "987"):
-        assert secret not in log
+    # Short values like a 3-digit CVC can turn up by chance in the chain's
+    # hex hashes, timestamps or the servers' random ports, so check only the
+    # fields that could carry a value, with the known origins taken out.
+    entries = [json.loads(line) for line in log.splitlines() if line.strip()]
+    for entry in entries:
+        for noise in ("h", "prev", "ts", "seq"):
+            entry.pop(noise, None)
+    carried = _without_noise(json.dumps(entries), site)
+    for secret in ("4242424242424242", "987", "07/31"):
+        assert secret not in carried
 
 
 def test_whole_value_into_the_top_frame(home, site, chrome):
