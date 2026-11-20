@@ -4,25 +4,6 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
-### Added
-
-- **Payment cards: `portunus prompt --kind card` (GH #251).** Asks for number, expiry, CVC, name and
-  billing postal code, in one `zenity` form or one field at a time (other dialogs, terminal
-  windows, one T3 Code card per field). Checks Luhn and a non-past expiry before saving, stores one
-  `card` reference, and shows only brand and last four (`visa ••••4242`) in `list`, `status`, the
-  MCP tools and the UI. T3 completion takes `--value-file FIELD=PATH` / MCP `value_files`.
-- **Approval windows (GH #251).** `portunus request-approval` / MCP `portunus_request_approval`
-  lets an agent ask for one use of a gated reference, showing purpose, amount and merchant. The
-  human approves with a TOTP code (`portunus approval enroll`) in a T3 Code card, a desktop dialog
-  or `portunus approve <name> --request <id>`. The approval lets exactly one resolve through,
-  bound to the requester, and the audit records requester, approver and channel. `portunus approve
-  --once` gives a single-use approval without a request.
-
-### Changed
-
-- **`portunus approve` refuses to run inside an agent (GH #251)** and, once a factor is enrolled,
-  needs a valid authenticator code. Without a factor it keeps working and warns.
-
 ### Fixed
 
 - **`retag` no longer reports a collision for a description-only change (GH #251).** It only
@@ -54,6 +35,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Payment cards: `portunus prompt --kind card` (GH #251).** Asks for number, expiry, CVC, name and
+  billing postal code, in one `zenity` form or one field at a time (other dialogs, terminal
+  windows, one T3 Code card per field). Checks Luhn and a non-past expiry before saving, stores one
+  `card` reference, and shows only brand and last four (`visa ••••4242`) in `list`, `status`, the
+  MCP tools and the UI. T3 completion takes `--value-file FIELD=PATH` / MCP `value_files`.
+- **Approval windows (GH #251).** `portunus request-approval` / MCP `portunus_request_approval`
+  lets an agent ask for one use of a gated reference, showing purpose, amount and merchant. The
+  human approves with a TOTP code (`portunus approval enroll`) in a T3 Code card, a desktop dialog
+  or `portunus approve <name> --request <id>`. The approval lets exactly one resolve through,
+  bound to the requester, and the audit records requester, approver and channel. `portunus approve
+  --once` gives a single-use approval without a request.
 - **T3 Code: secret cards as a prompt surface, and a vault reader for T3 Code's secret
   provider.** `portunus prompt` / `portunus_prompt` have a new `t3` surface, which `auto` picks
   inside a T3 Code thread (`T3CODE_THREAD_ID` set; `PORTUNUS_PROMPT_SURFACE` overrides the
@@ -478,6 +470,9 @@ All notable changes to Portunus are documented in this file.
   `down` (HTTP 503) and the detail says to set `PORTUNUS_UI_HOST`. `?shallow=1` is unchanged.
 
 ### Changed
+
+- **`portunus approve` refuses to run inside an agent (GH #251)** and, once a factor is enrolled,
+  needs a valid authenticator code. Without a factor it keeps working and warns.
 
 - **`inject --target file` never overwrites and never follows a link.** It creates the file
   with `O_CREAT|O_EXCL|O_NOFOLLOW`, so an existing file, directory or symlink at the path,
