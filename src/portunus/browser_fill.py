@@ -141,8 +141,9 @@ def parse_field_spec(raw: str) -> FieldSpec:
     or `=#password` (whole value). The frame origin, if any, follows the last
     `@` and must start with http(s)://."""
     key, sep, rest = (raw or "").partition("=")
-    if not sep or not rest.strip():
-        raise ValueError(f"field spec {raw!r}: want KEY=SELECTOR (KEY may be empty for the whole value)")
+    if not sep or not rest.strip() or not re.fullmatch(r"[A-Za-z0-9_]*", key.strip()):
+        raise ValueError(f"field spec {raw!r}: want KEY=SELECTOR, KEY a plain key such as number "
+                         f"or empty for the whole value (e.g. =input[name=password])")
     selector, frame = rest, ""
     at = rest.rfind("@")
     if at > 0 and re.match(r"https?://", rest[at + 1:]):
@@ -405,7 +406,10 @@ def fill(
         )
 
     endpoint = endpoint_from(cdp)
-    conn = connect(endpoint) if connect else CDPConnection(browser_ws_url(endpoint))
+    try:
+        conn = connect(endpoint) if connect else CDPConnection(browser_ws_url(endpoint))
+    except CDPError as exc:
+        raise BrowserFillError(str(exc)) from None
     try:
         target = _pick_tab(conn, tab)
         page = _Page(conn, target["targetId"])
