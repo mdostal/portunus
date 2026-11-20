@@ -84,7 +84,11 @@ def test_reg_rm_issue_repro_no_longer_loses_the_shared_value(home, capsys):
     assert LocalEncryptedBackend().access("STRIPE_SECRET_KEY") == "sk_live_value_1234567890"
 
 
-def test_reg_rm_purge_ignores_same_sm_name_in_a_different_backend(home, capsys):
+def test_reg_rm_purge_refuses_when_a_gcp_ref_falls_back_to_the_same_local_value(home, capsys):
+    # Since #246 (PANT-1408) every GCP-routed reference reads the local vault
+    # on a remote NOT_FOUND (LocalFallbackBackend), so a GCP ref with the same
+    # sm_name DOES share the local value: purging it would break cloud-ref's
+    # fallback. The guard must refuse, and nothing is removed.
     save_vault_bindings({"cloudy": VaultBinding("cloudy", backend="gcp")})
     reg = Registry()
     reg.add("cloud-ref", "sm-x", project="cloudy")
@@ -92,11 +96,12 @@ def test_reg_rm_purge_ignores_same_sm_name_in_a_different_backend(home, capsys):
     LocalEncryptedBackend().store("sm-x", "some-value-1234567890")
 
     rc = main(["reg", "rm", "local-ref", "--purge-value"])
-    capsys.readouterr()
+    err = capsys.readouterr().err
 
-    assert rc == 0
-    _gone("sm-x")
-    assert "cloud-ref" in {r.name for r in Registry()}
+    assert rc == 1
+    assert "cloud-ref" in err
+    assert LocalEncryptedBackend().access("sm-x") == "some-value-1234567890"
+    assert {"cloud-ref", "local-ref"} <= {r.name for r in Registry()}
 
 
 def test_reg_add_warns_when_sm_name_is_shared_in_the_same_backend(home, capsys):

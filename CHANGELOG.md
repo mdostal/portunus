@@ -73,12 +73,28 @@ All notable changes to Portunus are documented in this file.
   with its Secrets preview feature on (`T3CODE_FEATURE_SECRETS=1`); release builds up to 0.1.9
   are built without it, and card-to-vault works on every build.
 
+
+- **Keyless Claude access through Anthropic Workload Identity Federation (PANT-1406, GH #248).**
+  `portunus identity-token mint --audience A --out FILE [--watch]` mints a Google identity token
+  into a 0600 file and keeps it fresh. The token can come from gcloud impersonation, the
+  metadata server, or WIF plus `generateIdToken`. `portunus anthropic-federation` adds a profile
+  for each Anthropic org (org, rule, service account, workspace, token file), with these
+  subcommands:
+  - `set`/`list`/`show`/`remove` manage profiles.
+  - `env` prints the `ANTHROPIC_*` vars.
+  - `refresh [--watch]` keeps the token file fresh.
+  - `status` reports outranking credentials and an `apiKeyHelper` in Claude settings.
+  - `verify` does one live exchange.
+  - `exec NAME -- cmd` runs a lane federated, with a background refresher.
+
+  `exec` and `env` remove `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and the other
+  credentials that outrank federation, so a federated run can't bill the wrong account. No
+  token is ever printed. See docs/anthropic-wif.md for the Console setup.
 - **`portunus doctor --fix-routing`**: finds stranded references and pins them local, pins them
   remote (`--prefer remote`) or pushes them into GCP (`--push`, verified). It is a dry run unless
   `--apply`. `portunus health` reports them as a degraded `routing` check, and `vault status` (run
   by the installer) shows it. `bindings set` refuses to reroute local-only references unless
   `--pin-local`, `--push` or `--force`.
-
 - **Anthropic liveness check (`anthropic`, PANT-1132, GH #197).** An LLM API key (`sk-ant-api…`)
   is probed with `GET https://api.anthropic.com/v1/models?limit=1`, which bills no tokens; 401 is
   `dead`. A Claude Code OAuth setup-token (`claude-code-oauth*`, or an `sk-ant-oat` value) is never
