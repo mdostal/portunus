@@ -489,6 +489,46 @@ portunus roles enforce on
 
 ---
 
+## Account profiles
+
+Several logins for the same service, one active at a time. `profiles.json` in the Portunus
+home holds names, account emails and reference names, never a value.
+
+### `profile`
+
+```bash
+portunus profile add gcloud personal --account me@example.com
+portunus profile add gcloud work --account me@work.example --note "work org"
+portunus profile use gcloud work          # also runs: gcloud config set account me@work.example
+portunus profile add posthog personal --ref posthog-personal-key
+portunus profile add posthog work --ref posthog-work-key
+portunus profile use posthog work         # then reconnect the PostHog MCP server (/mcp)
+portunus profile list [gcloud|posthog] [--json]
+portunus profile remove <provider> <name>
+```
+
+The first profile added for a provider becomes active. `use gcloud` refuses an account that
+isn't logged in to gcloud (`portunus auth login <email>` first). Per-project bindings still
+pass their own `--account`; a gcloud profile sets the account plain `gcloud` commands use.
+
+### `mcp-headers`
+
+A Claude Code MCP `headersHelper`. It prints the active profile's headers as JSON to stdout,
+for example `{"Authorization": "Bearer <key>"}` for PostHog:
+
+```json
+"posthog": {
+  "type": "http",
+  "url": "https://mcp.posthog.com/mcp",
+  "headersHelper": "portunus mcp-headers posthog"
+}
+```
+
+This is a boundary sink. It refuses to write when stdout is a terminal or when
+`CLAUDE_CODE_MCP_SERVER_NAME` isn't set, so running it by hand never shows a key. Each use is
+audited as `mcp-headers posthog:<profile>`. Use a PostHog personal API key made with the
+"MCP Server" scope preset, not an all-access key.
+
 ## MCP / agent
 
 ### `mcp`
