@@ -50,7 +50,7 @@ _PRIVATE_FILES = (
     "roles.json", "roles-enforce.json", "leak-status.json", "liveness-status.json",
 )
 
-_STUB_BACKENDS = ("aws", "vault", "infisical", "doppler", "onepassword", "azure")
+_STUB_BACKENDS = ("aws", "vault", "doppler", "onepassword", "azure")
 _INJECTABLE_STATES = ("enabled", "locked")
 _AUDIT_LOCK_TIMEOUT = 2.0
 _GCLOUD_PROBE_TIMEOUT = 10.0
@@ -294,6 +294,27 @@ def _check_keychain(report, refs) -> None:
     report.add("backend:keychain", ok, f"{len(refs)} references; {detail}")
 
 
+def _check_infisical(report, refs) -> None:
+    """Config + credential presence only: no network, no login, no value."""
+    from . import infisical
+    try:
+        mappings = infisical.load_mappings()
+    except infisical.InfisicalError as exc:
+        report.add("backend:infisical", False, str(exc))
+        return
+    unmapped = sorted({r.name for r in refs
+                       if not r.sm_name.startswith(infisical.SM_PREFIX) and r.project not in mappings})
+    has_env = bool(os.environ.get("INFISICAL_TOKEN")) or (
+        bool(os.environ.get("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID"))
+        and bool(os.environ.get("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET")))
+    detail = f"{len(refs)} references; {len(mappings)} project mappings"
+    detail += "; credentials from environment" if has_env else \
+        "; credentials expected in the local vault (run `portunus infisical status --check`)"
+    if unmapped:
+        detail += f"; no mapping for: {', '.join(unmapped[:5])}" + (" ..." if len(unmapped) > 5 else "")
+    report.add("backend:infisical", not unmapped, detail)
+
+
 def _check_backends(report, base, refs, bindings, runner) -> None:
     fallback = os.environ.get("PORTUNUS_BACKEND", "local")
     fallback = "gcp" if fallback == "gcloud" else fallback
@@ -316,6 +337,8 @@ def _check_backends(report, base, refs, bindings, runner) -> None:
             _check_bitwarden(report, routed[kind])
         elif kind == "keychain":
             _check_keychain(report, routed[kind])
+        elif kind == "infisical":
+            _check_infisical(report, routed[kind])
         elif kind in _STUB_BACKENDS:
             report.add(f"backend:{kind}", False,
                        f"{len(routed[kind])} references route to {kind}, which is a "

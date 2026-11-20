@@ -126,7 +126,7 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
         elif kind == "vault":
             inst = VaultServerBackend()
         elif kind == "infisical":
-            inst = InfisicalBackend()
+            inst = InfisicalBackend(local_backend=_for_kind("local"), audit=audit)
         elif kind == "doppler":
             inst = DopplerBackend()
         elif kind == "onepassword":
@@ -862,6 +862,73 @@ def cmd_browser_list(args) -> int:
     for l in logins:
         print(f"  {l.origin_url}  {l.username_value}")
     return 0
+
+
+def cmd_infisical_map(args) -> int:
+    """Map a Portunus project to an Infisical project/environment (topology
+    only -- never a credential). Only explicitly passed fields change."""
+    from . import infisical
+    try:
+        mappings = infisical.load_mappings()
+    except infisical.InfisicalError as exc:
+        return _err(str(exc))
+    if args.remove:
+        if mappings.pop(args.project, None) is None:
+            return _err(f"no Infisical mapping for {args.project!r}")
+        infisical.save_mappings(mappings)
+        print(f"removed Infisical mapping for {args.project}")
+        return 0
+    old = mappings.get(args.project)
+    project_id = args.project_id or (old.project_id if old else "")
+    environment = args.env or (old.environment if old else "")
+    if not project_id or not environment:
+        return _err("--project-id and --env are required for a new mapping")
+    m = infisical.InfisicalMapping(
+        project=args.project, project_id=project_id, environment=environment,
+        secret_path=args.path or (old.secret_path if old else "/"),
+        site_url=args.site_url or (old.site_url if old else ""),
+        client_id_ref=args.client_id_ref or (old.client_id_ref if old else infisical.DEFAULT_CLIENT_ID_REF),
+        client_secret_ref=args.client_secret_ref
+        or (old.client_secret_ref if old else infisical.DEFAULT_CLIENT_SECRET_REF),
+    )
+    mappings[args.project] = m
+    infisical.save_mappings(mappings)
+    print(f"{args.project} -> infisical project {m.project_id} env {m.environment} path {m.secret_path}")
+    return 0
+
+
+def cmd_infisical_status(args) -> int:
+    """Show Infisical mappings and where credentials would come from. With
+    --check, perform a universal-auth login per site (never prints a token)."""
+    from . import infisical
+    try:
+        mappings = infisical.load_mappings()
+    except infisical.InfisicalError as exc:
+        return _err(str(exc))
+    client = infisical.Client(local_reader=LocalEncryptedBackend().access)
+    rows = []
+    for name, m in sorted(mappings.items()):
+        addr = infisical.parse_address("_probe", name, mappings)
+        row = {**{k: v for k, v in m.__dict__.items()}, "site_url": addr.site_url,
+               "credentials": client.credential_source(addr)}
+        if args.check:
+            try:
+                client._token(addr)
+                row["login"] = "ok"
+            except infisical.InfisicalError as exc:
+                row["login"] = str(exc)
+        rows.append(row)
+    if args.json:
+        print(json.dumps({"mappings": rows, "default_site_url": infisical.default_site_url()}))
+        return 0
+    if not rows:
+        print("no Infisical mappings (full `infisical:<project-id>:<env>:<path/NAME>` "
+              f"addresses still work against {infisical.default_site_url()})")
+    for r in rows:
+        print(f"{r['project']}: project {r['project_id']} env {r['environment']} path {r['secret_path']} "
+              f"@ {r['site_url']} -- credentials from {r['credentials']}"
+              + (f" -- login: {r['login']}" if "login" in r else ""))
+    return 1 if any(r.get("login", "ok") != "ok" for r in rows) else 0
 
 
 def cmd_bitwarden_status(args) -> int:
@@ -4142,6 +4209,30 @@ def build_parser() -> argparse.ArgumentParser:
     br_list.add_argument("--profile", required=True)
     br_list.add_argument("--json", action="store_true")
     br_list.set_defaults(func=cmd_browser_list)
+
+    inf = sub.add_parser(
+        "infisical",
+        help="Infisical project/environment mappings for backend=infisical (no values)",
+    )
+    inf_sub = inf.add_subparsers(dest="action", required=True)
+    inf_map = inf_sub.add_parser("map", help="map a Portunus project to an Infisical project/environment")
+    inf_map.add_argument("project", help="Portunus project name (the reference's project)")
+    inf_map.add_argument("--project-id", default="", help="Infisical project (workspace) id")
+    inf_map.add_argument("--env", default="", help="Infisical environment slug, e.g. dev / prod")
+    inf_map.add_argument("--path", default="", help="base folder for plain sm_names (default /)")
+    inf_map.add_argument("--site-url", default="",
+                         help="self-hosted Infisical URL (default $INFISICAL_SITE_URL or app.infisical.com)")
+    inf_map.add_argument("--client-id-ref", default="",
+                         help=f"local-vault sm_name holding the machine identity client id")
+    inf_map.add_argument("--client-secret-ref", default="",
+                         help="local-vault sm_name holding the machine identity client secret")
+    inf_map.add_argument("--remove", action="store_true", help="delete this project's mapping")
+    inf_map.set_defaults(func=cmd_infisical_map)
+    inf_status = inf_sub.add_parser("status", help="list mappings and credential sources")
+    inf_status.add_argument("--check", action="store_true",
+                            help="also perform a universal-auth login per mapping (exit 1 on failure)")
+    inf_status.add_argument("--json", action="store_true")
+    inf_status.set_defaults(func=cmd_infisical_status)
 
     bw = sub.add_parser(
         "bitwarden",
