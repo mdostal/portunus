@@ -6,6 +6,13 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Linear liveness probe (`linear`, PANT-1133, GH #196).** `portunus liveness check` now probes
+  a stored Linear key with `POST https://api.linear.app/graphql` and `{ viewer { id } }`. A
+  personal API key (`lin_api_`) is sent raw, an OAuth access token (`lin_oauth_`) as Bearer, and a
+  value with neither prefix is not sent. 401 is `dead`; everything else is `unknown`. Rotation for
+  personal API keys stays `manual` (Linear has no API to issue or revoke them); docs/rotation.md,
+  the rotation matrix and docs/liveness.md (Linear) now say so and link each other.
+
 - **PostHog liveness probe (`posthog`, PANT-1130, GH #199).** `portunus liveness check` now tells
   PostHog's two credentials apart by the stored value's prefix. A personal API key (`phx_`) is
   probed with `GET /api/users/@me/`. A project token (`phc_`) is probed with `POST /flags/?v=2`,
