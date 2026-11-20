@@ -530,6 +530,8 @@ Linear personal API keys are created and managed exclusively through the account
 
 No Anthropic REST API or SDK endpoint exists for creating, listing, or deleting API keys programmatically. Keys are managed exclusively through the Anthropic Console at https://console.anthropic.com/settings/keys.
 
+**Liveness** (PANT-1132): `anthropic` probe, `GET https://api.anthropic.com/v1/models?limit=1` with `x-api-key`. Free (no tokens billed); 401 is dead. See [liveness.md](liveness.md#anthropic).
+
 ---
 
 ### Anthropic Claude Code OAuth setup-token
@@ -541,6 +543,8 @@ No Anthropic REST API or SDK endpoint exists for creating, listing, or deleting 
 **Source**: https://docs.anthropic.com/en/docs/claude-code/setup
 
 This token is obtained by running the `claude` CLI's own OAuth device-code flow. It is not a standard OAuth refresh token bundle (which the `OAuthBackend` can auto-refresh); it is the OAuth setup-token itself. Re-issue requires re-running the `claude` CLI authentication flow. No documented API endpoint for silent renewal outside that flow.
+
+**Liveness** (PANT-1132): not probed over the API. The `anthropic` check reads the reference's `expires_at` tag and goes `unknown` 30 days before it, `dead` after it. See [liveness.md](liveness.md#anthropic).
 
 ---
 

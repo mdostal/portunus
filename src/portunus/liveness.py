@@ -47,7 +47,8 @@ APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
 probes API keys only; Clerk, PANT-1148, probes the instance secret key
 against the JWKS endpoint; PostHog, PANT-1130, picks its probe from the
 key's prefix because a project token and a personal API key authenticate
-different routes). See docs/liveness.md.
+different routes; Anthropic, PANT-1132, probes LLM API keys via the free Models
+API and only date-checks Claude Code OAuth setup-tokens). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -1875,3 +1876,160 @@ class LinearLivenessAdapter:
 
 
 register_liveness_adapter("linear", LinearLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Anthropic (PANT-1132, GH #197). Two credentials share the `anthropic`
+# provider and must not be checked the same way:
+#
+# * LLM API key (`sk-ant-api...`): probed with `GET /v1/models?limit=1`. The
+#   Models API is free -- no tokens are billed, unlike even a 1-token Messages
+#   request -- and needs the same `x-api-key` auth as every other call.
+# * Claude Code OAuth setup-token (`sk-ant-oat...`, e.g. `claude-code-oauth`):
+#   minted by `claude setup-token`, valid ~1 year, and only meant for Claude
+#   Code. It is not sent anywhere; the check reads its expiry date from the
+#   `expires_at` tag and warns ahead of it.
+#
+# Checked against api.anthropic.com on 2026-11-20: a bogus `sk-ant-api03-`
+# key got 401 `authentication_error` from `/v1/models`, with or without the
+# `anthropic-version` header.
+# ---------------------------------------------------------------------------
+
+# Reference tag: when a Claude Code OAuth setup-token expires (`YYYY-MM-DD`).
+EXPIRES_AT_TAG = "expires_at"
+ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=1"
+ANTHROPIC_VERSION = "2023-06-01"
+# Days before `expires_at` at which a setup-token stops reading `live`.
+OAUTH_EXPIRY_WARN_DAYS = 30
+
+
+def _parse_expiry(raw: str) -> Optional[int]:
+    """`YYYY-MM-DD` (end of that day, UTC) or a full ISO-8601 timestamp ->
+    epoch seconds. None when unparseable."""
+    from datetime import datetime, timedelta, timezone
+
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            day = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return int((day + timedelta(days=1)).timestamp()) - 1
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
+
+
+class AnthropicLivenessAdapter:
+    """Anthropic: an LLM API key gets a live probe, a Claude Code OAuth
+    setup-token gets an expiry check.
+
+    Which one a reference holds: the `liveness_kind` tag (`api-key` or
+    `oauth-setup-token`), else the name (`*-api-key`; `*claude-code-oauth*`,
+    `*-oauth`, `*-setup-token`), else the stored value's prefix, read inside
+    the boundary. A value that is not an `sk-ant-` key is never sent.
+
+    API key: `GET https://api.anthropic.com/v1/models?limit=1` with
+    `x-api-key` and `anthropic-version`. Free (no tokens billed). 401 is
+    dead. 403 (`permission_error`) is a key Anthropic accepted, so it stays
+    unknown, as do 429/529/5xx. The Models API does not look at the credit
+    balance: a valid key on an organization out of credit still reads live.
+    An `sk-ant-admin` Admin API key is not probed: the Models API would reject
+    it with 401, a false dead.
+
+    OAuth setup-token: no request. `expires_at` past -> dead; within
+    `OAUTH_EXPIRY_WARN_DAYS` -> unknown (so `liveness check` exits non-zero as
+    the reminder); later -> live; no tag -> unknown. `live` here means "not
+    expired", not "probed" -- a revoked setup-token still reads live. Renewal
+    is manual: re-run `claude setup-token`, store the new value, update the tag."""
+
+    provider = "anthropic"
+    API, OAUTH = "api-key", "oauth-setup-token"
+    KINDS: Dict[str, str] = {
+        "api-key": API, "anthropic-api-key": API,
+        "oauth-setup-token": OAUTH, "setup-token": OAUTH, "oauth-token": OAUTH, "oauth": OAUTH,
+    }
+    NOT_KEY = -1     # boundary sentinels: never a real HTTP status
+    ADMIN_KEY = -2
+    OAUTH_VALUE = -3
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT,
+                 now: Optional[Callable[[], float]] = None,
+                 warn_days: int = OAUTH_EXPIRY_WARN_DAYS):
+        self._transport = transport or _default_transport
+        self._timeout = timeout
+        self._now = now or time.time
+        self.warn_days = warn_days
+
+    def kind_from_name(self, ref) -> str:
+        if "claude-code-oauth" in ref.name:
+            return self.OAUTH
+        return self.KINDS.get(credential_kind(ref, self.KINDS), "")
+
+    def check(self, ref, resolver) -> LivenessResult:
+        named = self.kind_from_name(ref)
+        if named == self.OAUTH:
+            return self.check_expiry(ref)
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if value.startswith("sk-ant-oat"):
+                return self.OAUTH_VALUE
+            if value.startswith("sk-ant-admin"):
+                return self.ADMIN_KEY
+            if not value.startswith("sk-ant-"):
+                return self.NOT_KEY
+            return self._transport("GET", ANTHROPIC_MODELS_URL,
+                                   {"x-api-key": value, "anthropic-version": ANTHROPIC_VERSION},
+                                   self._timeout)
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.OAUTH_VALUE:
+            return self.check_expiry(ref)
+        if code == self.ADMIN_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: sk-ant-admin Admin API key -- the Models API "
+                                         "only accepts LLM API keys")
+        if code == self.NOT_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: stored value is not an Anthropic key (no sk-ant- prefix)")
+        if 200 <= code < 300:
+            status = LIVE
+        elif code == 401:
+            status = DEAD
+        else:
+            status = UNKNOWN
+        return LivenessResult(ref.name, self.provider, status, http_status=code,
+                              detail=f"GET {ANTHROPIC_MODELS_URL} -> {code}")
+
+    def check_expiry(self, ref) -> LivenessResult:
+        """Expiry-date check for a Claude Code OAuth setup-token. Reads only
+        the `expires_at` tag; never resolves or sends the value."""
+        raw = (getattr(ref, "tags", None) or {}).get(EXPIRES_AT_TAG, "") or ""
+        prefix = "oauth-setup-token (not probed): "
+        if not raw.strip():
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=prefix + f"no {EXPIRES_AT_TAG!r} tag -- set it to the token's "
+                                                  "expiry date (YYYY-MM-DD, ~1 year after `claude setup-token`)")
+        expires = _parse_expiry(raw)
+        if expires is None:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=prefix + f"{EXPIRES_AT_TAG!r} tag is not a date (YYYY-MM-DD)")
+        when = time.strftime("%Y-%m-%d", time.gmtime(expires))
+        left = expires - int(self._now())
+        if left < 0:
+            return LivenessResult(ref.name, self.provider, DEAD,
+                                  detail=prefix + f"expired {when} -- re-run `claude setup-token`")
+        days = left // 86400
+        if days < self.warn_days:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=prefix + f"expires {when} (in {days} days) -- re-run "
+                                                  "`claude setup-token` and update the tag")
+        return LivenessResult(ref.name, self.provider, LIVE,
+                              detail=prefix + f"expires {when} (in {days} days)")
+
+
+register_liveness_adapter("anthropic", AnthropicLivenessAdapter)
