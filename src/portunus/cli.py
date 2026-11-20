@@ -31,9 +31,9 @@ from . import prompt as prompt_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
-from . import chrome_discovery
+from . import bitwarden, chrome_discovery
 from .backend import (
-    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, ChromeBackend, DopplerBackend,
+    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
     VaultBinding, VaultServerBackend, gcp_reauth_remediation, load_vault_bindings,
@@ -125,6 +125,8 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
             inst = OAuthBackend(local_backend=_for_kind("local"), audit=audit)
         elif kind == "chrome":
             inst = ChromeBackend(audit=audit)
+        elif kind == "bitwarden":
+            inst = BitwardenBackend(audit=audit)
         else:
             inst = fallback_backend
         instances[kind] = inst
@@ -768,6 +770,59 @@ def cmd_browser_list(args) -> int:
         return 0
     for l in logins:
         print(f"  {l.origin_url}  {l.username_value}")
+    return 0
+
+
+def cmd_bitwarden_status(args) -> int:
+    """Show whether the Bitwarden vault is reachable/unlocked. Metadata only."""
+    try:
+        st = bitwarden.status()
+    except bitwarden.BitwardenError as exc:
+        return _err(str(exc))
+    if args.json:
+        print(json.dumps(st))
+        return 0
+    print(f"bitwarden: {st.get('status') or 'unknown'}"
+          + (f" ({st['userEmail']})" if st.get("userEmail") else "")
+          + (f" @ {st['serverUrl']}" if st.get("serverUrl") else ""))
+    if st.get("status") != "unlocked":
+        print(f"  -> {bitwarden.LOCKED_REMEDIATION}")
+    return 0
+
+
+def cmd_bitwarden_list(args) -> int:
+    """List Bitwarden items (names/usernames/URIs only, never a value);
+    --register writes login items as state=requested, backend=bitwarden
+    placeholders so `portunus search` finds them."""
+    try:
+        items = bitwarden.list_items(args.search)
+    except bitwarden.BitwardenError as exc:
+        return _err(str(exc))
+    report = None
+    if args.register:
+        registry, audit, _broker, _resolver = _build()
+        report = bitwarden.register_items(registry, items)
+        for name in report.registered:
+            audit.append("bitwarden_register", name, "requested")
+    if args.json:
+        out = {"items": [i.to_dict() for i in items]}
+        if report is not None:
+            out.update(registered=report.registered,
+                       already_registered=report.already_registered,
+                       conflicts=report.conflicts)
+        print(json.dumps(out))
+        return 0
+    if not items:
+        print("(no matching Bitwarden items)")
+    for i in items:
+        uri = i.uris[0] if i.uris else ""
+        print(f"  {i.id}  {i.name}  {i.username}  {uri}".rstrip())
+    if report is not None:
+        print(f"registered {len(report.registered)} (state=requested), "
+              f"{len(report.already_registered)} already registered, "
+              f"{len(report.conflicts)} name conflicts")
+        for c in report.conflicts:
+            print(f"  conflict: {c}")
     return 0
 
 
@@ -3470,6 +3525,23 @@ def build_parser() -> argparse.ArgumentParser:
     br_list.add_argument("--json", action="store_true")
     br_list.set_defaults(func=cmd_browser_list)
 
+    bw = sub.add_parser(
+        "bitwarden",
+        help="Bitwarden vault discovery via the `bw` CLI (metadata only -- see backend=bitwarden for resolving a value)",
+    )
+    bw_sub = bw.add_subparsers(dest="action", required=True)
+    bw_status = bw_sub.add_parser("status", help="is the Bitwarden vault reachable and unlocked?")
+    bw_status.add_argument("--json", action="store_true")
+    bw_status.set_defaults(func=cmd_bitwarden_status)
+    bw_list = bw_sub.add_parser(
+        "list", help="list Bitwarden items (id, name, username, URIs -- never a value)",
+    )
+    bw_list.add_argument("--search", default="", help="filter like `bw list items --search`")
+    bw_list.add_argument("--register", action="store_true",
+                         help="write login items as state=requested backend=bitwarden references")
+    bw_list.add_argument("--json", action="store_true")
+    bw_list.set_defaults(func=cmd_bitwarden_list)
+
     dr = sub.add_parser(
         "drop",
         help="put a secret INTO Arca (local-encrypted); lands state=dropped",
@@ -3494,7 +3566,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
-        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome"),
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden"),
         default="",
         help="override which backend this one reference uses (default: '' -- follow the "
              "project's VaultBinding/PORTUNUS_BACKEND as normal)",
