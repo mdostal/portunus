@@ -6,6 +6,16 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Non-interactive GCP auth and reauth recovery (PANT-1410).** A new `credential_file` field on
+  vault bindings (`portunus bindings set <project> --credential-file <path>`) points gcloud at a
+  service account key or `external_account` config JSON through
+  `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, scoped to that project. A reauth policy can't expire
+  it. Backend calls, `discover`, `auth status` (new `credential-file` mode) and `health` all use
+  it. When gcloud fails with a reauth-required error, Portunus raises `GcpReauthRequired`, and
+  its message (shown in `portunus health` under `backend:gcp`) lists self-service,
+  non-interactive fixes. A healthy `backend:gcp` probe that runs on a human user credential adds
+  a note that the credential can expire.
+
 - **Account profiles, with one-command swaps (`portunus profile`).** Keep several logins for the
   same service and switch which is active. A `gcloud` profile is a logged-in account email;
   `portunus profile use gcloud <name>` runs `gcloud config set account` after checking the
