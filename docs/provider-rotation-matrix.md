@@ -302,6 +302,53 @@ password changed server-side (the 2026-10-16 incident on `shop-mdostal-database-
 
 ---
 
+### Upstash Redis REST token
+
+**Researched**: 2026-11-20 (PANT-1129). Moved here from `unknown`.
+
+**Vault examples**: `*-upstash-redis-rest-token`. `*-upstash-redis-rest-url` is config and
+`orchestration-dev-upstash-email` is an account identifier. Both are tag inputs, not rotated.
+
+**Credential type**: The `UPSTASH_REDIS_REST_TOKEN` of an Upstash Redis database (the *Standard*
+token), plus its *Read Only* token. Both are derived from the database's default-user password, so
+from Portunus's point of view the REST token and the Redis password are **the same credential**: one
+reset regenerates all three.
+
+**Source**: https://upstash.com/docs/devops/developer-api/redis/reset_password,
+https://upstash.com/docs/devops/developer-api/redis/get_database,
+https://upstash.com/docs/devops/developer-api/authentication,
+https://upstash.com/docs/redis/features/restapi (Security and Authentication: "You can revoke both
+*Standard* and *Read Only* tokens by resetting password of your database").
+
+**Concrete call sequence**:
+
+```bash
+# 0. Check: the stored token is this database's current rest_token, and the API returns tokens
+#    at all (rest_token is omitted with credential protection on or a read-only API key)
+GET https://api.upstash.com/v2/redis/database/{id}        # -u EMAIL:API_KEY
+
+# 1. Reset (destructive: old password, REST token and read-only token are revoked at once,
+#    the database restarts, and open TCP connections are closed)
+POST https://api.upstash.com/v2/redis/reset-password/{id} # -u EMAIL:API_KEY
+# returns the Database object with the new password, rest_token and read_only_rest_token
+
+# 2. Store the new rest_token (and read_only_rest_token if it is vaulted) in ARCA
+
+# 3. Verify: GET https://<endpoint>/ping  -H "Authorization: Bearer <new rest_token>"  -> {"result":"PONG"}
+```
+
+There's no old-credential retirement step: the reset itself retires the old tokens. Portunus's
+`UpstashRotationAdapter` therefore requires `--retire-old` as an acknowledgement, the same posture as
+Neon and a GitHub OAuth App token reset. ACL users' passwords and REST tokens are not changed by a
+reset.
+
+**Not verified against a live database yet.** The adapter is built from Upstash's documented API
+and tested with a fake transport only. A reset can't be tried safely on a shared database: it revokes
+the token for every consumer and restarts the database. Before the first real use, run it once
+against a throwaway database.
+
+---
+
 ## `manual` — positively confirmed absence of any programmatic rotation path for this credential type
 
 ---
@@ -589,7 +636,7 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 | Shippo | API key / webhook secret | `game-library-dev-shippo-api-key`, `game-library-dev-shippo-webhook-secret` | Shipping API; key management endpoints not confirmed |
 | Slack OAuth app credentials | Client ID / client secret / signing secret | `monitoring-dev-slack-client-id`, `monitoring-dev-slack-client-secret`, `monitoring-dev-slack-signing-secret`, `monitoring-dev-slack-verification-token`, `monitoring-dev-slack-app-id` | Slack app-level credentials issued per app registration; rotation requires Slack app reconfiguration; programmatic path not confirmed. `monitoring-dev-slack-app-id` is a config value, not a credential. |
 | Tremendous | API key / webhook secret | `flayr-tremendous-api-key`, `social-engine-prod-tremendous-webhook-secret` | Rewards platform; key management via dashboard; rotation API not confirmed |
-| Upstash | Redis REST token / API key | `*-upstash-redis-rest-token`, `*-upstash-redis-rest-url`, `*-upstash-api-key`, `orchestration-dev-upstash-email` | Upstash management API (`/v2/redis`) exists with a `reset-password` endpoint; whether that covers the REST access token specifically is not confirmed. `*-upstash-redis-rest-url` is a config value. `orchestration-dev-upstash-email` is an account identifier, not a credential. |
+| Upstash (Developer API key) | Management API key | `*-upstash-api-key` | The Developer API key itself (basic-auth password, paired with the account email in `orchestration-dev-upstash-email`). Keys are created in the Console; the Developer API docs index lists no API-key management endpoint (checked 2026-11-20). The Redis REST token is now `auto`, see [Upstash Redis REST token](#upstash-redis-rest-token) above. |
 | Vercel AI | API key | `game-library-dev-vercel-ai-api-key` | Vercel AI is a distinct product from Vercel CI/CD (see `vercel-deploy-token` in `auto`); Vercel AI API key rotation endpoints not confirmed separately |
 
 ---

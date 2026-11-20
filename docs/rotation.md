@@ -36,6 +36,7 @@ new one).
 | `github` (installation token, `ghs_`) | GitHub App installation token | not applicable | GitHub expires it after 1 hour; it's re-minted from the App's private key. Nothing to rotate. |
 | `github` (App private key) | GitHub App private key (PEM) | **manual** | Generate/delete is UI-only in the App's settings page. |
 | `neon` | Postgres connection string (role password) | **auto** | `NeonRotationAdapter`: reset the role password via the Neon API → store the connection string with only its password replaced → wait for Neon's operations → verify with a real connect + `SELECT 1`. A reset is destructive by design (no add-then-retire path), so it requires `--retire-old`. Needs `neon_project_id`, `neon_branch_id` and `neon_api_key_ref` tags; see [Neon Postgres connection strings](#neon-postgres-connection-strings). Liveness: the `neon` probe. |
+| `upstash` | Redis REST token (standard; read-only optional) | **auto** | `UpstashRotationAdapter`: check (Developer API `GET /redis/database/{id}` must return the stored token) → `POST /redis/reset-password/{id}` → store the new REST token → verify with a REST `PING`. The reset also regenerates the read-only token and the Redis password, revokes the old ones at once and restarts the database, so it requires `--retire-old`. Needs `upstash_database_id`, `upstash_api_key_ref` and `upstash_email_ref` (or `upstash_email`) tags; see [Upstash Redis REST tokens](#upstash-redis-rest-tokens). **Not** the Developer API key itself (unknown). |
 | `zernio` | API key; webhook signing secret | **auto** | `ZernioRotationAdapter` / `portunus rotate zernio`: rotates **and pushes** to every env-var target (Vercel, Convex) in order. API key: create (copies scope/profiles/permission) → verify (`GET /v1/profiles`) → store → push → `--retire-old` **deletes** the old key. Webhook secret: Portunus generates it → push to receivers (Vercel production redeployed) → `PUT /v1/webhooks/settings` → test delivery must be accepted → rejected deliveries redelivered; `--rollback` restores the previous secret. See [zernio-rotation.md](zernio-rotation.md). |
 | `stripe` | Secret (`sk_`), restricted (`rk_`) and publishable (`pk_`) API key | **auto** | `StripeRotationAdapter`: roll through Stripe's v2 IAM API (**public preview**) with a grace window → decrypt the new secret locally → verify (key metadata must be `active`; a secret key must authenticate `GET /v1/balance`) → store. `--retire-old` **expires** the old key right after the new one is stored; without it the old key expires on its own when the grace window ends. Needs the `stripe_key_id` tag; see [Stripe API keys](#stripe-api-keys). |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
@@ -535,6 +536,60 @@ in the local backend, which is checked before the reset.
 **Liveness.** A password Neon rotated server-side (the 2026-10-16 `shop-mdostal-database-url-dev`
 incident) is caught by the `neon` liveness probe, not by this adapter: `portunus liveness check`
 connects with the stored string and runs `SELECT 1`. See [liveness.md](liveness.md).
+
+---
+
+## Upstash Redis REST tokens
+
+`UpstashRotationAdapter` (provider `upstash`) rotates the REST token an Upstash Redis database
+hands out (`UPSTASH_REDIS_REST_TOKEN`, e.g. `*-upstash-redis-rest-token`) via
+`portunus rotation run <ref-name> --retire-old`. API (Developer API, HTTP Basic auth with
+`EMAIL:API_KEY`): [get database](https://upstash.com/docs/devops/developer-api/redis/get_database)
+and [reset password](https://upstash.com/docs/devops/developer-api/redis/reset_password).
+
+The REST token is not a separate credential from the database password: Upstash's REST docs say
+"You can revoke both *Standard* and *Read Only* tokens by resetting password of your database", and
+the reset-password response carries the new `password`, `rest_token` and `read_only_rest_token`.
+There's no endpoint that rotates the REST token alone.
+
+| Tag | Meaning |
+|---|---|
+| `upstash_database_id` | **Required.** The database id (Console: the database's details, or `GET /v2/redis/databases`). |
+| `upstash_api_key_ref` | **Required.** Name of another reference holding a **Read/Write** Developer API key (Console: Account → Management API). A read-only key gets no tokens back, and the adapter refuses before resetting. |
+| `upstash_email_ref` / `upstash_email` | **One is required.** The account email the API key belongs to (the basic-auth username), as a reference name (e.g. `orchestration-dev-upstash-email`) or a literal address. |
+| `upstash_read_only_token_ref` | Optional. A reference holding the database's read-only token. The reset revokes it too; when this tag is set the new one is stored there. |
+| `upstash_rest_url_ref` | Optional. A reference holding the REST URL (e.g. `*-upstash-redis-rest-url`) used to verify. Defaults to `https://<endpoint>` from the API response. |
+
+Phases:
+
+1. **check**: `GET /redis/database/{id}`. Refuses, with nothing reset, when the response has no
+   `rest_token` (credential protection is on, or the API key or team role is read-only; a reset
+   would then revoke the token without handing Portunus the new one), or when the returned token
+   isn't the stored one. That catches a wrong database id, an ACL-user token (which a reset doesn't
+   change), or a token that was already rotated elsewhere.
+2. **reset**: `POST /redis/reset-password/{id}`. It isn't retried, because a second reset would
+   revoke the first one's tokens.
+3. **store**: the new REST token is written to the local vault straight away, before verifying,
+   because the old one is already revoked. The read-only token is stored too when
+   `upstash_read_only_token_ref` is set.
+4. **verify**: `GET <rest-url>/ping` with the new token must return `{"result":"PONG"}`. It is
+   retried for about 20 seconds, because the reset restarts the database.
+
+**`--retire-old` is required.** The reset revokes the old standard and read-only tokens and the
+Redis password at once. It also restarts the database, so it's briefly unavailable, and it closes
+every open TCP connection. Every consumer holding an old token or password breaks until it gets the
+new value, so Portunus's non-destructive default can't hold here. That's the same exception as
+Neon's role reset and GitHub's OAuth App token reset. ACL users' passwords and REST tokens aren't
+changed by a reset. If a step after the reset fails, the error says whether the new token **is
+stored**. Don't re-run blindly: a second run resets again. Check the database in the Upstash Console
+first. Every reference written must live in the local backend, which is checked before the reset.
+
+**Not covered.** The Developer API key (`*-upstash-api-key`) is the admin credential this adapter
+uses. Rotating it is a separate question, still `unknown` in
+[provider-rotation-matrix.md](provider-rotation-matrix.md). `*-upstash-redis-rest-url` and
+`*-upstash-email` are config, not credentials. A database with credential protection on (Prod Pack)
+can't be rotated this way. Reset it in the Console, where the new values are shown once, and
+re-store them.
 
 ---
 

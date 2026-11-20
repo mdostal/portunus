@@ -21,6 +21,17 @@ All notable changes to Portunus are documented in this file.
   lets a merchant's own key call the preview API is unconfirmed; a 401/403/404 says so. See
   docs/rotation.md, "Stripe API keys". Stripe was the last stub adapter.
 
+- **Upstash Redis REST token rotation (PANT-1129, #200).** Research settled the open question: the
+  Developer API's `POST /v2/redis/reset-password/{id}` regenerates the database password **and**
+  both REST tokens (standard and read-only), so they are one credential. New
+  `UpstashRotationAdapter` (provider `upstash`) first checks that the stored token is the database's
+  current `rest_token`, refusing before any reset if it isn't, or if credential protection or a
+  read-only API key hides it. It then resets, stores the new token (and, via
+  `upstash_read_only_token_ref`, the read-only one) and verifies it with a REST `PING`. A reset
+  revokes the old tokens at once and restarts the database, so `--retire-old` is required. Upstash
+  REST tokens move from `unknown` to `auto` in the provider matrix. The Developer API key itself
+  stays `unknown`.
+
 - **Non-interactive GCP auth and reauth recovery (PANT-1410).** A new `credential_file` field on
   vault bindings (`portunus bindings set <project> --credential-file <path>`) points gcloud at a
   service account key or `external_account` config JSON through
