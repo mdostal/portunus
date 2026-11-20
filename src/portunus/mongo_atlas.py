@@ -138,19 +138,23 @@ def _pymongo_connect(uri: str, timeout: float) -> None:
     from pymongo.errors import OperationFailure, PyMongoError
 
     ms = int(timeout * 1000)
-    client = pymongo.MongoClient(
-        uri, serverSelectionTimeoutMS=ms, connectTimeoutMS=ms, socketTimeoutMS=ms,
-        appname="portunus-rotation-verify",
-    )
+    client = None
     try:
+        # The constructor already resolves a mongodb+srv:// host (SRV/TXT
+        # lookups) and validates the URI, so it raises too.
+        client = pymongo.MongoClient(
+            uri, serverSelectionTimeoutMS=ms, connectTimeoutMS=ms, socketTimeoutMS=ms,
+            appname="portunus-rotation-verify",
+        )
         client.admin.command("ping")
     except OperationFailure as exc:
         # Code only: the message can name the user or the database.
         raise MongoVerifyError(f"{type(exc).__name__} code {exc.code}") from None
-    except PyMongoError as exc:
+    except (PyMongoError, ValueError, TypeError) as exc:
         raise MongoVerifyError(type(exc).__name__) from None
     finally:
-        client.close()
+        if client is not None:
+            client.close()
 
 
 # --- connection-URI helpers ----------------------------------------------------

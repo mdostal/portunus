@@ -6,6 +6,15 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **MongoDB Atlas database-user rotation (PANT-1131).** A new `mongodb-atlas` rotation adapter rotates
+  the user inside a stored Atlas connection URI through the Atlas Admin API v2, authenticating with a
+  service account (Bearer) or a legacy API key (Digest). The default `new-user` mode is non-destructive.
+  It creates a sibling user with the same roles and scopes, verifies it with a real connection, then
+  stores the new URI and any companion username/password refs. `--retire-old` deletes the old user.
+  If verification fails, the new user is removed and nothing is stored. `password` mode changes the
+  password in place and requires `--retire-old`. Verification uses the new optional `mongodb` extra
+  (`pymongo`). See docs/rotation.md (MongoDB Atlas connection URIs).
+
 - **Non-interactive GCP auth and reauth recovery (PANT-1410).** A new `credential_file` field on
   vault bindings (`portunus bindings set <project> --credential-file <path>`) points gcloud at a
   service account key or `external_account` config JSON through

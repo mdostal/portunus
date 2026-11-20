@@ -302,6 +302,59 @@ password changed server-side (the 2026-10-16 incident on `shop-mdostal-database-
 
 ---
 
+### MongoDB Atlas connection URI (database user)
+
+**Added**: 2026-11-20 (PANT-1131, portunus#198). This was listed under `unknown` with the Admin API as a
+lead. It moved to `auto` after checking Atlas's published OpenAPI spec
+(https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2.json, 2026-11-20).
+
+**Vault examples**: `mercatus-liber-mongodb-uri`, `mercatus-liber-mongodb-username`,
+`mercatus-liber-mongodb-password` (`mercatus-liber-commerce` project). The earlier `*-mongo-uri`
+pattern in this matrix did not match those names. `*-mongo-db-name` / `*-mongodb-db-name` are config,
+not credentials.
+
+**Credential type**: A `mongodb+srv://user:password@<cluster>.mongodb.net/...` URI for an Atlas
+SCRAM database user, sometimes with the user and password also stored as separate references.
+
+**Source**: https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/group/endpoint-database-users,
+https://www.mongodb.com/docs/atlas/api/service-accounts-overview/
+
+**Concrete call sequence** (`new-user`, the non-destructive default):
+
+```bash
+# 0. Admin auth: service account (recommended) -> 1h Bearer token
+POST https://cloud.mongodb.com/api/oauth/token      # Basic client_id:client_secret, grant_type=client_credentials
+#    or a legacy programmatic API key with HTTP Digest auth.
+#    Required role: Project Database Access Admin (or Project Owner).
+#    Every call: Accept: application/vnd.atlas.2023-01-01+json
+
+# 1. Read the current user (roles, scopes)
+GET  /api/atlas/v2/groups/{groupId}/databaseUsers/{authDb}/{username}
+
+# 2. Create a sibling user with the same roles/scopes and a new password  (201)
+POST /api/atlas/v2/groups/{groupId}/databaseUsers
+
+# 3. Wait for the cluster to apply it (new users can't log in while PENDING)
+GET  /api/atlas/v2/groups/{groupId}/clusters/{clusterName}/status   # changeStatus == APPLIED
+
+# 4. Verify: connect with the new URI and run ping
+# 5. Store the new URI in the vault (and the companion username/password refs)
+
+# 6. Retire the old user (opt-in)  (204)
+DELETE /api/atlas/v2/groups/{groupId}/databaseUsers/{authDb}/{username}
+```
+
+There is also an in-place path, `PATCH .../databaseUsers/{authDb}/{username}` with `{"password": ...}`.
+It is destructive, so `MongoDBAtlasRotationAdapter` only takes it with `atlas_rotation_mode=password` and
+`--retire-old`.
+
+**Not yet verified against this vault** (needs operator access, since the agent run has no vault or
+Atlas credentials): that the `mercatus-liber` URI's host is `*.mongodb.net` (Atlas, not self-hosted),
+which Atlas project id it belongs to, and that a service account with Project Database Access Admin
+exists for it. If the host turns out to be self-hosted Mongo, that ref is `manual`.
+
+---
+
 ## `manual` — positively confirmed absence of any programmatic rotation path for this credential type
 
 ---
@@ -577,7 +630,6 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 | Google / Firebase non-SA, non-API-key | `firebase-storage-base`, `firebase-project-id`, `google-cloud-project` | Various | These are configuration values (URLs, project IDs), not credentials. Not rotateable. |
 | Grafana Cloud (stack-scoped data source credentials) | Prometheus remote write token, Loki URL + credentials | `monitoring-dev-grafana-cloud-prom-token`, `monitoring-dev-grafana-cloud-prom-username`, `monitoring-dev-grafana-cloud-loki-url` | Different from org-level Grafana Cloud API key (see `auto`). These are stack-instance credentials for data source push endpoints. Rotation via Grafana Cloud stack management API not confirmed. |
 | Healthchecks.io | API key / ping key | `*-healthchecks-api-key`, `*-healthchecks-ping-key`, `*-healthchecks-ping-url` | Healthchecks.io REST API (https://healthchecks.io/docs/api/) covers check management; API key rotation specifics not confirmed |
-| MongoDB Atlas | Connection URI (contains DB user credentials) | `*-mongo-uri`, `*-mongo-db-name` | MongoDB Atlas Admin API supports programmatic DB user creation/password change (`POST /api/atlas/v2/groups/{groupId}/databaseUsers`), which would allow updating the credentials in the URI. End-to-end rotation confirmed possible in principle; Atlas API management credential setup not verified against this specific vault. `*-mongo-db-name` is a config value, not a credential. |
 | Multica | Workspace personal access token | `dostal-tech-multica-pat-token` | No public Multica API documentation for programmatic PAT management confirmed at research time |
 | Pexels | API key | `social-engine-dev-pexels-api-key`, `social-engine-prod-pexels-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
 | Pixabay | API key | `social-engine-dev-pixabay-api-key`, `social-engine-prod-pixabay-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |

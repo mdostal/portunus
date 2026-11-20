@@ -36,6 +36,7 @@ new one).
 | `github` (installation token, `ghs_`) | GitHub App installation token | not applicable | GitHub expires it after 1 hour; it's re-minted from the App's private key. Nothing to rotate. |
 | `github` (App private key) | GitHub App private key (PEM) | **manual** | Generate/delete is UI-only in the App's settings page. |
 | `neon` | Postgres connection string (role password) | **auto** | `NeonRotationAdapter`: reset the role password via the Neon API → store the connection string with only its password replaced → wait for Neon's operations → verify with a real connect + `SELECT 1`. A reset is destructive by design (no add-then-retire path), so it requires `--retire-old`. Needs `neon_project_id`, `neon_branch_id` and `neon_api_key_ref` tags; see [Neon Postgres connection strings](#neon-postgres-connection-strings). Liveness: the `neon` probe. |
+| `mongodb-atlas` | MongoDB Atlas connection URI (database user) | **auto** | `MongoDBAtlasRotationAdapter`, via the Atlas Admin API v2. Default `new-user` mode is non-destructive: copy the user's roles/scopes into a sibling user `<name>-rot<ts>` → verify with a real connection (`ping`) → store the URI (and optional companion username/password refs) → `--retire-old` **deletes** the old user. `password` mode changes the password in place and requires `--retire-old`. Needs `atlas_group_id` and `atlas_admin_ref` tags, plus `pip install 'pantheon-portunus[mongodb]'` for the verify step; see [MongoDB Atlas connection URIs](#mongodb-atlas-connection-uris). |
 | `zernio` | API key; webhook signing secret | **auto** | `ZernioRotationAdapter` / `portunus rotate zernio`: rotates **and pushes** to every env-var target (Vercel, Convex) in order. API key: create (copies scope/profiles/permission) → verify (`GET /v1/profiles`) → store → push → `--retire-old` **deletes** the old key. Webhook secret: Portunus generates it → push to receivers (Vercel production redeployed) → `PUT /v1/webhooks/settings` → test delivery must be accepted → rejected deliveries redelivered; `--rollback` restores the previous secret. See [zernio-rotation.md](zernio-rotation.md). |
 | `stripe` | API key | stub | Not yet implemented. |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
@@ -535,6 +536,69 @@ in the local backend, which is checked before the reset.
 **Liveness.** A password Neon rotated server-side (the 2026-10-16 `shop-mdostal-database-url-dev`
 incident) is caught by the `neon` liveness probe, not by this adapter: `portunus liveness check`
 connects with the stored string and runs `SELECT 1`. See [liveness.md](liveness.md).
+
+---
+
+## MongoDB Atlas connection URIs
+
+`MongoDBAtlasRotationAdapter` (provider `mongodb-atlas`, PANT-1131) rotates the database user inside
+a stored Atlas connection URI (`mongodb+srv://user:password@cluster0.xxxxx.mongodb.net/...`) via
+`portunus rotation run <ref-name>`. API: the Atlas Administration API v2
+[Database Users](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/group/endpoint-database-users)
+endpoints and [cluster status](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-getgroupclusterstatus),
+media type `application/vnd.atlas.2023-01-01+json`.
+
+**Admin credential.** The URI can't call the Atlas API. Store a separate reference holding
+`<id>:<secret>`:
+
+- a **service account** (Atlas's recommendation): `client_id:client_secret`. Portunus swaps it for a
+  1-hour Bearer token at `POST https://cloud.mongodb.com/api/oauth/token` (client credentials).
+- a legacy **programmatic API key**: `public_key:private_key`, sent with HTTP Digest auth. Set
+  `atlas_auth=api-key`.
+
+Either one needs the **Project Database Access Admin** role (or Project Owner) on the project. If
+the project has an API access list, add the IP Portunus runs from.
+
+| Tag | Meaning |
+|---|---|
+| `atlas_group_id` | **Required.** The Atlas project id, 24 hex characters (Project Settings → Project ID). |
+| `atlas_admin_ref` | **Required.** Name of the reference holding the admin credential described above. |
+| `atlas_auth` | Optional. `service-account` (default) or `api-key`. |
+| `atlas_rotation_mode` | Optional. `new-user` (default, non-destructive) or `password` (in place, needs `--retire-old`). |
+| `atlas_auth_db` | Optional. The user's authentication database. Defaults to the URI's `authSource`, else `admin`. |
+| `atlas_cluster_name` | Optional. If set, the adapter waits for the cluster's `changeStatus` to reach `APPLIED` before verifying. Atlas says new users can't log in while it is `PENDING`. |
+| `atlas_username_ref` / `atlas_password_ref` | Optional. References that hold the same user's name or password separately (for example `mercatus-liber-mongodb-username` / `-password`). They are rewritten together with the URI so they stay in sync. |
+
+**`new-user` mode (default)**, the non-destructive path:
+
+1. **read**: `GET /groups/{groupId}/databaseUsers/{authDb}/{user}`. The adapter refuses x.509, AWS
+   IAM, LDAP and OIDC users, which have no password to rotate.
+2. **create**: `POST /groups/{groupId}/databaseUsers` creates `<user>-rot<unix-ts>` (any earlier
+   `-rot<ts>` suffix is replaced) with a random 32-character alphanumeric password. It copies the
+   old user's `roles`, `scopes`, `labels` and `description`.
+3. **wait** (if `atlas_cluster_name` is set), then **verify**: a real connection plus `ping` with
+   the new URI, retried while the user propagates. **If verification fails, the new user is
+   deleted and nothing is stored.** The old credential stays valid.
+4. **store**: the URI with only `user:password` replaced (hosts, database and options kept), plus
+   the companion refs.
+5. **retire** (only with `--retire-old`): `DELETE` the old user. Leave it off until every consumer
+   has been re-injected with the new URI. Atlas allows 100 database users per project by default,
+   so retire old users eventually.
+
+**`password` mode** sends `PATCH .../databaseUsers/{authDb}/{user}` with a new password. The adapter
+stores the result first, then waits and verifies (the same posture as Neon). Every consumer holding
+the old URI stops working once Atlas applies the change, so `--retire-old` is required.
+
+**Verify needs pymongo.** Portunus has no MongoDB wire client of its own, so the verify step uses
+the optional `mongodb` extra (`pip install 'pantheon-portunus[mongodb]'`). Without it the adapter
+refuses before touching Atlas.
+
+All references involved must live in the local backend, which is checked before any Atlas call. No
+admin credential, password or URI appears in results, audit entries or errors. Atlas errors are
+reduced to `errorCode`/`detail`, and driver errors to their class name and code.
+
+**Not covered:** self-hosted MongoDB (no Atlas API) is `manual`: rotate with `db.updateUser()` and
+re-store the URI.
 
 ---
 
