@@ -17,7 +17,6 @@ from portunus.rotation import (
     RotationResult,
     VercelRotationAdapter,
     GitHubRotationAdapter,
-    StripeRotationAdapter,
     audit_rotate,
     capability_for_status,
     load_rotation_bindings,
@@ -58,6 +57,7 @@ def test_rotation_bindings_file_is_0600(home):
 def test_rotation_adapter_for_resolves_by_provider():
     assert isinstance(rotation_adapter_for("vercel"), VercelRotationAdapter)
     assert isinstance(rotation_adapter_for("github"), GitHubRotationAdapter)
+    from portunus.stripe_rotation import StripeRotationAdapter
     assert isinstance(rotation_adapter_for("stripe"), StripeRotationAdapter)
 
 

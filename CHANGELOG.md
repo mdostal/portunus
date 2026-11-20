@@ -6,16 +6,51 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
-- **Stripe: key type confirmed, liveness probe, honest `manual` rotation (PANT-1134, #195).**
-  Earlier research expected restricted keys (`rk_`) to rotate through a
-  `POST /v1/restricted_keys` API. Stripe has no such endpoint. Every Stripe key type (secret,
-  publishable, restricted) is created and rotated only in the Dashboard, so no restricted-key
-  adapter was built. `StripeRotationAdapter` now reports `manual` instead of being a stub, and
-  `rotation run` prints the Dashboard rotation steps. New `stripe` liveness probe
-  (`GET /v1/balance`): it checks `sk_`/`rk_` keys and names each key's type from its prefix
-  without exposing anything after it. A restricted key without Balance read reads `live`.
-  `pk_`, `whsec_` and `sk_org_` values are never sent. The provider matrix and rotation docs are
-  corrected to match.
+- **Multica PAT liveness probe (`multica`, PANT-1128, GH #201).** `portunus liveness check`
+  now probes a stored Multica personal access token with `GET <api>/api/me`, which returns only
+  the owner's profile. 401 is `dead` and every other failure is `unknown`. The API base comes from
+  the `multica_url` tag (self-hosted), else `https://api.multica.ai`. A value without the `mul_`
+  prefix is not sent. The rotation docs now record that Multica publishes PAT management routes
+  (`/api/tokens` create/list/revoke, `/api/tokens/current/renew`), so Multica moves from
+  `unknown` to a `stub` capability with a manual re-issue runbook. The rotation adapter is a
+  follow-up. See docs/liveness.md and docs/rotation.md, "Multica personal access tokens".
+
+- **Bitwarden vault backend + discovery (PANT-1147, #164).** Portunus can now see into a Bitwarden
+  personal/organization vault through the official `bw` CLI. `portunus bitwarden list [--search Q]`
+  and the new `portunus_bitwarden_search` MCP tool enumerate items as metadata only (id, name,
+  username, URIs, custom-field names); passwords, TOTP seeds and notes are stripped as soon as the
+  JSON is parsed. `--register` / `register=True` writes login items as `state=requested`,
+  `backend=bitwarden` references, so `portunus search` finds them, and they stay non-injectable
+  until a human enables them. A new `bitwarden` backend resolves `bitwarden:<item-id>[:<field>]`
+  (default `password`; also `username`, `totp`, `notes` or a custom field name). Portunus never
+  holds the master password: the human unlocks the vault and exports `BW_SESSION`, which `bw`
+  reads from the environment (never from argv). A locked vault fails closed with a remediation
+  message. `portunus bitwarden status` and `portunus health` report the lock state. Bitwarden
+  Secrets Manager (`bws`) is not covered yet. See docs/backends.md (Bitwarden vault).
+
+- **Stripe liveness probe and key-type check (`stripe`, PANT-1134, #195).** `portunus liveness
+  check` now probes a stored Stripe `sk_`/`rk_` key with `GET /v1/balance` and names the key's
+  type from its prefix (for example `live restricted key`) without exposing anything after it.
+  401 is `dead`. A restricted key without Balance read gets 403 and reads `live`, because Stripe
+  accepted it. `pk_`, `whsec_` and `sk_org_` values are never sent. The provider matrix is
+  corrected: the `POST /v1/restricted_keys` API that early research expected for restricted keys
+  doesn't exist, so restricted keys rotate the same way as standard secret keys (the v2 IAM call
+  or the Dashboard) and no separate restricted-key adapter was built.
+
+- **Stripe API key rotation (`StripeRotationAdapter`, PANT-1409).** `portunus rotation run <ref>`
+  now rolls a Stripe secret, restricted or publishable key without the Dashboard. It uses Stripe's
+  v2 IAM API (`POST /v2/iam/api_keys/{id}/rotate`), which is a **public preview**. The adapter
+  always rotates with a grace window (default 7 days) and generates a throwaway RSA keypair for
+  each run, so Stripe returns the new secret encrypted to it. It decrypts the secret inside the
+  resolver boundary and verifies it (metadata `active`, and a secret key must authenticate
+  `GET /v1/balance`). Only then does it store the value through the boundary-only backend write.
+  On success the reference's `stripe_key_id` is updated, `rotation_requested` is cleared, and a
+  `locked` reference returns to `enabled`. `--retire-old` expires the old key right after the
+  store. Any failure before the store leaves the stored value, the registry and the old Stripe
+  key untouched, and the error carries only Stripe's error type, code and message. Needs the
+  `stripe_key_id` tag; `stripe_admin_ref` authorizes publishable-key rotation. Whether Stripe
+  lets a merchant's own key call the preview API is unconfirmed; a 401/403/404 says so. See
+  docs/rotation.md, "Stripe API keys". Stripe was the last stub adapter.
 
 - **MongoDB Atlas database-user rotation (PANT-1131).** A new `mongodb-atlas` rotation adapter rotates
   the user inside a stored Atlas connection URI through the Atlas Admin API v2, authenticating with a

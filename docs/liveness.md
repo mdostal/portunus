@@ -108,8 +108,9 @@ provider's API docs and a real key.
 | `vercel-ai` | `GET https://ai-gateway.vercel.sh/v1/credits` (Bearer) | 401 only | Vercel AI Gateway API key, not the Vercel deploy token. |
 | `apns` | HTTP/2 `POST /3/device/<64 zeros>` to the APNs sandbox (or production) host with a JWT signed by the stored `.p8` | 403 `InvalidProviderToken` only | A push that can't be delivered. Needs the `apns_team_id` tag and the key ID. See [APNs auth keys](#apns-auth-keys). |
 | `zernio` | `GET https://zernio.com/api/v1/profiles` (Bearer) | 401 only | Probes `*-api-key` only. 401 (`invalid_credentials`) is an invalid, revoked or expired key. A 403 is a valid key with its `accounts` group switched off, so it reads `unknown`. The webhook signing secret is never sent to Zernio's API: it reads `unknown` with no request, and sweeps skip it. `portunus rotate zernio` verifies it with a test delivery instead (see [zernio-rotation.md](zernio-rotation.md)). Tag a key stored under `gcp` with `liveness_provider=zernio`. |
-| `stripe` | `GET https://api.stripe.com/v1/balance` (Bearer) | 401 only | Probes secret (`sk_`) and restricted (`rk_`) keys. The key type comes from the prefix inside the resolver boundary and is named in the detail (`live restricted key: GET … -> 200`), and nothing after the prefix leaves the boundary. A 403 on a restricted key means Stripe accepted it but it lacks Balance read, so it reads `live` with that note. On a secret key a 403 reads `unknown`. Publishable keys (`pk_`), webhook secrets (`whsec_`), organization keys (`sk_org_`, which need a `Stripe-Context` header) and unrecognised values read `unknown` with no request. Sweeps skip `*-publishable-key` / `*-webhook-secret` names. Tag keys stored under `gcp` with `liveness_provider=stripe`. Not confirmed against a real key yet. Rotation is `manual` (see [rotation.md](rotation.md)). |
+| `stripe` | `GET https://api.stripe.com/v1/balance` (Bearer) | 401 only | Probes secret (`sk_`) and restricted (`rk_`) keys. The key type comes from the prefix inside the resolver boundary and is named in the detail (`live restricted key: GET … -> 200`), and nothing after the prefix leaves the boundary. A 403 on a restricted key means Stripe accepted it but it lacks Balance read, so it reads `live` with that note. On a secret key a 403 reads `unknown`. Publishable keys (`pk_`), webhook secrets (`whsec_`), organization keys (`sk_org_`, which need a `Stripe-Context` header) and unrecognised values read `unknown` with no request. Sweeps skip `*-publishable-key` / `*-webhook-secret` names. Tag keys stored under `gcp` with `liveness_provider=stripe`. Not confirmed against a real key yet. Rotation: `StripeRotationAdapter`, `auto` through the v2 IAM preview API (see [rotation.md](rotation.md#stripe-api-keys)). |
 | `clerk` | `GET https://api.clerk.com/v1/jwks` (Bearer) | 401 only | Probes `*-clerk-secret-key` only. JWKS needs the secret key but returns only the instance's public signing keys, with no users, sessions or settings. A bogus `sk_test_` key got 401 `clerk_key_invalid` on 2026-10-18. A 403 reads `unknown`. The publishable key is public and the webhook signing secret is never sent to Clerk, so both read `unknown` with no request and sweeps skip them. A `pk_`/`whsec_` value stored under a secret-key name is also not sent, since it would read as a false `dead`. The live 200 path hasn't been confirmed against a real key yet. Tag keys stored under `gcp` with `liveness_provider=clerk`. See [Clerk](#clerk). |
+| `multica` | `GET <api>/api/me` (Bearer) | 401 only | Multica workspace personal access token (`mul_…`). Returns only the token owner's profile. A missing, unknown, revoked or expired PAT gets 401 `invalid token`; Multica's 403s are a temporarily disabled user or a CSRF failure, so they read `unknown`. The API base is the `multica_url` tag (a self-hosted instance's public API address), else `https://api.multica.ai`. A token sent to the wrong instance would read as a false `dead`, so tag self-hosted tokens. A stored value without the `mul_` prefix (a `mat_` run token, a session JWT) is not sent and reads `unknown`. A bogus `mul_` token got 401 from both `api.multica.ai` and a self-hosted backend on 2026-11-20, and a valid credential got 200 on the same route. See [Multica](#multica). |
 
 Each of the long-tail probes above (PANT-1125, GH #204) returned its listed dead status for a
 bogus key when it was added. They haven't been confirmed against a real live key yet, so the
@@ -215,6 +216,29 @@ per-instance variant, with `delay_old_secrets_expiration_hours` for overlap.
 It's in private beta and needs a Platform API access token, not the instance
 secret key, so auto-rotation isn't built. Rotate in the Clerk Dashboard
 (**API keys**) and re-sync every copy.
+
+## Multica
+
+Multica (PANT-1128, GH #201) is the Hive planning-dispatch integration, so a dead
+`dostal-tech-multica-pat-token` silently breaks planning dispatch rather than a customer-facing
+app. The `multica` probe (see the row above) makes it show up in
+`portunus liveness status --failing` instead:
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag dostal-tech-multica-pat-token \
+  --tags "liveness_provider=multica,multica_url=https://api.multica.ai"
+portunus liveness check dostal-tech-multica-pat-token
+```
+
+Leave out `multica_url` for Multica Cloud. For a self-hosted instance, set it to that instance's
+API address, the same value as the CLI's `server_url`.
+
+PATs expire. A PAT created in **Settings → API Token** expires after 30 days, 90 days (the
+default), 1 year, or never. Only the CLI and daemon renew their own PAT automatically, so a PAT
+stored in Portunus will expire unless something renews it. Once it expires the probe reads
+`dead` with 401. Re-issue runbook and rotation status:
+[rotation.md](rotation.md#multica-personal-access-tokens).
 
 ## Parity
 

@@ -39,13 +39,14 @@ new one).
 | `mongodb-atlas` | MongoDB Atlas connection URI (database user) | **auto** | `MongoDBAtlasRotationAdapter`, via the Atlas Admin API v2. Default `new-user` mode is non-destructive: copy the user's roles/scopes into a sibling user `<name>-rot<ts>` → verify with a real connection (`ping`) → store the URI (and optional companion username/password refs) → `--retire-old` **deletes** the old user. `password` mode changes the password in place and requires `--retire-old`. Needs `atlas_group_id` and `atlas_admin_ref` tags, plus `pip install 'pantheon-portunus[mongodb]'` for the verify step; see [MongoDB Atlas connection URIs](#mongodb-atlas-connection-uris). |
 | `upstash` | Redis REST token (standard; read-only optional) | **auto** | `UpstashRotationAdapter`: check (Developer API `GET /redis/database/{id}` must return the stored token) → `POST /redis/reset-password/{id}` → store the new REST token → verify with a REST `PING`. The reset also regenerates the read-only token and the Redis password, revokes the old ones at once and restarts the database, so it requires `--retire-old`. Needs `upstash_database_id`, `upstash_api_key_ref` and `upstash_email_ref` (or `upstash_email`) tags; see [Upstash Redis REST tokens](#upstash-redis-rest-tokens). **Not** the Developer API key itself (unknown). |
 | `zernio` | API key; webhook signing secret | **auto** | `ZernioRotationAdapter` / `portunus rotate zernio`: rotates **and pushes** to every env-var target (Vercel, Convex) in order. API key: create (copies scope/profiles/permission) → verify (`GET /v1/profiles`) → store → push → `--retire-old` **deletes** the old key. Webhook secret: Portunus generates it → push to receivers (Vercel production redeployed) → `PUT /v1/webhooks/settings` → test delivery must be accepted → rejected deliveries redelivered; `--rollback` restores the previous secret. See [zernio-rotation.md](zernio-rotation.md). |
-| `stripe` | Secret (`sk_`), restricted (`rk_`) and publishable (`pk_`) API keys | **manual** | Stripe's public API has no endpoint that creates, rolls or expires an API key of any type. The Dashboard's **Rotate key** action is the only path (an expiry of up to 7 days keeps the old key working during the switch). This includes restricted keys: the `POST /v1/restricted_keys` API assumed in early research doesn't exist (PANT-1134). `StripeRotationAdapter` is registered so `rotation run` prints the Dashboard steps. Liveness: the `stripe` probe, which also reports each key's type from its prefix. |
+| `stripe` | Secret (`sk_`), restricted (`rk_`) and publishable (`pk_`) API key | **auto** | `StripeRotationAdapter`: roll through Stripe's v2 IAM API (**public preview**) with a grace window → decrypt the new secret locally → verify (key metadata must be `active`; a secret key must authenticate `GET /v1/balance`) → store. `--retire-old` **expires** the old key right after the new one is stored; without it the old key expires on its own when the grace window ends. Needs the `stripe_key_id` tag; see [Stripe API keys](#stripe-api-keys). Liveness: the `stripe` probe, which also reports each key's type from its prefix. |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
 | `resend` | API key (`re_...`) | **auto** | `ResendRotationAdapter`: create → verify (read-only `GET /api-keys`, sends no email) → store. `--retire-old` **deletes** the old key — Resend has no disable. Needs `tags["resend_api_key_id"]` for `--retire-old`; see [Resend API keys](#resend-api-keys) below. |
 | `grafana-cloud` (org access policy token) | Grafana Cloud access policy token (`glc_...`) | **auto** | `GrafanaCloudRotationAdapter`: create a sibling token under the same access policy → verify (read-only GET with the new token) → store. `--retire-old` **deletes** the old token — the API has no disable. Needs `grafana_access_policy_id` + `grafana_region` tags; see [Grafana Cloud access policy tokens](#grafana-cloud-access-policy-tokens). **Not** a self-hosted Grafana admin password (manual) or a stack data-source credential (unknown). |
 | `youtrack` (JetBrains Hub permanent token) | `perm:...` token for the YouTrack REST API | **auto** | `YouTrackRotationAdapter` drives `create → verify → store` against the Hub REST API. `--retire-old` **deletes** the old token (Hub has no disable). Needs a Hub URL tag and `hub_token_id`; see below. |
 | `gcp` (service-account key) | Service account JSON key | **auto** | `GCPServiceAccountKeyRotationAdapter` drives the full `create → verify → store` cycle. Retirement is opt-in via `--retire-old` (disables the superseded key; deletion is deferred to a future grace-period sweep). The `iam_account` tag on the reference must be set to the service account email. |
 | `google-api-key` | Google Cloud API key (`AIza...`) | **auto** | `GoogleCloudAPIKeyRotationAdapter`: copies the old key's restrictions → create → verify (`keys:lookupKey`, plus an optional live probe) → store. `--retire-old` **deletes** the old key, which Google can undelete for 30 days. Refuses a stored value that is a service-account JSON key. Needs `apikeys.googleapis.com` enabled; see [Google Cloud API keys](#google-cloud-api-keys) below. |
+| `multica` | Workspace personal access token (`mul_…`) | **stub** | Multica's API can mint (`POST /api/tokens`), list, revoke (`DELETE /api/tokens/{id}`) and extend (`POST /api/tokens/current/renew`) PATs with a PAT, so an adapter is possible but not built yet. Liveness: the `multica` probe. Until the adapter exists, re-issue by hand; see [Multica personal access tokens](#multica-personal-access-tokens). |
 | `sentry` | User / org / internal-integration auth token | **manual** | Sentry's token endpoints accept session auth only and reject any bearer token, so no admin credential can mint or revoke a token. `SentryRotationAdapter` is registered so `rotation run` prints the human re-issue steps. See `provider-rotation-matrix.md`. |
 | `n8n` (self-hosted) | Encryption key (`N8N_ENCRYPTION_KEY`) / basic-auth user + password | **manual** | Startup config, not provider tokens. The encryption key protects every credential stored in n8n: rotate it only as a planned, attended operation (decrypt all → re-encrypt all → restart), never on a schedule. Basic auth is ignored on n8n 1.0+. See the [n8n rotation runbook](n8n-rotation-runbook.md). |
 | `meetup` | OAuth client id/secret; legacy API key | **manual** | OAuth clients are managed only in Meetup's web UI (Meetup Pro required). API-key auth was retired on 2019-08-15, so a stored key can't work. See [Meetup](#meetup-oauth-client-and-retired-api-key). |
@@ -683,6 +684,51 @@ The Hub URL is per install, so the adapter never assumes one.
 
 ---
 
+## Multica personal access tokens
+
+`dostal-tech-multica-pat-token` is a Multica personal access token (PAT, `mul_…`). Hive's
+planning dispatch authenticates with it. Status (re-checked 2026-11-20, PANT-1128):
+
+- **Liveness: built.** The `multica` probe (`GET /api/me`) reads `dead` on 401. See
+  [liveness.md](liveness.md#multica).
+- **Rotation: possible, no adapter yet (`stub`).** The 2026-09-14 matrix listed Multica as
+  `unknown` because Multica had published nothing about managing PATs. It has since: its docs
+  ([Authentication and tokens](https://multica.ai/docs/auth-tokens)) and the open-source server
+  (`server/cmd/server/router.go`, `server/internal/handler/personal_access_token.go` in
+  `multica-ai/multica`) expose these routes:
+
+  | Call | What it does |
+  |---|---|
+  | `POST /api/tokens` `{"name", "expires_in_days"}` | creates a PAT; the response carries the full token once |
+  | `GET /api/tokens` | lists PATs: id, name, `token_prefix`, `expires_at`, `last_used_at` (never the token) |
+  | `DELETE /api/tokens/{id}` | revokes a PAT (204; idempotent) |
+  | `POST /api/tokens/current/renew` | extends the PAT used for the request to 90 days from now, but only once fewer than 7 days remain. Earlier calls are a no-op (`renewed: false`) |
+
+  These routes require a human credential (`RequireHumanActor`). A `mul_` PAT counts as one, and
+  an agent run's `mat_` token doesn't (upstream MUL-8154). The self-hosted backend Hive uses
+  predates that guard: on 2026-11-20 it answered `GET /api/tokens` with 200 for a `mat_` run
+  token (metadata only, no token values). Upgrade it to close that gap. So the stored PAT can mint its own successor, and a
+  create → verify (`GET /api/me`) → store → revoke adapter can be built the same way as the
+  Vercel adapter. That adapter is a follow-up. Its create/verify/revoke path hasn't been run
+  against a real PAT yet.
+
+**Manual re-issue (until the adapter exists):**
+
+1. Sign in to the Multica web app as the account that owns the token, the same instance Hive
+   uses (`multica_url`, or Multica Cloud).
+2. Open **Settings → API Token** and create a token. Give it a name that says what it's for
+   (e.g. `portunus-hive-dispatch`) and pick an expiry. 90 days is preselected. A shorter expiry
+   needs re-issuing more often, while "never" doesn't expire at all, so treat it like a password.
+   The full token is shown once.
+3. Store it without echoing it: `portunus drop` (or the `portunus-prompt` flow so the value never
+   passes through an agent), replacing `dostal-tech-multica-pat-token`.
+4. Verify: `portunus liveness check dostal-tech-multica-pat-token` must read `live`.
+5. Back in **Settings → API Token**, revoke the old token. The list shows each token's prefix
+   and last-used time, so you can tell them apart. Revocation is immediate everywhere the old
+   value was copied.
+
+`multica auth logout` and web logout don't revoke a PAT on the server. Only step 5 does.
+
 ## Liveness checks
 
 Rotation only fixes credentials Portunus *can* rotate. Most stored GitHub tokens are manual, and
@@ -703,11 +749,82 @@ they're reported `unknown` without any request. `liveness check` exits 2 when an
 
 ---
 
-## Stubs (not yet implemented)
+## Stripe API keys
 
-No rotation adapter is a stub today. Stripe used to be one. It's now `manual` (PANT-1134),
-because Stripe has no API for rotating any of its key types. GitHub isn't a stub either. See
-[GitHub](#github-per-credential-subtype) above.
+`StripeRotationAdapter` rolls a Stripe API key without the Dashboard, through
+Stripe's **v2 IAM API**: `POST /v2/iam/api_keys/{id}/rotate`.
+
+> **Preview caveat.** That API is a public preview, so Portunus sends
+> `Stripe-Version: 2026-11-18.preview`. Stripe documents it for Stripe Apps with the
+> `api_key_write` permission. Whether a merchant's own secret key may call it is not
+> confirmed. If Stripe rejects the call (401/403/404), the error says so, and the stored
+> key and the Stripe key are both left as they were. Then roll the key in the Dashboard
+> and re-store it with `portunus drop`. Override the version with the `stripe_api_version`
+> tag when Stripe moves the API out of preview.
+
+**One run:**
+
+1. Portunus generates a throwaway RSA-3072 keypair for this run.
+2. It rotates with `expire_current_key_in_minutes` set to the grace window, so the old key
+   keeps working. For a secret key it sends the public key. Stripe returns the new secret
+   encrypted to it (compact JWE), and Portunus decrypts it only inside the resolver
+   boundary. In test mode Stripe may return the plaintext token instead.
+3. Verify. `GET /v2/iam/api_keys/{new_id}` must report `active` with the same key type.
+   A secret key must also authenticate `GET /v1/balance`. A restricted key passes on a
+   `permission_error`, because that proves the key authenticated. If verification fails,
+   nothing is stored, the new key is expired (best effort), and the old key keeps working.
+4. Store the new value through the boundary-only backend write. The value never reaches
+   stdout, chat or agent context.
+5. Update the reference: `stripe_key_id` becomes the new id, `rotation_requested` is
+   removed, and a `locked` reference goes back to `enabled`. The old id is tracked as
+   superseded in the `stripe` rotation binding.
+6. With `--retire-old`: `POST /v2/iam/api_keys/{old_id}/expire`. If that fails, the run
+   errors, but the new key is already stored, and the old key still expires when the grace
+   window ends.
+
+Every run is written to the audit chain (`rotate:stripe-key`) and to `portunus_rotation_audit`.
+The audit records key ids and outcomes only, never key material.
+
+**Tags:**
+
+| Tag | Required | Meaning |
+|---|---|---|
+| `stripe_key_id` | yes | The Stripe API key object id, from the v2 IAM API (`GET /v2/iam/api_keys`) or the Dashboard. |
+| `stripe_key_type` | no | `secret_key` or `publishable_key`. When omitted, it is classified from the stored value's prefix (`sk_`/`rk_` → secret, `pk_` → publishable). |
+| `stripe_admin_ref` | publishable keys | A reference holding a secret key that authorizes the call. A publishable key can't authenticate the API. A secret key rotates itself when this tag is unset. |
+| `stripe_context` | no | Sent as the `Stripe-Context` header, e.g. a connected account id. |
+| `stripe_grace_minutes` | no | 1–10080. Default 10080 (7 days, Stripe's maximum). |
+| `stripe_api_version` | no | Overrides the preview `Stripe-Version`. |
+
+**Leaked key, e.g. one pasted into chat.** Roll it and expire the old one at once:
+
+```bash
+portunus rotation-bindings set stripe --status real
+# --tags REPLACES the whole tag dict: include the reference's existing tags too
+portunus retag <secret-ref> --tags "<existing tags>,stripe_key_id=<id>"
+portunus rotation run <secret-ref> --retire-old
+# publishable key: authorize with the (new) secret key
+portunus retag <publishable-ref> --tags "<existing tags>,stripe_key_id=<id>,stripe_admin_ref=<secret-ref>"
+portunus rotation run <publishable-ref> --retire-old
+```
+
+Rotate the secret key first, so that the publishable rotation authenticates with the new
+secret.
+
+**Restricted keys follow the same path (PANT-1134).** Early research assumed a separate
+`POST /v1/restricted_keys` API for `rk_` keys. That endpoint doesn't exist in Stripe's API
+reference (`docs.stripe.com/api/restricted_keys` returned 404 on 2026-11-20). A restricted key
+is rolled through the same v2 IAM call as a standard secret key, or in the Dashboard. So there is
+no separate `StripeRestrictedKeyRotationAdapter`.
+
+**Dashboard fallback.** If the v2 IAM call is rejected, open
+<https://dashboard.stripe.com/apikeys>, choose **...** > **Rotate key** on the key, and pick an
+expiry (up to 7 days) to keep the old key working during the switch. Store the new value with
+`portunus drop`, then confirm it with `portunus liveness check <ref>`.
+
+**Which key type is stored?** `portunus liveness check <ref>` reads the prefix inside the
+resolver boundary and reports only its label (for example `live restricted key`), never the
+value.
 
 ---
 

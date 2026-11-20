@@ -16,6 +16,11 @@ Each claim below is labeled. **Verified** means checked against a primary source
 with the link given. **Unverified** means it is still a hypothesis and Story 01 (the live spike)
 has to settle it before any implementation story starts.
 
+**Story 01 spike update (2026-11-20, PANT-1422).** Every *Unverified* tag below now carries a
+**[spike]** note: resolved, or carried forward with the reason. Every spike result comes from **Chrome for
+Testing 153.0.8010.12 on Linux x86_64** (basic password store, no Google account). None comes from
+Chrome stable or macOS. Details and raw data: `spike-results.md`.
+
 ## 1. Candidate write paths
 
 ### 1a. Raw `Login Data` write: rejected (issue's own position, reinforced)
@@ -27,6 +32,8 @@ has to settle it before any implementation story starts.
   passwords), and `insecure_credentials`/notes side tables. A synced profile would reconcile
   against the server on next launch and could revert or duplicate the row. *Unverified in
   detail. Listed as a reason, not load-bearing, since 1a is rejected anyway.*
+  **[spike] Carried forward, deliberately not tested.** Testing it would need a raw write, which the
+  security bar forbids. 1a stays rejected.
 - Not revisited by this epic.
 
 ### 1b. Third-party extension calling Chrome's password API: **not possible on stable Chrome**
@@ -44,11 +51,18 @@ has to settle it before any implementation story starts.
   native process and an extension, and adds no capability the extension lacks.
   (https://blog.chromium.org/2013/10/connecting-chrome-apps-and-extensions.html)
   The extension + native-host *transport* is still useful, as the delivery mechanism for 1c.
+- **[spike F6] Addendum.** The `_api_features.json` WebUI exposure is reachable in practice. CDP on a
+  custom `--user-data-dir` can open `chrome://password-manager` and call `chrome.passwordsPrivate`
+  (`addPassword`, `changeCredential`, `importPasswords`, …) in that page. That writes through Chrome's
+  own store, headless, with no prompt. This does not help an *extension* (still impossible), but it
+  is a real Chrome-own write path for Portunus-owned profiles (design Q1(b)).
 
 ### 1c. Credential Management API (`navigator.credentials.store`) on the target origin: **leading candidate**
 
 - **Verified.** Chrome supports `PasswordCredential` (since Chrome 51). `navigator.credentials.store()`
   hands a credential to Chrome's password manager, and Chrome asks the user whether to store it.
+  **[spike F1] Only for a new username.** For a username Chrome already has, Chrome updates without
+  asking (see 1 below).
   This is Chrome's own write path, used by Chrome's own UI, with the user's explicit confirmation.
   (https://developer.chrome.com/blog/credential-management-api ,
   https://web.dev/articles/security-credential-management-save-forms)
@@ -61,6 +75,20 @@ has to settle it before any implementation story starts.
      secret-boundary concern (design-discussion §3).
   3. Does it require a user activation (gesture) in the tab?
   4. Which store does the update land in (profile store vs. account store) when both have the row?
+- **[spike] Answers (CfT 153 / Linux):**
+  1. **Resolved: overwrites in place, with no prompt.** Chrome logs `Decision: UPDATE the saved credential
+     … on Profile Store` and shows an after-the-fact "Password updated" notice. One row, new value,
+     no duplicate. This held for a seeded row whose `origin_url` path differs from the calling page.
+     For a *new* username, a "Save password?" bubble appears and nothing is written without a click.
+     `store()` resolves successfully in both cases (F1, F1b).
+  2. **Resolved: works from the ISOLATED world**, and the hostile page saw nothing. A plain MAIN-world
+     call **was** captured by the page's patch (leak demonstrated). Use ISOLATED (F2).
+  3. **Resolved: no user activation needed** (extension `executeScript` and CDP `userGesture:false`,
+     `isActive === false`, headed and headless) (F3).
+  4. **Carried forward.** No Google account could be signed in, so the account store could not be
+     populated. Profile-store updates land in `Login Data` and the internals log names the store.
+     The case where both stores hold the row is untested (F4).
+  - Chrome stable and macOS: **not verified** for any of 1-4.
 - This path needs a tab open on the real origin. That is a feature, not a bug: Chrome binds the
   credential to the origin it is stored from, so Portunus cannot write a password for
   `bank.example` from some other page.
@@ -77,6 +105,11 @@ has to settle it before any implementation story starts.
 - Even under CDP, Chrome's "Save/Update password?" bubble is browser UI, not page DOM. CDP page
   automation does not click it. *Unverified whether any CDP domain exposes it. Story 01 checks
   the current protocol, since the docs site 404'd during this research.*
+  **[spike F6] Resolved: no.** The live protocol of 153 (`/json/protocol`, version 1.3) has no
+  password domain. `Autofill` is card/address only. `Browser.executeBrowserCommand` has no password
+  command. `Input.dispatchKeyEvent` does not reach the bubble. This matters less than expected:
+  updates show no bubble that needs accepting (1c answer 1), and `passwordsPrivate` via the WebUI
+  (1b addendum) writes with no UI.
 
 ### 1e. Chrome's CSV import (`chrome://password-manager/settings` → Import): **fallback only**
 
@@ -85,6 +118,11 @@ has to settle it before any implementation story starts.
 - **Unverified:** current conflict behavior when an imported row matches an existing
   (origin, username). Reports conflict: a 2016 test says it overwrote, while a Vivaldi report
   says it did not. Story 01 tests it on current stable.
+  **[spike F5] Resolved on CfT 153 / Linux, not on stable.** Neither old report holds. A matching
+  row produces `CONFLICTS`, 0 imported, and the existing row untouched. An explicit
+  `continueImport` ("replace") then overwrites in place with no duplicate. Driven through the same
+  `passwordsPrivate.importPasswords` API the Settings button calls (the button itself was not
+  clicked). The picker is a native GTK dialog that CDP cannot drive; it took X11 input to complete.
 - Inherent cost: the new password must sit in a **plaintext CSV on disk** until the user imports
   it. That is a boundary-sink exception Portunus has never made. Only acceptable, if at all, as a
   0600 tempfile in a private dir with a hard TTL and guaranteed unlink. The design keeps it as a
@@ -134,3 +172,7 @@ decision that most changes the build (design-discussion Q1).
 - Account-store (`Login Data For Account`) rows: the read path's `chrome_discovery.list_logins()`
   only reads `Login Data`. A write-back that verifies by re-reading would miss account-store rows.
   Story 02 must at least detect them.
+- **[spike] New signals.** (a) Chrome does not prompt on update (1c answer 1), which contradicts the design's
+  "Chrome's bubble is the consent step". (b) `ChromeBackend.access()` cannot decrypt Linux rows
+  (spike F7: 1003 vs 1 PBKDF2 iteration, and the no-keyring v10 blob is treated as plaintext). Verify
+  by read-back is blocked on Linux until that is fixed.

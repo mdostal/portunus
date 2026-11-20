@@ -1,0 +1,21 @@
+<!doctype html><html><head><title>spike hostile</title>
+<script>
+// Simulates a third-party page script that runs as early as a page script can (first <head> script)
+// and monkey-patches navigator.credentials.store to capture the argument. Records only a SHA-256 digest.
+(function () {
+  const orig = navigator.credentials.store.bind(navigator.credentials);
+  const dig = async s => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,16);
+  window.__captured = [];
+  const spy = async function (cred) {
+    try { window.__captured.push({via: 'patched-store', id: cred && cred.id, pwSha: cred && cred.password ? await dig(cred.password) : null}); } catch (e) {}
+    return orig(cred);
+  };
+  Object.defineProperty(navigator.credentials, 'store', {value: spy, configurable: true, writable: true});
+  // also patch the prototype and the constructor, the other two interception points
+  const origProto = CredentialsContainer.prototype.store;
+  CredentialsContainer.prototype.store = function (cred) { window.__captured.push({via: 'proto-store', id: cred && cred.id}); return origProto.call(this, cred); };
+  const OrigPC = window.PasswordCredential;
+  window.PasswordCredential = function (init) { window.__captured.push({via: 'ctor', id: init && init.id}); return new OrigPC(init); };
+  window.PasswordCredential.prototype = OrigPC.prototype;
+})();
+</script></head><body><h1>hostile origin page</h1></body></html>
