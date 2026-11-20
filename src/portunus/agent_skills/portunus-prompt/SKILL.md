@@ -124,6 +124,44 @@ Rules inside T3 Code:
   `PORTUNUS_PROMPT_SURFACE=kdialog` (or any other surface name). Passing `surface=`
   yourself always wins.
 
+## Payment cards (`kind="card"`)
+
+For a card, pass `kind="card"`. The human enters number, expiry, CVC and optionally the name
+on the card and billing postal code (one form, or one field at a time). Portunus checks the
+number (Luhn) and the expiry (not past), asks again on a typo, and stores ONE reference.
+You only ever see `"card": "visa ••••4242"`; `list` and `status` show the same.
+
+Inside T3 Code the handoff has a `cards` list, one card per field. Raise them in order
+(skip an optional one only if the human dismisses it), then call `portunus_prompt` once
+with the arguments in `then`, where `value_files` maps each field to the path its card
+returned: `value_files={"number": "/p1", "expiry": "/p2", "cvc": "/p3"}`. Never read those
+files. A card that fails a check is not stored and its files are deleted; tell the human
+what the error says and start again. CLI: `--value-file number=/p1 --value-file expiry=/p2 ...`.
+
+Gate a card (`gate=True`) so each payment needs the human's approval; see below.
+
+## Approval for a gated reference
+
+You cannot approve yourself: `portunus approve` is refused inside an agent. When a resolve
+answers that approval is required, ask for it:
+
+```
+portunus_request_approval(name="visa-work", purpose="domain renewal",
+                          amount="$12.00", merchant="Porkbun")
+```
+
+- In T3 Code it returns `{"pending": true, "request_id", "card", "then"}`. Raise the card
+  with exactly `card.arguments`; the human types a code from their authenticator app into
+  it. Then call `portunus_request_approval` with the arguments in `then`, putting the card's
+  path in `code_file`. Do not read the file. `{"approved": true, "uses": 1}` means you may
+  resolve the reference **once**, within 10 minutes. If the human dismisses the card, stop.
+- With a desktop dialog the human answers inline: `{"approved": true}` or `{"denied": true}`.
+- Otherwise `{"pending": true, "ask_human_to_run": "portunus approve visa-work --request <id>"}`:
+  ask the human to run that command, then resolve.
+
+Say truthfully what the payment is for: the human sees your purpose, amount and merchant,
+and the audit log records them with your name.
+
 ## What you'll see
 
 - `{"name", "state", "stored": true, "gated", "surface"}`: stored. Report it by name.
@@ -149,4 +187,5 @@ For a command that reads the secret on stdin, such as `sudo -S`:
 3. Delete the file straight away: `rm -f "$file"`. Do it even when the command failed.
 
 If step 1 answers that the reference needs approval, ask the human to run
-`portunus approve sudo-pw --ttl 2h`; do not prompt for the password again.
+`portunus approve sudo-pw --ttl 2h` (or use `portunus_request_approval` for a single use);
+do not prompt for the password again.

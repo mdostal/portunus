@@ -60,6 +60,14 @@ One trailing newline is removed from the value. All other whitespace is kept.
 
 The file is deleted only after the value is in the vault. If storing fails, the file is left in place and the error says so, so that you do not have to type the value again. If the value was stored but the file could not be deleted, the result has `"file_removed": false` and a `warning` with the path to delete.
 
+## Payment cards
+
+`portunus_prompt(..., kind="card")` asks for a card. A T3 Code card holds one value, so the handoff lists one card per field (`cards`: number, expiry, CVC, then the optional name on the card and billing postal code). The agent raises them in order and finishes with one `portunus_prompt` call whose `value_files` maps each field to the path its card returned. Portunus checks the number (Luhn) and the expiry (this month or later) before anything is stored, stores the card as one reference and deletes the files. From then on the card is only ever shown as its brand and last four digits, for example `visa ••••4242`.
+
+## Approving a payment from the thread
+
+Gate the card (`gate=True`), and enroll an authenticator app once at your own terminal: `portunus approval enroll`. When the agent needs the card it calls `portunus_request_approval(name, purpose=..., amount=..., merchant=...)`. In a T3 Code thread that returns a card for you to answer. It reads, for example, "bot asks to pay $12.00 to Porkbun for domain renewal (with visa-work)". Type the 6-digit code from your authenticator app into it to allow one use, or dismiss it to refuse. The agent passes the card's file back to `portunus_request_approval` and the code is checked. An approval lets exactly one resolve through, by that agent, within 10 minutes, and the audit log records who asked, who approved and that it came through T3 Code. The agent itself cannot run `portunus approve`.
+
 ## Vault → card or settings: the `op` launcher
 
 Stock T3 Code has one kind of secret provider, 1Password, which it uses by running the `op` command it finds on `PATH`. Portunus ships a small launcher named `op` that answers the two calls T3 Code makes, from the Portunus vault. A T3 Code provider of kind 1Password with the account `portunus` then reads from Portunus.

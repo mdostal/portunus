@@ -111,6 +111,10 @@ portunus prompt sudo-pw dostal-sudo --provider linux --description "sudo on work
 
 `--value-file` must be an absolute path to a regular file (not a symlink) owned by the current user, with no group or other permission bits, between 1 byte and 64 KiB. Otherwise the command prints `{"error"}`, stores nothing and leaves the file alone. One trailing newline is removed from the value. If storing fails the file is kept; if the file cannot be deleted after a successful store the result has `"file_removed": false` and a `warning`.
 
+**`--kind card`.** A payment card is asked for as fields (number, expiry, CVC, and optionally the name on the card and the billing postal code) and stored as **one** reference whose value is a small JSON object (`{"number", "exp_month", "exp_year", "cvc", "name"?, "postal"?}`). Before anything is stored the number must pass the Luhn check and the expiry must be this month or later; the CVC must be 3 digits (4 on American Express). `zenity` shows one form; `kdialog`, `osascript` and `pinentry` ask one field at a time; a terminal window asks field by field. A field that fails a check is asked again (up to 3 tries). Only the brand and last four digits are kept outside the vault, and that is all `list`, `status`, the MCP tools and the UI ever show: `visa ••••4242`. The stored result adds `"kind": "card", "card": "visa ••••4242"`. `--surface ui` cannot take a card.
+
+With `--surface t3` the handoff has a `cards` list instead of one `card`: one T3 Code card per field (`{"field", "required", "tool", "arguments"}`), because a T3 Code card holds one value. Finish with one `--value-file FIELD=PATH` per field the human filled in (`portunus prompt visa-work dostal-visa-work --kind card --value-file number=/p1 --value-file expiry=/p2 --value-file cvc=/p3`), or a single `--value-file card=PATH` holding every field as JSON or `field: value` lines. A card that fails a check is not stored and its files are deleted.
+
 `PORTUNUS_PROMPT_SURFACE=<surface>` changes what `auto` picks (for example `kdialog` to keep the desktop dialog inside T3 Code). An explicit `--surface` wins over it. See [Portunus with T3 Code](t3-code.md).
 
 ---
@@ -477,13 +481,53 @@ portunus gate <name> [--off]
 
 ### `approve`
 
-Grant a time-boxed approval for a gated reference.
+Grant a time-boxed approval for a gated reference. **Humans only:** run inside an agent (any of `DOSTAL_AGENT`, `PORTUNUS_AGENT`, `AI_AGENT`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `T3CODE_THREAD_ID`, `MULTICA_AGENT_ID` is set) it is refused with exit 1 and an audited `refused:agent` line.
 
 ```
-portunus approve <name> [--ttl <N | duration>]
+portunus approve <name> [--ttl <N | duration>] [--once] [--request <id>] [--code <code>]
 ```
 
-`--ttl` is either a number of audit-clock ticks (roughly accesses; default 3) or a wall-clock duration such as `90s`, `30m`, `2h` or `1d`. A duration isn't capped by access count, so `portunus approve sudo-pw --ttl 2h` gives a two-hour window.
+| Flag | Description |
+|---|---|
+| `--ttl` | A number of audit-clock ticks (roughly accesses; default 3) or a wall-clock duration such as `90s`, `30m`, `2h` or `1d`. `portunus approve sudo-pw --ttl 2h` gives a two-hour window |
+| `--once` | The approval lets exactly one resolve through |
+| `--request` | Approve an agent's pending request (see `request-approval`): one resolve, only by that requester, within 10 minutes. The request's purpose, amount and merchant are printed first |
+| `--code` | The authenticator code. When an approval factor is enrolled (`portunus approval enroll`) a valid code is required and is asked for when omitted; a wrong or reused code is refused and audited. Without a factor, `approve` works as before but warns |
+
+The audit line records `approved:<approver>` plus `requester:`, `channel:`, `request:`, `factor:` and `uses:1` where they apply.
+
+---
+
+### `approval`
+
+The human's approval factor and the queue of pending requests.
+
+```
+portunus approval enroll [--replace]
+portunus approval status [--json]
+portunus approval remove [--code <code>]
+```
+
+`enroll` prints a new TOTP secret and `otpauth://` URI for an authenticator app (put it on a device your agents cannot reach, such as your phone) and saves it once you type a current code. The secret is kept in the local encrypted vault, the state file holds no secret. `--replace` and `remove` need a current code. `enroll` and `remove` are refused inside an agent. `status` lists pending requests with the command that approves each.
+
+---
+
+### `request-approval`
+
+Ask the human to allow **one** use of a gated reference. This is what an agent runs instead of `approve`. Never returns a value. Prints one JSON object.
+
+```
+portunus request-approval <name> --purpose "<what for>" [--amount "$12.00"] [--merchant "<who is paid>"] [--surface auto|t3|cli|osascript|kdialog|zenity|pinentry]
+portunus request-approval <name> --request <id> --code-file <path>
+```
+
+The human sees `<requester> asks to pay <amount> to <merchant> for <purpose> (with <name>)` and approves with a code from their authenticator app:
+
+- **t3** (picked by `auto` inside a T3 Code thread): returns `{"pending": true, "request_id", "card": {...}, "then": {...}}`. The agent raises the card; the human types the code into it; the agent finishes with `--request <id> --code-file <path>`. The file is deleted. Three wrong codes deny the request.
+- **a desktop dialog**: the human types the code (up to 3 tries) or cancels, which denies the request. Channel `dialog:<surface>`.
+- **cli**, or when no factor is enrolled: returns `{"pending": true, "request_id", "ask_human_to_run": "portunus approve <name> --request <id>"}`.
+
+A request expires after 15 minutes; an approval from it must be used within 10. Exit 0 when approved or pending, 1 otherwise.
 
 ---
 

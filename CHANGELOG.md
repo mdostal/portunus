@@ -4,8 +4,32 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Payment cards: `portunus prompt --kind card` (GH #251).** Asks for number, expiry, CVC, name and
+  billing postal code, in one `zenity` form or one field at a time (other dialogs, terminal
+  windows, one T3 Code card per field). Checks Luhn and a non-past expiry before saving, stores one
+  `card` reference, and shows only brand and last four (`visa ••••4242`) in `list`, `status`, the
+  MCP tools and the UI. T3 completion takes `--value-file FIELD=PATH` / MCP `value_files`.
+- **Approval windows (GH #251).** `portunus request-approval` / MCP `portunus_request_approval`
+  lets an agent ask for one use of a gated reference, showing purpose, amount and merchant. The
+  human approves with a TOTP code (`portunus approval enroll`) in a T3 Code card, a desktop dialog
+  or `portunus approve <name> --request <id>`. The approval lets exactly one resolve through,
+  bound to the requester, and the audit records requester, approver and channel. `portunus approve
+  --once` gives a single-use approval without a request.
+
+### Changed
+
+- **`portunus approve` refuses to run inside an agent (GH #251)** and, once a factor is enrolled,
+  needs a valid authenticator code. Without a factor it keeps working and warns.
+
 ### Fixed
 
+- **`retag` no longer reports a collision for a description-only change (GH #251).** It only
+  checks collisions when the tag set changes, and names only the other references.
+- **Re-running `portunus prompt` on a gated reference keeps its gate (GH #251).**
+- **The UI defaults to port 7781, not 3000 (GH #251).** `ui open`, `prompt --surface ui` and the
+  UI's npm scripts all read `PORTUNUS_UI_PORT` (default 7781).
 - **`reg rm` no longer purges a stored value other references still share (PANT-1407, GH #247).**
   `portunus reg rm <ref>` used to delete the stored value along with the registry entry. When
   another reference shared the same backend + sm_name, that reference silently lost its value.
