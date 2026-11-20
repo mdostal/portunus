@@ -29,6 +29,7 @@ from typing import Dict, List, Optional
 
 from . import __version__
 from . import agent_setup
+from . import card as card_mod
 from . import diagnose as diagnose_mod
 from . import health as health_mod
 from . import prompt as prompt_mod
@@ -541,6 +542,8 @@ def _print_reference_list(refs) -> None:
         )
         if ref.backend:
             print(f"    backend:     {ref.backend}")
+        if ref.card:
+            print(f"    card:        {card_mod.display(ref.card)}")
         if ref.description:
             print(f"    description: {ref.description}")
         if ref.purpose:
@@ -1167,7 +1170,28 @@ def cmd_prompt(args) -> int:
 
     --surface t3 (what auto picks inside a T3 Code thread) prints a handoff
     naming the T3 Code card tool to call; --value-file PATH then stores what
-    that card saved and deletes the file."""
+    that card saved and deletes the file.
+
+    --kind card asks for a payment card's fields (number, expiry, CVC,
+    name, postal code), checks them (Luhn, expiry not in the past) and
+    stores them as one reference shown only as brand + last four. Its t3
+    completion takes --value-file FIELD=PATH once per field."""
+    value_file = ""
+    value_files: dict = {}
+    for item in args.value_file or []:
+        key, sep, path = item.partition("=")
+        if sep and not os.path.isabs(item) and key in (card_mod.FIELD_KEYS + ("card",)):
+            if key in value_files:
+                return _err(f"--value-file {key}= given twice")
+            value_files[key] = path
+        elif value_file or value_files:
+            return _err("--value-file takes one PATH, or FIELD=PATH per card field (--kind card)")
+        else:
+            value_file = item
+    if value_file and value_files:
+        return _err("--value-file takes one PATH, or FIELD=PATH per card field (--kind card)")
+    if value_files and args.kind != card_mod.KIND:
+        return _err("--value-file FIELD=PATH is only for --kind card")
     registry, _, broker, resolver = _build()
     try:
         tags = _parse_tags(args.tags) if args.tags else {}
@@ -1182,8 +1206,8 @@ def cmd_prompt(args) -> int:
     )
     result = prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=args.surface,
-        open_ui=_open_ui, timeout=args.timeout, value_file=args.value_file or "",
-        cli=True,
+        open_ui=_open_ui, timeout=args.timeout, value_file=value_file,
+        value_files=value_files or None, cli=True,
     )
     if args.home and "cli" in result.get("then", {}):
         # The completing call has to land in the same vault.
@@ -1295,7 +1319,7 @@ def cmd_t3_op(args) -> int:
 def cmd_tty_entry(args) -> int:
     """Internal: the masked prompt that `prompt` runs inside a spawned
     terminal window. Not meant to be called directly."""
-    return prompt_mod.tty_entry(args.fifo, args.banner)
+    return prompt_mod.tty_entry(args.fifo, args.banner, card=args.card)
 
 
 def cmd_drop_bulk(args) -> int:
@@ -1515,6 +1539,8 @@ def cmd_status(args) -> int:
     print(f"sm_name:       {ref.sm_name}")
     print(f"state:         {ref.state}")
     print(f"approval-gate: {'yes' if ref.approval == 'required' else 'no'}")
+    if ref.card:
+        print(f"card:          {card_mod.display(ref.card)}")
     return 0
 
 
@@ -3999,7 +4025,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("sm_name", help="vault key, e.g. dostal-sudo")
     pr.add_argument("--scope", default="")
     pr.add_argument("--kind", default="password",
-                    help="default password (leading/trailing whitespace is kept)")
+                    help="default password (leading/trailing whitespace is kept). card asks "
+                         "for a payment card's fields, checks them and shows it only as "
+                         "brand + last four")
     pr.add_argument("--org", default="")
     pr.add_argument("--provider", default="")
     pr.add_argument("--project", default="")
@@ -4021,9 +4049,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "window; PORTUNUS_PROMPT_SURFACE overrides the pick). ui opens the "
                          "dashboard and returns pending. t3 returns a handoff for the T3 "
                          "Code secret card; finish it with --value-file")
-    pr.add_argument("--value-file", default="",
+    pr.add_argument("--value-file", action="append", default=[],
                     help="finish a t3 prompt: the absolute path the T3 Code card returned. "
-                         "The value is stored and the file is deleted")
+                         "The value is stored and the file is deleted. For --kind card, "
+                         "FIELD=PATH once per field (number, expiry, cvc, name, postal)")
     pr.add_argument("--timeout", type=int, default=prompt_mod.DEFAULT_TIMEOUT,
                     help="seconds to wait for the human (default %(default)s)")
     pr.set_defaults(func=cmd_prompt)
@@ -4031,6 +4060,7 @@ def build_parser() -> argparse.ArgumentParser:
     tty = sub.add_parser("_tty-entry")
     tty.add_argument("fifo")
     tty.add_argument("--banner", default="")
+    tty.add_argument("--card", action="store_true")
     tty.set_defaults(func=cmd_tty_entry)
 
     t3 = sub.add_parser(

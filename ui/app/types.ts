@@ -32,6 +32,15 @@ export interface PortunusReference {
   repo: string;
   source_files: string[];
   suggested: Record<string, { value: unknown; by: string; at: string }>;
+  // kind=card only (GH #251): brand + last four, the only card data kept
+  // outside the vault.
+  card?: { brand?: string; last4?: string };
+}
+
+// "visa ••••4242" -- the only way the UI shows a card.
+export function cardDisplay(card?: { brand?: string; last4?: string }): string {
+  if (!card || !card.last4) return "";
+  return `${card.brand || "card"} ••••${card.last4}`;
 }
 
 // One entry from `portunus crawl --json` / portunus_crawl_candidates --

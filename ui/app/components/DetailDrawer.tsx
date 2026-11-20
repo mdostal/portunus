@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { AuditEntry, LeakFindingDetail, LeakSummary, PortunusReference, PortunusView } from "../types";
+import { cardDisplay } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
@@ -407,6 +408,14 @@ export default function DetailDrawer({
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {cardDisplay(reference.card) && (
+        <div className="metadata-block">
+          <p className="metadata-line">
+            <span className="k">card</span> {cardDisplay(reference.card)}
+          </p>
         </div>
       )}
 

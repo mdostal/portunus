@@ -762,6 +762,7 @@ def portunus_prompt(
     value_file: str = "",
     scope: str = "",
     repo: str = "",
+    value_files: Optional[dict] = None,
 ) -> dict:
     """Ask the HUMAN to type a secret into Portunus directly -- use this
     instead of portunus_drop whenever the human hasn't already pasted the
@@ -788,6 +789,18 @@ def portunus_prompt(
     If the result has file_removed False, delete the path yourself without
     reading it. If the human dismisses the card, make no second call.
 
+    kind="card" stores a payment card (number, expiry, CVC, name, postal
+    code) as ONE reference. Portunus checks it (Luhn, expiry not in the
+    past, CVC length) before storing, and it is only ever shown as brand
+    plus last four ("visa ••••4242", the "card" field of the result and of
+    portunus_list). Desktop surfaces show one form (zenity) or ask one
+    field at a time. Inside T3 Code the first call returns "cards": one
+    card tool call per field (name and postal are optional, skip them if
+    the human does); then call this tool once with value_files mapping each
+    field to the path its card returned, e.g. {"number": "<path>",
+    "expiry": "<path>", "cvc": "<path>"}. A card that fails a check is not
+    stored and its files are deleted -- ask the human to enter it again.
+
     Returns metadata only: {"name", "state", "stored": True, "gated",
     "surface"}, {"cancelled": True} or {"error"} -- never the value, its
     length or a hash. Lands state="dropped" unless enable=True; gate=True
@@ -811,6 +824,7 @@ def portunus_prompt(
     return prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=surface,
         open_ui=_open_ui, timeout=timeout, value_file=value_file,
+        value_files=dict(value_files) if value_files else None,
     )
 
 

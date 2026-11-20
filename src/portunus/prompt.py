@@ -711,9 +711,301 @@ def _store_value(req: PromptRequest, registry, broker, backend, value: str, used
             "backend": ref.backend}
 
 
+# --- card kind (GH #251) ----------------------------------------------------
+#
+# A card is asked for as fields. zenity can show them all in one form; every
+# other desktop surface asks one field at a time, checking each as it is
+# entered and asking again (up to CARD_ATTEMPTS times) when it fails. The
+# finished card is checked as a whole (Luhn, expiry not in the past, CVC
+# length) before anything is stored.
+
+CARD_ATTEMPTS = 3
+_FORM_SEPARATOR = "\x1e"  # ASCII record separator: nobody types it into a card
+
+
+def _card_form_argv(title: str, text: str) -> List[str]:
+    argv = ["zenity", "--forms", "--title", title, "--text", text,
+            "--separator", _FORM_SEPARATOR]
+    for fld in card_mod.FIELDS:
+        label = fld.label if fld.required else f"{fld.label} (optional)"
+        argv += ["--add-password" if fld.hidden else "--add-entry", label]
+    return argv
+
+
+def _read_card_form(req: PromptRequest, runner, timeout: int, today=None) -> "card_mod.Card":
+    """zenity: every field in one window. A card that fails a check reopens
+    the form with the reason, up to CARD_ATTEMPTS times."""
+    text = req.card_text
+    for _ in range(CARD_ATTEMPTS):
+        try:
+            proc = runner(_card_form_argv(req.title, text), capture_output=True,
+                          text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise PromptCancelled("timeout")
+        except OSError as exc:
+            raise PromptError(f"could not start zenity: {exc.strerror}")
+        if proc.returncode != 0:
+            raise PromptCancelled()
+        parts = _strip_one_newline(proc.stdout).split(_FORM_SEPARATOR)
+        fields = {fld.key: (parts[i] if i < len(parts) else "")
+                  for i, fld in enumerate(card_mod.FIELDS)}
+        del parts
+        try:
+            return card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            problem = str(exc)
+            text = f"{req.card_text}\n\nNot saved: {problem}. Please check and try again."
+        finally:
+            del fields
+    raise PromptError(f"{problem}; nothing stored")
+
+
+def _read_card_guided(surface: str, req: PromptRequest, runner, timeout: int, which,
+                      today=None) -> "card_mod.Card":
+    """One dialog per field. Number and CVC are masked; expiry, name and
+    postal code are shown so the human can see what they typed."""
+    fields: Dict[str, str] = {}
+    steps = card_mod.fields_in_order()
+    try:
+        for i, fld in enumerate(steps, 1):
+            text = f"{req.card_text}\n\n{card_mod.field_prompt(fld, i, len(steps))}"
+            for _ in range(CARD_ATTEMPTS):
+                raw = _ask_dialog(surface, text, req.title, runner, timeout, which,
+                                  hidden=fld.hidden).strip()
+                if not raw and not fld.required:
+                    break
+                problem = card_mod.check_field(fld.key, raw, fields, today)
+                if problem is None:
+                    fields[fld.key] = raw
+                    break
+                text = (f"{req.card_text}\n\n{card_mod.field_prompt(fld, i, len(steps))}"
+                        f"\n\nNot accepted: {problem}.")
+            else:
+                raise PromptError(f"{fld.label}: {problem}; nothing stored")
+        try:
+            return card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            raise PromptError(f"{exc}; nothing stored")
+    finally:
+        fields.clear()
+
+
+def read_card(req: PromptRequest, surface: str = "auto", *, runner=None, popen=None,
+              which=None, env=None, platform=None, timeout: int = DEFAULT_TIMEOUT,
+              today=None):
+    """Return (surface_used, Card). Raises PromptCancelled/PromptError."""
+    runner = runner or subprocess.run
+    which = which or shutil.which
+    if surface == "auto":
+        options = available_surfaces(env=env, platform=platform, which=which)
+        if not options:
+            raise PromptError(
+                "no human-facing input surface available for a card -- use --surface t3 "
+                "inside T3 Code, or ask the human to run `portunus prompt <name> <sm_name> "
+                "--kind card` at their own desktop"
+            )
+        surface = options[0]
+    if surface == "zenity":
+        return surface, _read_card_form(req, runner, timeout, today)
+    if surface in DIALOG_SURFACES:
+        return surface, _read_card_guided(surface, req, runner, timeout, which, today)
+    if surface in TERMINAL_SURFACES:
+        fields = read_from_terminal(surface, req, popen=popen, timeout=timeout, card=True)
+        try:
+            return surface, card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            raise PromptError(f"{exc}; nothing stored")
+        finally:
+            fields.clear()
+    raise PromptError(f"unknown surface: {surface}")
+
+
+def _store_card(req: PromptRequest, registry, broker, backend, card, used: str,
+                progress: Optional[List[str]] = None) -> dict:
+    """Store a checked card as ONE reference; keep only brand + last four
+    outside the vault."""
+    result = _store_value(req, registry, broker, backend, card.to_value(), used,
+                          progress=progress)
+    meta = card.meta()
+    registry.set_card(req.name, meta)
+    result["kind"] = card_mod.KIND
+    result["card"] = card_mod.display(meta)
+    return result
+
+
+def t3_card_handoff(req: PromptRequest, cli: bool = False) -> dict:
+    """Step one of a t3 card: one T3 Code secret card per field (a T3 card
+    holds one value), then one completing call with every file."""
+    base = _one_line(req.description or req.name, T3_LABEL_MAX - 30) or req.name
+    reason = (f"Stored in your Portunus vault as the card '{req.name}'. "
+              "The agent only ever sees its brand and last four digits.")
+    if req.gate:
+        reason += " Each use will need your approval."
+    cards = []
+    for fld in card_mod.FIELDS:
+        label = f"{base}: {fld.label}" + ("" if fld.required else " (optional)")
+        cards.append({
+            "field": fld.key, "required": fld.required,
+            "tool": T3_CARD_TOOL,
+            "arguments": {"label": _one_line(label, T3_LABEL_MAX),
+                          "reason": f"{reason} {fld.hint[0].upper()}{fld.hint[1:]}.",
+                          "delivery": "file"},
+        })
+    arguments = _request_arguments(req)
+    arguments.pop("value_file", None)
+    arguments["kind"] = card_mod.KIND
+    arguments["value_files"] = {fld.key: _VALUE_FILE_PLACEHOLDER for fld in card_mod.FIELDS}
+    then: dict = {"tool": "portunus_prompt", "arguments": arguments}
+    if cli:
+        argv = _request_cli(req)
+        at = argv.index("--value-file")
+        del argv[at:at + 2]
+        for fld in card_mod.FIELDS:
+            argv += ["--value-file", f"{fld.key}={_VALUE_FILE_PLACEHOLDER}"]
+        then["cli"] = argv
+    return {
+        "stored": False, "pending": True, "surface": T3_SURFACE, "name": req.name,
+        "kind": card_mod.KIND, "cards": cards, "then": then,
+        "note": "Call the card tool once per field, in order. The optional fields may be "
+                "skipped (leave them out of value_files). Then call portunus_prompt once "
+                "with value_files mapping each field to the path its card returned. Do not "
+                "read, print or copy those files.",
+    }
+
+
+def _remove_files(paths: List[str]) -> List[str]:
+    """Delete card files; return the ones that could not be deleted."""
+    left = []
+    for path in paths:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            left.append(path)
+    return left
+
+
+def complete_card_from_files(req: PromptRequest, registry, broker, backend,
+                             value_files: Dict[str, str], today=None) -> dict:
+    """Step two of a t3 card. `value_files` maps a field (number, expiry,
+    cvc, name, postal) to the file its card saved, or has the single key
+    "card" for one file holding every field (JSON or `field: value` lines).
+
+    A card that fails a check is NOT stored and its files are deleted: the
+    human has to type it again anyway, and a rejected card number should not
+    sit on disk. A file that cannot be read safely is left alone."""
+    if not value_files:
+        return {"error": "value_files is empty"}
+    unknown = sorted(set(value_files) - set(card_mod.FIELD_KEYS) - {"card"})
+    if unknown:
+        return {"error": f"unknown card field(s) in value_files: {', '.join(unknown)} "
+                         f"(want {', '.join(card_mod.FIELD_KEYS)}, or card for one file)"}
+    if "card" in value_files and len(value_files) > 1:
+        return {"error": "value_files has `card` (one file for every field) and separate "
+                         "fields; pass one or the other"}
+    paths = [p for p in value_files.values() if p]
+    fields: Dict[str, str] = {}
+    try:
+        for key, path in value_files.items():
+            if not path:
+                continue
+            try:
+                text = _strip_one_newline(read_value_file(path)).strip()
+            except PromptError as exc:
+                return {"error": f"{key}: {exc}"}
+            if key == "card":
+                try:
+                    fields.update(card_mod.parse_single(text))
+                except card_mod.CardError as exc:
+                    left = _remove_files(paths)
+                    return {"error": f"{exc}; nothing stored", "files_removed": not left}
+            else:
+                fields[key] = text
+            del text
+        try:
+            card = card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            left = _remove_files(paths)
+            out = {"error": f"{exc}; nothing stored. The card's files were deleted: ask the "
+                            "human to enter the card again", "files_removed": not left}
+            if left:
+                out["warning"] = ("could not delete these files; delete them without reading "
+                                  "them: " + ", ".join(left))
+            return out
+    finally:
+        fields.clear()
+
+    existed = req.name in registry
+    progress: List[str] = []
+    try:
+        result = _store_card(req, registry, broker, backend, card, T3_SURFACE,
+                             progress=progress)
+    except Exception as exc:  # noqa: BLE001
+        if not progress:
+            if not existed and req.name in registry:
+                try:
+                    registry.remove(req.name)
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"error": f"could not store the card ({type(exc).__name__}); nothing "
+                             "stored. The card's files were left in place: fix the problem "
+                             "and call again with the same value_files, or delete the files"}
+        result = {"name": req.name, "stored": True, "surface": T3_SURFACE,
+                  "kind": card_mod.KIND,
+                  "warning": f"the card was stored but finishing up failed "
+                             f"({type(exc).__name__}); check `portunus status {req.name}`"}
+    finally:
+        del card
+    left = _remove_files(paths)
+    result["file_removed"] = not left
+    if left:
+        note = ("could not delete these files; delete them without reading them: "
+                + ", ".join(left))
+        result["warning"] = f"{result['warning']}; {note}" if "warning" in result else note
+    return result
+
+
+def _run_card_prompt(req, registry, broker, backend, surface, value_file, value_files,
+                     cli, env, kwargs) -> dict:
+    if value_file and not value_files:
+        value_files = {"card": value_file}
+    if value_files:
+        if surface not in ("auto", T3_SURFACE):
+            return {"error": f"value_files completes a t3 prompt and cannot be combined "
+                             f"with surface={surface}"}
+        return complete_card_from_files(req, registry, broker, backend, value_files,
+                                        today=kwargs.get("today"))
+    try:
+        surface = choose_surface(surface, env)
+    except PromptError as exc:
+        return {"error": str(exc)}
+    if surface == T3_SURFACE:
+        return t3_card_handoff(req, cli=cli)
+    if surface == "ui":
+        return {"error": "the ui surface cannot take a card yet -- use --surface t3, a "
+                         "desktop dialog or a terminal window"}
+    try:
+        used, card = read_card(req, surface, env=env, **kwargs)
+    except PromptCancelled as exc:
+        broker.audit.append("prompt", req.sm_name, f"cancelled:{exc.reason}")
+        out = {"cancelled": True}
+        if exc.reason != "cancelled":
+            out["reason"] = exc.reason
+        return out
+    except PromptError as exc:
+        return {"error": str(exc)}
+    try:
+        return _store_card(req, registry, broker, backend, card, used)
+    finally:
+        del card
+
+
+
 def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "auto",
                open_ui: Optional[Callable[[str], dict]] = None, value_file: str = "",
-               cli: bool = False, env=None, **kwargs) -> dict:
+               cli: bool = False, env=None, value_files: Optional[Dict[str, str]] = None,
+               **kwargs) -> dict:
     """Prompt the human, store the answer, return metadata only.
 
     Every return path is a plain dict with no value in it:
@@ -724,6 +1016,7 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
 
     `value_file` completes a t3 prompt: the path a T3 Code card returned.
     `cli` adds the equivalent `portunus prompt` argv to a t3 handoff.
+    `value_files` completes a t3 card (``--kind card``): field -> path.
     """
     if not hasattr(backend, "store"):
         return {
@@ -738,6 +1031,11 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
     if clash:
         return {"error": f"{req.name!r} would have exactly the same tags as "
                          f"{', '.join(clash)} -- add a distinguishing tag; nothing was asked"}
+    if req.is_card:
+        return _run_card_prompt(req, registry, broker, backend, surface, value_file,
+                                value_files, cli, env, kwargs)
+    if value_files:
+        return {"error": "value_files is only for --kind card; use value_file"}
     if value_file:
         if surface not in ("auto", T3_SURFACE):
             return {"error": f"value_file completes a t3 prompt and cannot be combined "
