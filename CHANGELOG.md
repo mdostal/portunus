@@ -6,6 +6,14 @@ All notable changes to Portunus are documented in this file.
 
 ### Fixed
 
+- **`reg rm` no longer purges a stored value other references still share (PANT-1407, GH #247).**
+  `portunus reg rm <ref>` used to delete the stored value along with the registry entry. When
+  another reference shared the same backend + sm_name, that reference silently lost its value.
+  `reg rm` now removes the registry entry only. `--purge-value` also deletes the stored value, but
+  is refused (nothing removed, non-zero exit) while any other reference resolves to the same
+  backend + sm_name, and lists those references. `reg add` now warns on stderr when a new
+  reference shares an sm_name with an existing one in the same backend.
+
 - **A ref written by `prompt`/`drop` resolves from where it was written (PANT-1218, GH #242).**
   `prompt`, `drop` and `drop-bulk` (CLI and MCP) store into the local vault but used to leave the
   ref's `backend` empty, so resolve followed the project's VaultBinding. For a GCP-bound project

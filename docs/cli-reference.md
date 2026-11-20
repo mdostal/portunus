@@ -289,9 +289,11 @@ Manage the reference registry directly.
 ```
 portunus reg show
 portunus reg add <name> <sm_name> [--scope <s>] [--kind <k>] [--org <o>] [--project <p>] [--description <d>] [--purpose <p>] [--tags <k=v,...>] [--group <g>] [--related <r,...>] [--repo <repo>]
-portunus reg rm <name>
+portunus reg rm <name> [--purge-value]
 portunus reg json
 ```
+
+`reg rm` removes the registry entry only; the stored value is kept. `--purge-value` also deletes the stored value (local vault only), and is refused while any other reference shares the same backend + sm_name; those references are listed. `reg add` warns when a new reference shares an sm_name with an existing one in the same backend.
 
 **Example:**
 ```sh
