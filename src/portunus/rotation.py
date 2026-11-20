@@ -54,6 +54,11 @@ Real adapters:
   Neon to apply it, and verifies it with a real connect + `SELECT 1`. A
   reset is destructive by design, so it requires --retire-old.
 
+- `MongoDBAtlasRotationAdapter` (mongo_atlas.py, PANT-1131) rotates the
+  database user inside a stored MongoDB Atlas connection URI through the
+  Atlas Admin API: by default it creates a sibling user, verifies it with a
+  real connection, stores it, and (with --retire-old) deletes the old user.
+
 Stub adapters (`StripeRotationAdapter`) still raise unconditionally. A
 future real adapter would authenticate using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
@@ -2768,6 +2773,12 @@ class SentryRotationAdapter:
         )
 
 
+def _mongodb_atlas_adapter():
+    # Lazy: mongo_atlas.py builds on this module.
+    from .mongo_atlas import MongoDBAtlasRotationAdapter
+    return MongoDBAtlasRotationAdapter()
+
+
 def _zernio_adapter():
     # Lazy: zernio.py builds on this module (and envtargets.py).
     from .zernio import ZernioRotationAdapter
@@ -2784,6 +2795,7 @@ _ADAPTERS = {
     "vercel": VercelRotationAdapter,
     "github": GitHubRotationAdapter,
     "neon": NeonRotationAdapter,
+    "mongodb-atlas": _mongodb_atlas_adapter,
     "stripe": StripeRotationAdapter,
     "sentry": SentryRotationAdapter,
     "zernio": _zernio_adapter,
