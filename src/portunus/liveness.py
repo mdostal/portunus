@@ -1824,6 +1824,61 @@ register_liveness_adapter("posthog", PostHogLivenessAdapter)
 
 
 # ---------------------------------------------------------------------------
+# Linear API keys (PANT-1133, GH #196). Rotation is a dead end (no API issues
+# or revokes personal API keys -- docs/rotation.md, provider-rotation-matrix.md),
+# so liveness is the only automated check Portunus can give these.
+# ---------------------------------------------------------------------------
+
+class LinearLivenessAdapter:
+    """Linear: `POST https://api.linear.app/graphql` with `{ viewer { id } }`,
+    which returns only the key owner's user id.
+
+    The prefix picks the Authorization header inside the boundary: a
+    personal API key (`lin_api_`) is sent raw, as Linear documents it; an
+    OAuth access token (`lin_oauth_`) is sent as a Bearer token. A value
+    with neither prefix is not sent: the wrong header form would read as a
+    false `dead`.
+
+    401 (`AUTHENTICATION_ERROR`) is dead. Everything else -- 400 (Linear
+    answers rate limiting with `RATELIMITED` on 400), 403, 5xx -- is
+    unknown. The response body is never read."""
+
+    provider = "linear"
+    URL = "https://api.linear.app/graphql"
+    BODY = json.dumps({"query": "{ viewer { id } }"}).encode()
+    NO_KIND = -1  # boundary sentinel: never a real HTTP status
+    KINDS = (("lin_api_", "personal API key", ""), ("lin_oauth_", "OAuth access token", "Bearer "))
+
+    def __init__(self, transport: Optional[BodyTransport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        self._transport = transport or _default_body_transport
+        self._timeout = timeout
+
+    def check(self, ref, resolver) -> LivenessResult:
+        picked = {}
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            for prefix, label, scheme in self.KINDS:
+                if value.startswith(prefix):
+                    picked["kind"] = label
+                    headers = {"Authorization": scheme + value, "Content-Type": "application/json"}
+                    return self._transport("POST", self.URL, headers, self.BODY, self._timeout)
+            return self.NO_KIND
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NO_KIND:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: value has no lin_api_ (personal API key) or "
+                                         "lin_oauth_ (OAuth access token) prefix")
+        status = LIVE if 200 <= code < 300 else DEAD if code == 401 else UNKNOWN
+        return LivenessResult(ref.name, self.provider, status, http_status=code,
+                              detail=f"{picked['kind']}: POST {self.URL} -> {code}")
+
+
+register_liveness_adapter("linear", LinearLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
 # Anthropic (PANT-1132, GH #197). Two credentials share the `anthropic`
 # provider and must not be checked the same way:
 #

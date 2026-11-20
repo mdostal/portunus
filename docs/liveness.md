@@ -112,6 +112,7 @@ provider's API docs and a real key.
 | `clerk` | `GET https://api.clerk.com/v1/jwks` (Bearer) | 401 only | Probes `*-clerk-secret-key` only. JWKS needs the secret key but returns only the instance's public signing keys, with no users, sessions or settings. A bogus `sk_test_` key got 401 `clerk_key_invalid` on 2026-10-18. A 403 reads `unknown`. The publishable key is public and the webhook signing secret is never sent to Clerk, so both read `unknown` with no request and sweeps skip them. A `pk_`/`whsec_` value stored under a secret-key name is also not sent, since it would read as a false `dead`. The live 200 path hasn't been confirmed against a real key yet. Tag keys stored under `gcp` with `liveness_provider=clerk`. See [Clerk](#clerk). |
 | `multica` | `GET <api>/api/me` (Bearer) | 401 only | Multica workspace personal access token (`mul_…`). Returns only the token owner's profile. A missing, unknown, revoked or expired PAT gets 401 `invalid token`; Multica's 403s are a temporarily disabled user or a CSRF failure, so they read `unknown`. The API base is the `multica_url` tag (a self-hosted instance's public API address), else `https://api.multica.ai`. A token sent to the wrong instance would read as a false `dead`, so tag self-hosted tokens. A stored value without the `mul_` prefix (a `mat_` run token, a session JWT) is not sent and reads `unknown`. A bogus `mul_` token got 401 from both `api.multica.ai` and a self-hosted backend on 2026-11-20, and a valid credential got 200 on the same route. See [Multica](#multica). |
 | `posthog` | personal key (`phx_`): `GET <host>/api/users/@me/` (Bearer); project token (`phc_`): `POST <host>/flags/?v=2` with the token in the JSON body | 401 on every host tried | The value's prefix picks the probe: a project token sent to the private API gets 401, a false `dead`. An unprefixed value falls back to the name (`*-personal-key`, `*-project-key`, `*-project-token`) or a `liveness_kind` tag; otherwise it isn't sent. `phs_` secret keys and `*-posthog-host` / `*-posthog-tracking` config aren't probed. Hosts: the `posthog_host` tag, else US then EU Cloud. A key only works on its own region, so it's `dead` only when every host answers 401. A 403 on the personal route (missing `user:read` scope) reads `unknown`. See [PostHog](#posthog). |
+| `linear` | `POST https://api.linear.app/graphql` with `{ viewer { id } }` | 401 only | Personal API key (`lin_api_…`) sent raw in `Authorization`, as Linear documents it; OAuth access token (`lin_oauth_…`) sent as Bearer. Returns only the key owner's user id. A value with neither prefix isn't sent (the wrong header form would read as a false `dead`). Linear answers rate limiting with 400 `RATELIMITED`, so 400/403/5xx read `unknown`. A bogus key got 401 `AUTHENTICATION_ERROR` on 2026-11-20. No rotation adapter: Linear has no API that issues or revokes personal API keys. See [Linear](#linear). |
 | `anthropic` | LLM API key (`sk-ant-api…`): `GET https://api.anthropic.com/v1/models?limit=1` (`x-api-key` + `anthropic-version`); Claude Code OAuth setup-token: no request, expiry date only | 401 (API key); `expires_at` in the past (setup-token) | The Models API is free (no tokens billed), so it is cheaper than a 1-token Messages call. A bogus `sk-ant-api03-` key got 401 `authentication_error` on 2026-11-20. 403/429/529/5xx read `unknown`. It doesn't check the credit balance, so a valid key on an organization out of credit still reads `live`. Setup-tokens (`claude-code-oauth*`, `*-oauth`, `*-setup-token`, `liveness_kind=oauth-setup-token`, or an `sk-ant-oat` value) are never sent: the check reads the `expires_at` tag. An `sk-ant-admin` Admin API key or a non-`sk-ant-` value isn't sent either. The live 200 path hasn't been confirmed against a real key yet. See [Anthropic](#anthropic). |
 
 Each of the long-tail probes above (PANT-1125, GH #204) returned its listed dead status for a
@@ -130,7 +131,7 @@ Long-tail providers with no probe yet. They read `unknown` (no adapter):
 | Slack incoming webhooks | The URL is the credential. The only call is a POST to it, and a valid payload posts a message. |
 | Slack OAuth app credentials | Client secret, signing secret and verification token don't authenticate any read-only call on their own. |
 
-The other provider sub-issue of #141 adds its own: Autumn (#143).
+The other provider sub-issue of #141 adds its own: Autumn (#143). Linear (#196) is the `linear` row above.
 Vercel (#144), Convex (#142) and Clerk (#145) are the `vercel`, `convex` and `clerk` rows above.
 
 The event-source probes (PANT-1126 / #203) pick their adapter from `provider`, so they only
@@ -278,6 +279,26 @@ portunus liveness check claude-code-oauth social-engine-prod-anthropic-api-key
 ```
 
 After re-issuing a setup-token, store the new value and move `expires_at` forward a year.
+
+## Linear
+
+Linear (PANT-1133, GH #196) keys are a standing credential with no rotation path: Linear's API
+can't issue or revoke **personal** API keys (`lin_api_…`), only OAuth application tokens, so the
+rotation capability is `manual` and stays that way. Don't re-research it; the evidence is in
+[rotation.md](rotation.md#linear-personal-api-key) and
+[provider-rotation-matrix.md](provider-rotation-matrix.md#linear-personal-api-key). Liveness is
+the only automated check Portunus can give these keys, so a dead one shows up in
+`portunus liveness status --failing` instead of in a broken integration:
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag event-api-prod-linear-api-key --tags "liveness_provider=linear"
+portunus liveness check event-api-prod-linear-api-key
+```
+
+References registered with `provider=linear` don't need the tag. Checked against Linear on
+2026-11-20: a bogus key (raw or Bearer) and a missing header all got 401 `AUTHENTICATION_ERROR`.
+The live 200 path hasn't been confirmed against a real key yet.
 
 ## PostHog
 
