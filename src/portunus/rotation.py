@@ -60,14 +60,13 @@ Real adapters:
   read-only one) and verifies it with a REST `PING`. Destructive by design
   (the old tokens are revoked at once), so it requires --retire-old.
 
-Stub adapters (`StripeRotationAdapter`) still raise unconditionally. A
-future real adapter would authenticate using its OWN
+No stub adapters remain. A future real adapter authenticates using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
 docs/architecture.md for the worked example.
 
-Manual adapters (`SentryRotationAdapter`) report capability "manual" and
-raise with the human re-issue path: the provider has no programmatic
-rotation API at all.
+Manual adapters (`SentryRotationAdapter`, `StripeRotationAdapter`) report
+capability "manual" and raise with the human re-issue path: the provider
+has no programmatic rotation API at all.
 
 See also: docs/rotation.md for the provider capability matrix and the
 non-destructive-default rationale.
@@ -88,8 +87,6 @@ from urllib.parse import quote
 from .atomicio import atomic_write
 from .filelock import flock_path
 from .paths import home
-
-_ADAPTER_REQUEST_URL = "https://github.com/mdostal/portunus/issues/new?template=adapter-request.yaml"
 
 
 class RotationAdapterError(RuntimeError):
@@ -3057,14 +3054,40 @@ class UpstashRotationAdapter:
 
 
 class StripeRotationAdapter:
-    """Stripe -- STUB. No real calls."""
+    """Stripe -- MANUAL. No real calls, and none are possible (PANT-1134).
+
+    Stripe's public API has no endpoint that creates, rolls or expires an
+    API key of ANY type: standard secret keys (`sk_`), publishable keys
+    (`pk_`) and restricted keys (`rk_`) alike are created, rotated and
+    expired only on the Dashboard's API keys page
+    (https://docs.stripe.com/keys#rolling-keys,
+    https://docs.stripe.com/keys/restricted-api-keys). The
+    `POST /v1/restricted_keys` endpoint the original research assumed does
+    not exist in the API reference (`docs.stripe.com/api/restricted_keys`
+    is a 404, checked 2026-11-20), so restricted keys are manual too -- a
+    `StripeRestrictedKeyRotationAdapter` has nothing to call. Stripe Apps
+    can mint a RAK at app install time, but that is app installation, not
+    rotation of an existing key. Session-cookie scripting of the Dashboard
+    is deliberately not attempted (2FA, undocumented).
+
+    Liveness is separate and real: the `stripe` probe in liveness.py
+    (`GET /v1/balance`), which also reports each key's type from its prefix.
+
+    Registered so `rotation run` explains the Dashboard path instead of
+    calling it a stub.
+    """
 
     def capability(self) -> str:
-        return "unknown"
+        return "manual"
 
     def rotate(self, ref, resolver=None, retire_old: bool = False) -> None:
         raise RotationAdapterError(
-            f"Stripe rotation is not yet implemented -- request it: {_ADAPTER_REQUEST_URL}"
+            "Stripe API keys cannot be rotated programmatically -- Stripe has no API for "
+            "creating or rolling secret (sk_), publishable (pk_) or restricted (rk_) keys. "
+            "Rotate it in the Dashboard (https://dashboard.stripe.com/apikeys > ... > Rotate "
+            "key; pick an expiry to keep the old key working for up to 7 days), store the new "
+            "value, then confirm it with `portunus liveness check`; see "
+            "docs/provider-rotation-matrix.md (Stripe)."
         )
 
 
