@@ -1,7 +1,7 @@
 id: 01-spike-chrome-write-paths
 epic: portunus-chrome-credential-writeback
 title: live spike on a throwaway profile -- credentials.store update semantics, JS world, gesture, store; CSV import conflicts; CDP bubble handling
-status: pending
+status: shipped  # 2026-11-20 PANT-1422: spike done on Chrome for Testing 153 / Linux only; AC gaps (ChromeBackend read-back, account store, Chrome stable) listed in docs/spike-results.md
 complexity: medium
 methodology: spike   # research output, no production code; feeds Stories 02-05
 

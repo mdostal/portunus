@@ -208,3 +208,18 @@ is wrong. Not fixed here (spike, no production code). Filed as a follow-up (see 
    Separately, branded Chrome stable is reported to ignore `--load-extension` (137+). That is
    **not verified here** and matters only for test harnesses, not for an operator-installed
    unpacked extension.
+
+## Acceptance criteria, one by one (Story 01)
+
+Per "do not re-plan", the ACs were not edited. These three are **not fully met as written**, for the
+reasons given:
+
+| AC | Status |
+|---|---|
+| 1. update semantics, "verified by re-reading through ChromeBackend", digests only | **Behaviour recorded (F1).** The **ChromeBackend** part is **not met**: `ChromeBackend.access()` fails on every Linux row (F7). It was run on every row and the errors are recorded in `vr-*.json`. The digest proof used a harness-local decrypt of a read-only copy instead. This AC wording is wrong for Linux until F7 is fixed. |
+| 2. ISOLATED vs MAIN + hostile page | **Met** (F2). |
+| 3. gesture | **Met** (F3). |
+| 4. local + account-store row, which store changed | **Not met.** No Google sign-in was available in the runtime, so no account-store row could be created (F4). Carried forward. |
+| 5. "Chrome stable's" CSV import conflict | **Behaviour recorded on Chrome for Testing 153, not Chrome stable**, via the API behind the Settings button (F5). Chrome stable is not installed in the runtime. |
+| 6. CDP bubble acceptance without OS-level UI automation | **Met** (F6). Answer: no CDP domain, and the bubble is not reachable. Updates need no acceptance, and `passwordsPrivate` writes with no UI. |
+| 7. design §3/§6 and research-brief tags | **Met.** Both docs carry `[spike]` notes. One brief item is carried forward (1c.4 account store), and 1a is deliberately untested. |
