@@ -45,7 +45,9 @@ long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
 probes a deploy key and reads deployment env vars for parity; PANT-1127 adds
 APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
 probes API keys only; Clerk, PANT-1148, probes the instance secret key
-against the JWKS endpoint). See docs/liveness.md.
+against the JWKS endpoint; PostHog, PANT-1130, picks its probe from the
+key's prefix because a project token and a personal API key authenticate
+different routes). See docs/liveness.md.
 """
 from __future__ import annotations
 

@@ -110,6 +110,7 @@ provider's API docs and a real key.
 | `zernio` | `GET https://zernio.com/api/v1/profiles` (Bearer) | 401 only | Probes `*-api-key` only. 401 (`invalid_credentials`) is an invalid, revoked or expired key. A 403 is a valid key with its `accounts` group switched off, so it reads `unknown`. The webhook signing secret is never sent to Zernio's API: it reads `unknown` with no request, and sweeps skip it. `portunus rotate zernio` verifies it with a test delivery instead (see [zernio-rotation.md](zernio-rotation.md)). Tag a key stored under `gcp` with `liveness_provider=zernio`. |
 | `clerk` | `GET https://api.clerk.com/v1/jwks` (Bearer) | 401 only | Probes `*-clerk-secret-key` only. JWKS needs the secret key but returns only the instance's public signing keys, with no users, sessions or settings. A bogus `sk_test_` key got 401 `clerk_key_invalid` on 2026-10-18. A 403 reads `unknown`. The publishable key is public and the webhook signing secret is never sent to Clerk, so both read `unknown` with no request and sweeps skip them. A `pk_`/`whsec_` value stored under a secret-key name is also not sent, since it would read as a false `dead`. The live 200 path hasn't been confirmed against a real key yet. Tag keys stored under `gcp` with `liveness_provider=clerk`. See [Clerk](#clerk). |
 | `multica` | `GET <api>/api/me` (Bearer) | 401 only | Multica workspace personal access token (`mul_…`). Returns only the token owner's profile. A missing, unknown, revoked or expired PAT gets 401 `invalid token`; Multica's 403s are a temporarily disabled user or a CSRF failure, so they read `unknown`. The API base is the `multica_url` tag (a self-hosted instance's public API address), else `https://api.multica.ai`. A token sent to the wrong instance would read as a false `dead`, so tag self-hosted tokens. A stored value without the `mul_` prefix (a `mat_` run token, a session JWT) is not sent and reads `unknown`. A bogus `mul_` token got 401 from both `api.multica.ai` and a self-hosted backend on 2026-11-20, and a valid credential got 200 on the same route. See [Multica](#multica). |
+| `posthog` | personal key (`phx_`): `GET <host>/api/users/@me/` (Bearer); project token (`phc_`): `POST <host>/flags/?v=2` with the token in the JSON body | 401 on every host tried | The value's prefix picks the probe: a project token sent to the private API gets 401, a false `dead`. An unprefixed value falls back to the name (`*-personal-key`, `*-project-key`, `*-project-token`) or a `liveness_kind` tag; otherwise it isn't sent. `phs_` secret keys and `*-posthog-host` / `*-posthog-tracking` config aren't probed. Hosts: the `posthog_host` tag, else US then EU Cloud. A key only works on its own region, so it's `dead` only when every host answers 401. A 403 on the personal route (missing `user:read` scope) reads `unknown`. See [PostHog](#posthog). |
 
 Each of the long-tail probes above (PANT-1125, GH #204) returned its listed dead status for a
 bogus key when it was added. They haven't been confirmed against a real live key yet, so the
@@ -238,6 +239,37 @@ default), 1 year, or never. Only the CLI and daemon renew their own PAT automati
 stored in Portunus will expire unless something renews it. Once it expires the probe reads
 `dead` with 401. Re-issue runbook and rotation status:
 [rotation.md](rotation.md#multica-personal-access-tokens).
+
+## PostHog
+
+PostHog (PANT-1130, GH #199) issues two credentials that are easy to confuse:
+
+- the **project token** (`phc_…`, "project API key"): public, write-only, embedded in apps to send
+  events. Probed with `POST /flags/?v=2`, the route the SDKs call with it. That records no event and
+  creates no person, but PostHog counts it as one feature-flag request.
+- the **personal API key** (`phx_…`): a developer's key for the private API. Probed with
+  `GET /api/users/@me/`, which returns only the key owner's profile.
+
+The private API answers a project token with 401, so probing every PostHog key the same way would
+report every healthy project token as `dead`. The probe reads the value's prefix inside the
+resolver boundary and picks the route from it.
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag mdostal-com-posthog-project-key --tags "liveness_provider=posthog"
+portunus liveness check mdostal-com-posthog-project-key
+# self-hosted, or to pin one Cloud region:
+portunus retag ffe-posthog-api-key --tags "liveness_provider=posthog,posthog_host=https://eu.posthog.com"
+```
+
+Checked against PostHog Cloud on 2026-11-20: a bogus `phx_` key got 401 from `/api/users/@me/` on
+both regions, a bogus `phc_` token got 401 from `/flags`, and a real project token got 200 from its
+own region and 401 from the other one.
+
+Rotation is a separate question; see
+[provider-rotation-matrix.md](provider-rotation-matrix.md#posthog-project-token-and-personal-api-key).
+The project token can be reset over the API (hard cutover, no overlap). A personal API key can't
+manage keys at all, so it is rolled by hand.
 
 ## Parity
 

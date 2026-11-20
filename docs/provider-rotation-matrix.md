@@ -265,6 +265,42 @@ Authorization: Bearer <new-pat>
 
 ---
 
+### PostHog project token and personal API key
+
+**Vault examples**: `mdostal-com-posthog-project-key`, `mercatus-liber-posthog-project-token`, `mdostal-personal-posthog-personal-key`, plus `*-posthog-api-key` / `*-posthog-server-key` / `*-posthog-key` in `ffe-cicd`. `*-posthog-host` and `*-posthog-tracking` are config.
+
+**Credential types**: two, and they are not interchangeable.
+
+- **Project token** (`phc_...`, "project API key"): public and write-only. Apps embed it to send events and evaluate flags. The private API rejects it with 401.
+- **Personal API key** (`phx_...`): a developer's scoped key for the private API (the PostHog MCP server uses one, see `portunus profile ... posthog`).
+
+The stored value's prefix tells them apart. The reference name doesn't reliably say which one a `*-posthog-api-key` or `*-server-key` holds. (`phs_` project secret keys, used for local flag evaluation, are a third type; none were seen by name.)
+
+**Source**: PostHog's open-source server (`PostHog/posthog`, `posthog/api/project.py` `reset_token`, `posthog/api/personal_api_key.py` `roll` and `PersonalApiKeySelfAccessPermission`), read 2026-11-20 (PANT-1130), plus live probes of PostHog Cloud with bogus keys and a public project token the same day.
+
+**Status**:
+
+- **Project token: `auto`-capable, hard cutover.** `PATCH /api/projects/{project_id}/reset_token/` mints a new token. It needs a personal API key with `project:write` from a user who is an admin of the project. Read from the source; not run against a real project, because it breaks the old token straight away. There is no overlap window: every app embedding the old token stops sending events until it is redeployed with the new one. So rotating means reset, store, push to every env target and redeploy, in one go. No adapter is built.
+- **Personal API key: manual.** The 2026-09-14 row cited `/api/users/@me/personal_api_keys/`; that route doesn't exist (404). The real routes are `/api/personal_api_keys/` and `POST /api/personal_api_keys/{id}/roll/`. But a personal API key can only *retrieve itself* through them (`PersonalApiKeySelfAccessPermission`); `roll`, create and delete need a browser session. So a stored personal key cannot roll itself or any other key, and `mdostal-personal-posthog-personal-key` is **not** `auto`-capable today. Roll it in PostHog → Settings → Personal API keys and drop the new value into Portunus.
+
+**Liveness** is built for both types (`posthog` probe, [liveness.md](liveness.md#posthog)).
+
+**Project token call sequence** (`<host>` = `https://us.posthog.com`, `https://eu.posthog.com` or self-hosted):
+
+```bash
+# 1. Reset (destructive: the old token stops working now)
+PATCH <host>/api/projects/{project_id}/reset_token/
+Authorization: Bearer <personal-api-key with project:write, project admin>
+# -> 200, project JSON including the new "api_token": "phc_..."
+
+# 2. Verify
+POST <host>/flags/?v=2   {"api_key": "<new phc_>", "distinct_id": "portunus-liveness"}   # 200; 401 = invalid
+
+# 3. Store in Portunus, push to every env target, redeploy every app that embeds it
+```
+
+---
+
 ### Grafana Cloud organization API key / access policy token
 
 **Vault examples**: `monitoring-dev-grafana-cloud-api-token`
@@ -713,7 +749,6 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 | Healthchecks.io | API key / ping key | `*-healthchecks-api-key`, `*-healthchecks-ping-key`, `*-healthchecks-ping-url` | Healthchecks.io REST API (https://healthchecks.io/docs/api/) covers check management; API key rotation specifics not confirmed |
 | Pexels | API key | `social-engine-dev-pexels-api-key`, `social-engine-prod-pexels-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
 | Pixabay | API key | `social-engine-dev-pixabay-api-key`, `social-engine-prod-pixabay-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
-| PostHog | Project API key / server API key | `*-posthog-api-key`, `*-posthog-server-key`, `*-posthog-key`, `*-posthog-host`, `*-posthog-tracking` | PostHog personal API keys (for personal developer access) ARE manageable via API (`/api/users/@me/personal_api_keys/`). The keys stored here appear to be project API keys (used by applications), which have a different management path. `*-posthog-tracking` and `*-posthog-host` are config values, not credentials. Project API key rotation not confirmed via API. |
 | Qdrant Cloud | Cloud API key | `qdrant-cloud-api-key`, `qdrant-cloud-url` | Qdrant Cloud management API exists; API key rotation specifics not confirmed; `qdrant-cloud-url` is a config value. |
 | SerpAPI | API key | `*-serpapi-key` | Search API; key management via dashboard; rotation API not confirmed |
 | Shippo | API key / webhook secret | `game-library-dev-shippo-api-key`, `game-library-dev-shippo-webhook-secret` | Shipping API; key management endpoints not confirmed |

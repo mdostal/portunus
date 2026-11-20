@@ -6,6 +6,18 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **PostHog liveness probe (`posthog`, PANT-1130, GH #199).** `portunus liveness check` now tells
+  PostHog's two credentials apart by the stored value's prefix. A personal API key (`phx_`) is
+  probed with `GET /api/users/@me/`. A project token (`phc_`) is probed with `POST /flags/?v=2`,
+  because the private API rejects it with 401 and would report it as a false `dead`. An unprefixed
+  value falls back to the reference name or a `liveness_kind` tag, and is otherwise not sent.
+  `phs_` secret keys and `*-posthog-host` / `*-posthog-tracking` config are not probed. The host
+  is the `posthog_host` tag, else US then EU Cloud. A key is `dead` only when every host answers
+  401. The rotation matrix now has a PostHog section. The project token can be reset over the API
+  (`PATCH /api/projects/{id}/reset_token/`, hard cutover). A personal API key can't manage keys,
+  itself included, so it is rolled by hand. The personal-key route the old matrix row cited
+  (`/api/users/@me/personal_api_keys/`) does not exist. See docs/liveness.md (PostHog).
+
 - **Multica PAT liveness probe (`multica`, PANT-1128, GH #201).** `portunus liveness check`
   now probes a stored Multica personal access token with `GET <api>/api/me`, which returns only
   the owner's profile. 401 is `dead` and every other failure is `unknown`. The API base comes from
