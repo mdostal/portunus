@@ -1,0 +1,19 @@
+{
+ "Login Data": [
+  {
+   "origin_url": "http://localhost:8765/",
+   "signon_realm": "http://localhost:8765/",
+   "prefix": "v10",
+   "sha256_16": "df4ab7f7ec720fd9",
+   "date_created": 13439678485159606,
+   "date_password_modified": 13439678485322577
+  }
+ ],
+ "Login Data For Account": [],
+ "ChromeBackend.access": {
+  "http://localhost:8765/": "err:BackendError:chrome backend: no-keyring fallback blob is not valid UTF-8 -- corrupted data"
+ },
+ "profiles": [
+  "Default"
+ ]
+}

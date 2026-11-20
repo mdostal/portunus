@@ -1,0 +1,11 @@
+<!doctype html><html><head><title>spike plain</title></head><body>
+<h1>plain origin page</h1>
+<form id="f"><input name="username" id="u" autocomplete="username"><input type="password" name="password" id="p" autocomplete="current-password"><button id="go" type="button">store()</button></form>
+<script>
+document.getElementById('go').addEventListener('click', async () => {
+  // gesture-bearing call path; value is injected by the harness into window.__spikePending (dummy only)
+  const c = window.__spikePending; if (!c) return;
+  try { await navigator.credentials.store(new PasswordCredential(c)); document.title = 'stored-ok'; }
+  catch (e) { document.title = 'stored-err:' + e.name; }
+});
+</script></body></html>
