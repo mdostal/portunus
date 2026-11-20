@@ -55,6 +55,7 @@ nav:
   - Security:
     - Access Control (Petitio): access-control.md
     - Audit Log: audit.md
+    - HTTP Routes & Write Credential: http-routes.md
   - Rotation: rotation.md
   - Provider Rotation Matrix: provider-rotation-matrix.md
   - n8n Rotation Runbook: n8n-rotation-runbook.md

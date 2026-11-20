@@ -4,6 +4,30 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`reg rm` no longer purges a stored value other references still share (PANT-1407, GH #247).**
+  `portunus reg rm <ref>` used to delete the stored value along with the registry entry. When
+  another reference shared the same backend + sm_name, that reference silently lost its value.
+  `reg rm` now removes the registry entry only. `--purge-value` also deletes the stored value, but
+  is refused (nothing removed, non-zero exit) while any other reference resolves to the same
+  backend + sm_name, and lists those references. `reg add` now warns on stderr when a new
+  reference shares an sm_name with an existing one in the same backend.
+
+- **A ref written by `prompt`/`drop` resolves from where it was written (PANT-1218, GH #242).**
+  `prompt`, `drop` and `drop-bulk` (CLI and MCP) store into the local vault but used to leave the
+  ref's `backend` empty, so resolve followed the project's VaultBinding. For a GCP-bound project
+  (e.g. `ffe-cicd`) that meant a secret a human had just typed in failed to resolve in gcloud. These
+  paths now record `backend: local` on the ref; an explicit `--backend` / `backend=` still wins.
+  The recorded backend is in the `prompt`/`drop` responses, in `list`/`search --json`, and in the
+  text `list` output, so you can see where a ref lives without resolving it. Refs created before
+  this fix keep an empty backend; pin them with the new `portunus retag <name> --backend local`
+  (`--backend default` clears a pin).
+- **No bare NOT_FOUND for a value that is in the local vault (PANT-1408, GH #246).** Follow-up to
+  #242 for refs that are still unpinned: an unpinned reference whose remote says NOT_FOUND falls back to its
+  local value, with a warning and an audit entry; other errors name where the value really is.
+  A write whose tags exactly match an existing reference is refused.
+
 ### Added
 
 - **T3 Code: secret cards as a prompt surface, and a vault reader for T3 Code's secret
@@ -24,6 +48,136 @@ All notable changes to Portunus are documented in this file.
   flow. See `docs/t3-code.md`. The reader needs a T3 Code build
   with its Secrets preview feature on (`T3CODE_FEATURE_SECRETS=1`); release builds up to 0.1.9
   are built without it, and card-to-vault works on every build.
+
+- **`portunus doctor --fix-routing`**: finds stranded references and pins them local, pins them
+  remote (`--prefer remote`) or pushes them into GCP (`--push`, verified). It is a dry run unless
+  `--apply`. `portunus health` reports them as a degraded `routing` check, and `vault status` (run
+  by the installer) shows it. `bindings set` refuses to reroute local-only references unless
+  `--pin-local`, `--push` or `--force`.
+
+- **Anthropic liveness check (`anthropic`, PANT-1132, GH #197).** An LLM API key (`sk-ant-api…`)
+  is probed with `GET https://api.anthropic.com/v1/models?limit=1`, which bills no tokens; 401 is
+  `dead`. A Claude Code OAuth setup-token (`claude-code-oauth*`, or an `sk-ant-oat` value) is never
+  sent anywhere: the check reads its `expires_at` tag and reads `unknown` within 30 days of it and
+  `dead` after it. Admin API keys and values without an `sk-ant-` prefix are not sent. Neither
+  credential gets a rotation adapter; both stay `manual`. See docs/liveness.md (Anthropic).
+- **Linear liveness probe (`linear`, PANT-1133, GH #196).** `portunus liveness check` now probes
+  a stored Linear key with `POST https://api.linear.app/graphql` and `{ viewer { id } }`. A
+  personal API key (`lin_api_`) is sent raw, an OAuth access token (`lin_oauth_`) as Bearer, and a
+  value with neither prefix is not sent. 401 is `dead`; everything else is `unknown`. Rotation for
+  personal API keys stays `manual` (Linear has no API to issue or revoke them); docs/rotation.md,
+  the rotation matrix and docs/liveness.md (Linear) now say so and link each other.
+- **PostHog liveness probe (`posthog`, PANT-1130, GH #199).** `portunus liveness check` now tells
+  PostHog's two credentials apart by the stored value's prefix. A personal API key (`phx_`) is
+  probed with `GET /api/users/@me/`. A project token (`phc_`) is probed with `POST /flags/?v=2`,
+  because the private API rejects it with 401 and would report it as a false `dead`. An unprefixed
+  value falls back to the reference name or a `liveness_kind` tag, and is otherwise not sent.
+  `phs_` secret keys and `*-posthog-host` / `*-posthog-tracking` config are not probed. The host
+  is the `posthog_host` tag, else US then EU Cloud. A key is `dead` only when every host answers
+  401. The rotation matrix now has a PostHog section. The project token can be reset over the API
+  (`PATCH /api/projects/{id}/reset_token/`, hard cutover). A personal API key can't manage keys,
+  itself included, so it is rolled by hand. The personal-key route the old matrix row cited
+  (`/api/users/@me/personal_api_keys/`) does not exist. See docs/liveness.md (PostHog).
+
+- **Multica PAT liveness probe (`multica`, PANT-1128, GH #201).** `portunus liveness check`
+  now probes a stored Multica personal access token with `GET <api>/api/me`, which returns only
+  the owner's profile. 401 is `dead` and every other failure is `unknown`. The API base comes from
+  the `multica_url` tag (self-hosted), else `https://api.multica.ai`. A value without the `mul_`
+  prefix is not sent. The rotation docs now record that Multica publishes PAT management routes
+  (`/api/tokens` create/list/revoke, `/api/tokens/current/renew`), so Multica moves from
+  `unknown` to a `stub` capability with a manual re-issue runbook. The rotation adapter is a
+  follow-up. See docs/liveness.md and docs/rotation.md, "Multica personal access tokens".
+
+- **Bitwarden vault backend + discovery (PANT-1147, #164).** Portunus can now see into a Bitwarden
+  personal/organization vault through the official `bw` CLI. `portunus bitwarden list [--search Q]`
+  and the new `portunus_bitwarden_search` MCP tool enumerate items as metadata only (id, name,
+  username, URIs, custom-field names); passwords, TOTP seeds and notes are stripped as soon as the
+  JSON is parsed. `--register` / `register=True` writes login items as `state=requested`,
+  `backend=bitwarden` references, so `portunus search` finds them, and they stay non-injectable
+  until a human enables them. A new `bitwarden` backend resolves `bitwarden:<item-id>[:<field>]`
+  (default `password`; also `username`, `totp`, `notes` or a custom field name). Portunus never
+  holds the master password: the human unlocks the vault and exports `BW_SESSION`, which `bw`
+  reads from the environment (never from argv). A locked vault fails closed with a remediation
+  message. `portunus bitwarden status` and `portunus health` report the lock state. Bitwarden
+  Secrets Manager (`bws`) is not covered yet. See docs/backends.md (Bitwarden vault).
+
+- **Stripe liveness probe and key-type check (`stripe`, PANT-1134, #195).** `portunus liveness
+  check` now probes a stored Stripe `sk_`/`rk_` key with `GET /v1/balance` and names the key's
+  type from its prefix (for example `live restricted key`) without exposing anything after it.
+  401 is `dead`. A restricted key without Balance read gets 403 and reads `live`, because Stripe
+  accepted it. `pk_`, `whsec_` and `sk_org_` values are never sent. The provider matrix is
+  corrected: the `POST /v1/restricted_keys` API that early research expected for restricted keys
+  doesn't exist, so restricted keys rotate the same way as standard secret keys (the v2 IAM call
+  or the Dashboard) and no separate restricted-key adapter was built.
+
+- **Stripe API key rotation (`StripeRotationAdapter`, PANT-1409).** `portunus rotation run <ref>`
+  now rolls a Stripe secret, restricted or publishable key without the Dashboard. It uses Stripe's
+  v2 IAM API (`POST /v2/iam/api_keys/{id}/rotate`), which is a **public preview**. The adapter
+  always rotates with a grace window (default 7 days) and generates a throwaway RSA keypair for
+  each run, so Stripe returns the new secret encrypted to it. It decrypts the secret inside the
+  resolver boundary and verifies it (metadata `active`, and a secret key must authenticate
+  `GET /v1/balance`). Only then does it store the value through the boundary-only backend write.
+  On success the reference's `stripe_key_id` is updated, `rotation_requested` is cleared, and a
+  `locked` reference returns to `enabled`. `--retire-old` expires the old key right after the
+  store. Any failure before the store leaves the stored value, the registry and the old Stripe
+  key untouched, and the error carries only Stripe's error type, code and message. Needs the
+  `stripe_key_id` tag; `stripe_admin_ref` authorizes publishable-key rotation. Whether Stripe
+  lets a merchant's own key call the preview API is unconfirmed; a 401/403/404 says so. See
+  docs/rotation.md, "Stripe API keys". Stripe was the last stub adapter.
+
+- **MongoDB Atlas database-user rotation (PANT-1131).** A new `mongodb-atlas` rotation adapter rotates
+  the user inside a stored Atlas connection URI through the Atlas Admin API v2, authenticating with a
+  service account (Bearer) or a legacy API key (Digest). The default `new-user` mode is non-destructive.
+  It creates a sibling user with the same roles and scopes, verifies it with a real connection, then
+  stores the new URI and any companion username/password refs. `--retire-old` deletes the old user.
+  If verification fails, the new user is removed and nothing is stored. `password` mode changes the
+  password in place and requires `--retire-old`. Verification uses the new optional `mongodb` extra
+  (`pymongo`). See docs/rotation.md (MongoDB Atlas connection URIs).
+
+- **Upstash Redis REST token rotation (PANT-1129, #200).** Research settled the open question: the
+  Developer API's `POST /v2/redis/reset-password/{id}` regenerates the database password **and**
+  both REST tokens (standard and read-only), so they are one credential. New
+  `UpstashRotationAdapter` (provider `upstash`) first checks that the stored token is the database's
+  current `rest_token`, refusing before any reset if it isn't, or if credential protection or a
+  read-only API key hides it. It then resets, stores the new token (and, via
+  `upstash_read_only_token_ref`, the read-only one) and verifies it with a REST `PING`. A reset
+  revokes the old tokens at once and restarts the database, so `--retire-old` is required. Upstash
+  REST tokens move from `unknown` to `auto` in the provider matrix. The Developer API key itself
+  stays `unknown`.
+
+- **Non-interactive GCP auth and reauth recovery (PANT-1410).** A new `credential_file` field on
+  vault bindings (`portunus bindings set <project> --credential-file <path>`) points gcloud at a
+  service account key or `external_account` config JSON through
+  `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, scoped to that project. A reauth policy can't expire
+  it. Backend calls, `discover`, `auth status` (new `credential-file` mode) and `health` all use
+  it. When gcloud fails with a reauth-required error, Portunus raises `GcpReauthRequired`, and
+  its message (shown in `portunus health` under `backend:gcp`) lists self-service,
+  non-interactive fixes. A healthy `backend:gcp` probe that runs on a human user credential adds
+  a note that the credential can expire.
+
+- **Account profiles, with one-command swaps (`portunus profile`).** Keep several logins for the
+  same service and switch which is active. A `gcloud` profile is a logged-in account email;
+  `portunus profile use gcloud <name>` runs `gcloud config set account` after checking the
+  account is logged in. A `posthog` profile names a vault reference holding a PostHog personal
+  API key. `portunus mcp-headers posthog` is a Claude Code MCP `headersHelper`: it prints
+  `{"Authorization": "Bearer ..."}` for the active profile, so the PostHog MCP server signs in
+  as whichever account is active after a reconnect. It is a new boundary sink: it writes only
+  when stdout is not a terminal and `CLAUDE_CODE_MCP_SERVER_NAME` is set. It is audited by
+  profile name, and its errors never contain the value. `profiles.json` (0600) holds names,
+  emails and reference names only.
+
+- **Write credential on every state-changing UI route (first-cut-trust t1c).** Every non-GET
+  `/api/*` request now needs `X-Portunus-Write-Token`. The server checks it against the file
+  named by `PORTUNUS_WRITE_TOKEN_FILE`, re-read on every write, with a constant-time compare.
+  A missing or wrong token gets 401 and never reaches the CLI. Before this, any process that
+  could reach the port could retag, drop or inject: for example, a container reaching the
+  host's loopback port through podman. With no token file, every write is refused (503).
+  `PORTUNUS_ALLOW_UNAUTHENTICATED_WRITES=1` keeps the old open behaviour for a single-user
+  machine, with a startup banner. The deep `/api/health` reports a `ui-write-auth` check. The
+  browser UI sends the token for you: it reads it from a `#write-token=` fragment, or asks once
+  per tab. The desktop app mints a fresh token on each launch. The CLI and MCP server are
+  unchanged, since they never write through HTTP. docs/http-routes.md classifies every route;
+  none returns a secret value.
 
 - **Container image on GHCR + official MCP Registry listing.** A new `publish-mcp.yml` workflow
   runs on every `vX.Y.Z` release tag (or by hand for an existing tag). It builds the repo's
@@ -282,6 +436,15 @@ All notable changes to Portunus are documented in this file.
   by service name stayed green with every write failing. The deep health check now runs the same
   Host check on its own request and adds a `ui-write-host` check; when it fails the result is
   `down` (HTTP 503) and the detail says to set `PORTUNUS_UI_HOST`. `?shallow=1` is unchanged.
+
+### Changed
+
+- **`inject --target file` never overwrites and never follows a link.** It creates the file
+  with `O_CREAT|O_EXCL|O_NOFOLLOW`, so an existing file, directory or symlink at the path,
+  dangling or not, fails the inject and nothing is written. Before this, an existing file was
+  truncated and a symlink was followed. Use the new CLI-only `--replace` to refresh a regular
+  file you own. It writes a temp file and renames it into place, and still refuses a symlink.
+  `POST /api/inject` never forwards it.
 
 ## [0.34.0] - 2026-10-14
 

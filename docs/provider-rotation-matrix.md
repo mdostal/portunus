@@ -231,6 +231,76 @@ Authorization: Bearer <new-token>
 
 ---
 
+### Multica workspace personal access token
+
+**Vault examples**: `dostal-tech-multica-pat-token`
+
+**Credential type**: Multica personal access token (`mul_...`), used by Hive planning dispatch. **Not** the per-run `mat_` agent token, which the server mints and expires on its own.
+
+**Source**: https://multica.ai/docs/auth-tokens, and the open-source server (`multica-ai/multica`: `server/cmd/server/router.go`, `server/internal/handler/personal_access_token.go`), re-checked 2026-11-20 (PANT-1128).
+
+**Status**: listed as `unknown` in the 2026-09-14 pass ("no public Multica API documentation for programmatic PAT management"). Multica has since published it, so this row moves to `auto`. Liveness is built (`multica` probe, [liveness.md](liveness.md#multica)). The rotation adapter is **not built yet** (`stub` in [rotation.md](rotation.md#multica-personal-access-tokens)). The `/api/tokens` routes need a human credential, and a `mul_` PAT is one, so the stored token can mint its own successor.
+
+**Concrete call sequence** (`<api>` = `https://api.multica.ai` or the self-hosted API address):
+
+```bash
+# 1. Create a replacement token (shown once)
+POST <api>/api/tokens
+Authorization: Bearer <current-pat>
+Body: {"name": "portunus-hive-dispatch", "expires_in_days": 90}
+# -> 201 {"id", "name", "token_prefix", "expires_at", ..., "token": "mul_..."}
+
+# 2. Verify
+GET <api>/api/me
+Authorization: Bearer <new-pat>          # 200; 401 = invalid
+
+# 3. Store new token in Portunus
+
+# 4. Revoke old token (idempotent 204)
+DELETE <api>/api/tokens/{old_id}         # old_id: match token_prefix in GET /api/tokens
+Authorization: Bearer <new-pat>
+```
+
+`POST <api>/api/tokens/current/renew` extends the calling PAT in place to 90 days from now, but only once fewer than 7 days remain. Earlier it's a no-op. It's a cheaper alternative to steps 1-4 for a token that only needs to stay alive.
+
+---
+
+### PostHog project token and personal API key
+
+**Vault examples**: `mdostal-com-posthog-project-key`, `mercatus-liber-posthog-project-token`, `mdostal-personal-posthog-personal-key`, plus `*-posthog-api-key` / `*-posthog-server-key` / `*-posthog-key` in `ffe-cicd`. `*-posthog-host` and `*-posthog-tracking` are config.
+
+**Credential types**: two, and they are not interchangeable.
+
+- **Project token** (`phc_...`, "project API key"): public and write-only. Apps embed it to send events and evaluate flags. The private API rejects it with 401.
+- **Personal API key** (`phx_...`): a developer's scoped key for the private API (the PostHog MCP server uses one, see `portunus profile ... posthog`).
+
+The stored value's prefix tells them apart. The reference name doesn't reliably say which one a `*-posthog-api-key` or `*-server-key` holds. (`phs_` project secret keys, used for local flag evaluation, are a third type; none were seen by name.)
+
+**Source**: PostHog's open-source server (`PostHog/posthog`, `posthog/api/project.py` `reset_token`, `posthog/api/personal_api_key.py` `roll` and `PersonalApiKeySelfAccessPermission`), read 2026-11-20 (PANT-1130), plus live probes of PostHog Cloud with bogus keys and a public project token the same day.
+
+**Status**:
+
+- **Project token: `auto`-capable, hard cutover.** `PATCH /api/projects/{project_id}/reset_token/` mints a new token. It needs a personal API key with `project:write` from a user who is an admin of the project. Read from the source; not run against a real project, because it breaks the old token straight away. There is no overlap window: every app embedding the old token stops sending events until it is redeployed with the new one. So rotating means reset, store, push to every env target and redeploy, in one go. No adapter is built.
+- **Personal API key: manual.** The 2026-09-14 row cited `/api/users/@me/personal_api_keys/`; that route doesn't exist (404). The real routes are `/api/personal_api_keys/` and `POST /api/personal_api_keys/{id}/roll/`. But a personal API key can only *retrieve itself* through them (`PersonalApiKeySelfAccessPermission`); `roll`, create and delete need a browser session. So a stored personal key cannot roll itself or any other key, and `mdostal-personal-posthog-personal-key` is **not** `auto`-capable today. Roll it in PostHog → Settings → Personal API keys and drop the new value into Portunus.
+
+**Liveness** is built for both types (`posthog` probe, [liveness.md](liveness.md#posthog)).
+
+**Project token call sequence** (`<host>` = `https://us.posthog.com`, `https://eu.posthog.com` or self-hosted):
+
+```bash
+# 1. Reset (destructive: the old token stops working now)
+PATCH <host>/api/projects/{project_id}/reset_token/
+Authorization: Bearer <personal-api-key with project:write, project admin>
+# -> 200, project JSON including the new "api_token": "phc_..."
+
+# 2. Verify
+POST <host>/flags/?v=2   {"api_key": "<new phc_>", "distinct_id": "portunus-liveness"}   # 200; 401 = invalid
+
+# 3. Store in Portunus, push to every env target, redeploy every app that embeds it
+```
+
+---
+
 ### Grafana Cloud organization API key / access policy token
 
 **Vault examples**: `monitoring-dev-grafana-cloud-api-token`
@@ -302,6 +372,104 @@ password changed server-side (the 2026-10-16 incident on `shop-mdostal-database-
 
 ---
 
+### MongoDB Atlas connection URI (database user)
+
+**Added**: 2026-11-20 (PANT-1131, portunus#198). This was listed under `unknown` with the Admin API as a
+lead. It moved to `auto` after checking Atlas's published OpenAPI spec
+(https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2.json, 2026-11-20).
+
+**Vault examples**: `mercatus-liber-mongodb-uri`, `mercatus-liber-mongodb-username`,
+`mercatus-liber-mongodb-password` (`mercatus-liber-commerce` project). The earlier `*-mongo-uri`
+pattern in this matrix did not match those names. `*-mongo-db-name` / `*-mongodb-db-name` are config,
+not credentials.
+
+**Credential type**: A `mongodb+srv://user:password@<cluster>.mongodb.net/...` URI for an Atlas
+SCRAM database user, sometimes with the user and password also stored as separate references.
+
+**Source**: https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/group/endpoint-database-users,
+https://www.mongodb.com/docs/atlas/api/service-accounts-overview/
+
+**Concrete call sequence** (`new-user`, the non-destructive default):
+
+```bash
+# 0. Admin auth: service account (recommended) -> 1h Bearer token
+POST https://cloud.mongodb.com/api/oauth/token      # Basic client_id:client_secret, grant_type=client_credentials
+#    or a legacy programmatic API key with HTTP Digest auth.
+#    Required role: Project Database Access Admin (or Project Owner).
+#    Every call: Accept: application/vnd.atlas.2023-01-01+json
+
+# 1. Read the current user (roles, scopes)
+GET  /api/atlas/v2/groups/{groupId}/databaseUsers/{authDb}/{username}
+
+# 2. Create a sibling user with the same roles/scopes and a new password  (201)
+POST /api/atlas/v2/groups/{groupId}/databaseUsers
+
+# 3. Wait for the cluster to apply it (new users can't log in while PENDING)
+GET  /api/atlas/v2/groups/{groupId}/clusters/{clusterName}/status   # changeStatus == APPLIED
+
+# 4. Verify: connect with the new URI and run ping
+# 5. Store the new URI in the vault (and the companion username/password refs)
+
+# 6. Retire the old user (opt-in)  (204)
+DELETE /api/atlas/v2/groups/{groupId}/databaseUsers/{authDb}/{username}
+```
+
+There is also an in-place path, `PATCH .../databaseUsers/{authDb}/{username}` with `{"password": ...}`.
+It is destructive, so `MongoDBAtlasRotationAdapter` only takes it with `atlas_rotation_mode=password` and
+`--retire-old`.
+
+**Not yet verified against this vault** (needs operator access, since the agent run has no vault or
+Atlas credentials): that the `mercatus-liber` URI's host is `*.mongodb.net` (Atlas, not self-hosted),
+which Atlas project id it belongs to, and that a service account with Project Database Access Admin
+exists for it. If the host turns out to be self-hosted Mongo, that ref is `manual`.
+
+### Upstash Redis REST token
+
+**Researched**: 2026-11-20 (PANT-1129). Moved here from `unknown`.
+
+**Vault examples**: `*-upstash-redis-rest-token`. `*-upstash-redis-rest-url` is config and
+`orchestration-dev-upstash-email` is an account identifier. Both are tag inputs, not rotated.
+
+**Credential type**: The `UPSTASH_REDIS_REST_TOKEN` of an Upstash Redis database (the *Standard*
+token), plus its *Read Only* token. Both are derived from the database's default-user password, so
+from Portunus's point of view the REST token and the Redis password are **the same credential**: one
+reset regenerates all three.
+
+**Source**: https://upstash.com/docs/devops/developer-api/redis/reset_password,
+https://upstash.com/docs/devops/developer-api/redis/get_database,
+https://upstash.com/docs/devops/developer-api/authentication,
+https://upstash.com/docs/redis/features/restapi (Security and Authentication: "You can revoke both
+*Standard* and *Read Only* tokens by resetting password of your database").
+
+**Concrete call sequence**:
+
+```bash
+# 0. Check: the stored token is this database's current rest_token, and the API returns tokens
+#    at all (rest_token is omitted with credential protection on or a read-only API key)
+GET https://api.upstash.com/v2/redis/database/{id}        # -u EMAIL:API_KEY
+
+# 1. Reset (destructive: old password, REST token and read-only token are revoked at once,
+#    the database restarts, and open TCP connections are closed)
+POST https://api.upstash.com/v2/redis/reset-password/{id} # -u EMAIL:API_KEY
+# returns the Database object with the new password, rest_token and read_only_rest_token
+
+# 2. Store the new rest_token (and read_only_rest_token if it is vaulted) in ARCA
+
+# 3. Verify: GET https://<endpoint>/ping  -H "Authorization: Bearer <new rest_token>"  -> {"result":"PONG"}
+```
+
+There's no old-credential retirement step: the reset itself retires the old tokens. Portunus's
+`UpstashRotationAdapter` therefore requires `--retire-old` as an acknowledgement, the same posture as
+Neon and a GitHub OAuth App token reset. ACL users' passwords and REST tokens are not changed by a
+reset.
+
+**Not verified against a live database yet.** The adapter is built from Upstash's documented API
+and tested with a fake transport only. A reset can't be tried safely on a shared database: it revokes
+the token for every consumer and restarts the database. Before the first real use, run it once
+against a throwaway database.
+
+---
+
 ## `manual` — positively confirmed absence of any programmatic rotation path for this credential type
 
 ---
@@ -348,6 +516,8 @@ Linear personal API keys are created and managed exclusively through the account
 
 **Why the distinction matters**: Linear does document OAuth token management (access tokens, refresh tokens) for registered OAuth applications. Reading that documentation and applying its capabilities to personal API keys would be incorrect. The secrets in `ffe-cicd` (`*-linear-api-key`) are personal API keys, not OAuth app tokens.
 
+**Portunus status (PANT-1133)**: rotation is `manual` for good. Liveness is covered by the `linear` probe (`{ viewer { id } }`, 401 = dead); see [liveness.md](liveness.md#linear).
+
 ---
 
 ### Anthropic LLM API key
@@ -360,6 +530,8 @@ Linear personal API keys are created and managed exclusively through the account
 
 No Anthropic REST API or SDK endpoint exists for creating, listing, or deleting API keys programmatically. Keys are managed exclusively through the Anthropic Console at https://console.anthropic.com/settings/keys.
 
+**Liveness** (PANT-1132): `anthropic` probe, `GET https://api.anthropic.com/v1/models?limit=1` with `x-api-key`. Free (no tokens billed); 401 is dead. See [liveness.md](liveness.md#anthropic).
+
 ---
 
 ### Anthropic Claude Code OAuth setup-token
@@ -371,6 +543,8 @@ No Anthropic REST API or SDK endpoint exists for creating, listing, or deleting 
 **Source**: https://docs.anthropic.com/en/docs/claude-code/setup
 
 This token is obtained by running the `claude` CLI's own OAuth device-code flow. It is not a standard OAuth refresh token bundle (which the `OAuthBackend` can auto-refresh); it is the OAuth setup-token itself. Re-issue requires re-running the `claude` CLI authentication flow. No documented API endpoint for silent renewal outside that flow.
+
+**Liveness** (PANT-1132): not probed over the API. The `anthropic` check reads the reference's `expires_at` tag and goes `unknown` 30 days before it, `dead` after it. See [liveness.md](liveness.md#anthropic).
 
 ---
 
@@ -398,9 +572,13 @@ Note: GitHub App installation tokens rotate automatically (1-hour TTL) and are n
 
 **Source**: https://stripe.com/docs/keys#rolling-keys
 
-Stripe's Dashboard provides a "Roll API key" action for standard keys. No Stripe REST API endpoint exists for creating new standard API keys or rolling existing ones programmatically.
+Stripe's Dashboard provides a "Roll API key" action for standard keys. At the time of this survey, no Stripe REST API endpoint exists for creating new standard API keys or rolling existing ones programmatically.
 
-**Stripe restricted keys** (`rk_...`) are a different credential type with a documented API for creation and deletion (`POST /v1/restricted_keys`, `DELETE /v1/restricted_keys/{id}`). None of the stored keys appear to be restricted keys based on naming convention. If any are confirmed to be restricted keys, the finding for that credential changes to `auto`.
+**Update (PANT-1409, 2026-11):** Stripe's v2 IAM API (public preview, `Stripe-Version: 2026-11-18.preview`) adds `POST /v2/iam/api_keys/{id}/rotate` and `/expire` for secret and publishable keys. Portunus's `StripeRotationAdapter` uses it, so the capability is now **auto**. Caveat: Stripe documents the API for Stripe Apps with `api_key_write`; whether a merchant's own secret key may call it is unconfirmed. See [rotation.md § Stripe API keys](rotation.md#stripe-api-keys).
+
+**Correction 2026-11-20 (PANT-1134):** an earlier version of this entry said restricted keys (`rk_...`) had a documented creation/deletion API (`POST /v1/restricted_keys`, `DELETE /v1/restricted_keys/{id}`) and would rotate through it. That's wrong. The Stripe API reference has no such resource (`https://docs.stripe.com/api/restricted_keys` returns 404). A restricted key is a `secret_key` to the v2 IAM API, so it rotates through the same `POST /v2/iam/api_keys/{id}/rotate` call as a standard secret key (with the preview caveat above), or in the Dashboard ([API keys](https://docs.stripe.com/keys#rolling-keys), [Restricted API keys](https://docs.stripe.com/keys/restricted-api-keys)). There's no separate restricted-key adapter.
+
+**Liveness** is separate and real: the `stripe` probe (`GET /v1/balance`) checks `sk_`/`rk_` keys and names the key type from the prefix (for example `live restricted key`), without logging anything after the prefix. Running `portunus liveness check <ref>` on each Stripe reference is how to confirm which stored keys are standard and which are restricted.
 
 ---
 
@@ -577,17 +755,14 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 | Google / Firebase non-SA, non-API-key | `firebase-storage-base`, `firebase-project-id`, `google-cloud-project` | Various | These are configuration values (URLs, project IDs), not credentials. Not rotateable. |
 | Grafana Cloud (stack-scoped data source credentials) | Prometheus remote write token, Loki URL + credentials | `monitoring-dev-grafana-cloud-prom-token`, `monitoring-dev-grafana-cloud-prom-username`, `monitoring-dev-grafana-cloud-loki-url` | Different from org-level Grafana Cloud API key (see `auto`). These are stack-instance credentials for data source push endpoints. Rotation via Grafana Cloud stack management API not confirmed. |
 | Healthchecks.io | API key / ping key | `*-healthchecks-api-key`, `*-healthchecks-ping-key`, `*-healthchecks-ping-url` | Healthchecks.io REST API (https://healthchecks.io/docs/api/) covers check management; API key rotation specifics not confirmed |
-| MongoDB Atlas | Connection URI (contains DB user credentials) | `*-mongo-uri`, `*-mongo-db-name` | MongoDB Atlas Admin API supports programmatic DB user creation/password change (`POST /api/atlas/v2/groups/{groupId}/databaseUsers`), which would allow updating the credentials in the URI. End-to-end rotation confirmed possible in principle; Atlas API management credential setup not verified against this specific vault. `*-mongo-db-name` is a config value, not a credential. |
-| Multica | Workspace personal access token | `dostal-tech-multica-pat-token` | No public Multica API documentation for programmatic PAT management confirmed at research time |
 | Pexels | API key | `social-engine-dev-pexels-api-key`, `social-engine-prod-pexels-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
 | Pixabay | API key | `social-engine-dev-pixabay-api-key`, `social-engine-prod-pixabay-api-key` | Stock image API; key management via developer portal; rotation API not confirmed |
-| PostHog | Project API key / server API key | `*-posthog-api-key`, `*-posthog-server-key`, `*-posthog-key`, `*-posthog-host`, `*-posthog-tracking` | PostHog personal API keys (for personal developer access) ARE manageable via API (`/api/users/@me/personal_api_keys/`). The keys stored here appear to be project API keys (used by applications), which have a different management path. `*-posthog-tracking` and `*-posthog-host` are config values, not credentials. Project API key rotation not confirmed via API. |
 | Qdrant Cloud | Cloud API key | `qdrant-cloud-api-key`, `qdrant-cloud-url` | Qdrant Cloud management API exists; API key rotation specifics not confirmed; `qdrant-cloud-url` is a config value. |
 | SerpAPI | API key | `*-serpapi-key` | Search API; key management via dashboard; rotation API not confirmed |
 | Shippo | API key / webhook secret | `game-library-dev-shippo-api-key`, `game-library-dev-shippo-webhook-secret` | Shipping API; key management endpoints not confirmed |
 | Slack OAuth app credentials | Client ID / client secret / signing secret | `monitoring-dev-slack-client-id`, `monitoring-dev-slack-client-secret`, `monitoring-dev-slack-signing-secret`, `monitoring-dev-slack-verification-token`, `monitoring-dev-slack-app-id` | Slack app-level credentials issued per app registration; rotation requires Slack app reconfiguration; programmatic path not confirmed. `monitoring-dev-slack-app-id` is a config value, not a credential. |
 | Tremendous | API key / webhook secret | `flayr-tremendous-api-key`, `social-engine-prod-tremendous-webhook-secret` | Rewards platform; key management via dashboard; rotation API not confirmed |
-| Upstash | Redis REST token / API key | `*-upstash-redis-rest-token`, `*-upstash-redis-rest-url`, `*-upstash-api-key`, `orchestration-dev-upstash-email` | Upstash management API (`/v2/redis`) exists with a `reset-password` endpoint; whether that covers the REST access token specifically is not confirmed. `*-upstash-redis-rest-url` is a config value. `orchestration-dev-upstash-email` is an account identifier, not a credential. |
+| Upstash (Developer API key) | Management API key | `*-upstash-api-key` | The Developer API key itself (basic-auth password, paired with the account email in `orchestration-dev-upstash-email`). Keys are created in the Console; the Developer API docs index lists no API-key management endpoint (checked 2026-11-20). The Redis REST token is now `auto`, see [Upstash Redis REST token](#upstash-redis-rest-token) above. |
 | Vercel AI | API key | `game-library-dev-vercel-ai-api-key` | Vercel AI is a distinct product from Vercel CI/CD (see `vercel-deploy-token` in `auto`); Vercel AI API key rotation endpoints not confirmed separately |
 
 ---
@@ -619,5 +794,5 @@ The following secret names in `ffe-cicd` store configuration values (URLs, IDs, 
 
 - **AWS credentials**: No AWS access keys, secret keys, or session tokens. `AWSSecretsManagerBackend` is a stub (backend.py); no AWS-backed references exist.
 - **HashiCorp Vault / Infisical / Doppler / 1Password / Azure Key Vault tokens**: All stub backends (backend.py); no references backed by these providers.
-- **Stripe restricted API keys** (`rk_...`): Not observed; if present, rotation capability would be `auto`.
+- **Stripe restricted API keys** (`rk_...`): Not observed by name. They rotate the same way as standard secret keys, through `StripeRotationAdapter` (see the Stripe entry above); there's no separate `/v1/restricted_keys` API.
 - **OAuth refresh token bundles** (`oauth:*` namespace): Not stored via `portunus oauth store`; the `OAuthBackend` machinery exists (auth.py, backend.py) but is unused in this vault.

@@ -108,7 +108,12 @@ provider's API docs and a real key.
 | `vercel-ai` | `GET https://ai-gateway.vercel.sh/v1/credits` (Bearer) | 401 only | Vercel AI Gateway API key, not the Vercel deploy token. |
 | `apns` | HTTP/2 `POST /3/device/<64 zeros>` to the APNs sandbox (or production) host with a JWT signed by the stored `.p8` | 403 `InvalidProviderToken` only | A push that can't be delivered. Needs the `apns_team_id` tag and the key ID. See [APNs auth keys](#apns-auth-keys). |
 | `zernio` | `GET https://zernio.com/api/v1/profiles` (Bearer) | 401 only | Probes `*-api-key` only. 401 (`invalid_credentials`) is an invalid, revoked or expired key. A 403 is a valid key with its `accounts` group switched off, so it reads `unknown`. The webhook signing secret is never sent to Zernio's API: it reads `unknown` with no request, and sweeps skip it. `portunus rotate zernio` verifies it with a test delivery instead (see [zernio-rotation.md](zernio-rotation.md)). Tag a key stored under `gcp` with `liveness_provider=zernio`. |
+| `stripe` | `GET https://api.stripe.com/v1/balance` (Bearer) | 401 only | Probes secret (`sk_`) and restricted (`rk_`) keys. The key type comes from the prefix inside the resolver boundary and is named in the detail (`live restricted key: GET … -> 200`), and nothing after the prefix leaves the boundary. A 403 on a restricted key means Stripe accepted it but it lacks Balance read, so it reads `live` with that note. On a secret key a 403 reads `unknown`. Publishable keys (`pk_`), webhook secrets (`whsec_`), organization keys (`sk_org_`, which need a `Stripe-Context` header) and unrecognised values read `unknown` with no request. Sweeps skip `*-publishable-key` / `*-webhook-secret` names. Tag keys stored under `gcp` with `liveness_provider=stripe`. Not confirmed against a real key yet. Rotation: `StripeRotationAdapter`, `auto` through the v2 IAM preview API (see [rotation.md](rotation.md#stripe-api-keys)). |
 | `clerk` | `GET https://api.clerk.com/v1/jwks` (Bearer) | 401 only | Probes `*-clerk-secret-key` only. JWKS needs the secret key but returns only the instance's public signing keys, with no users, sessions or settings. A bogus `sk_test_` key got 401 `clerk_key_invalid` on 2026-10-18. A 403 reads `unknown`. The publishable key is public and the webhook signing secret is never sent to Clerk, so both read `unknown` with no request and sweeps skip them. A `pk_`/`whsec_` value stored under a secret-key name is also not sent, since it would read as a false `dead`. The live 200 path hasn't been confirmed against a real key yet. Tag keys stored under `gcp` with `liveness_provider=clerk`. See [Clerk](#clerk). |
+| `multica` | `GET <api>/api/me` (Bearer) | 401 only | Multica workspace personal access token (`mul_…`). Returns only the token owner's profile. A missing, unknown, revoked or expired PAT gets 401 `invalid token`; Multica's 403s are a temporarily disabled user or a CSRF failure, so they read `unknown`. The API base is the `multica_url` tag (a self-hosted instance's public API address), else `https://api.multica.ai`. A token sent to the wrong instance would read as a false `dead`, so tag self-hosted tokens. A stored value without the `mul_` prefix (a `mat_` run token, a session JWT) is not sent and reads `unknown`. A bogus `mul_` token got 401 from both `api.multica.ai` and a self-hosted backend on 2026-11-20, and a valid credential got 200 on the same route. See [Multica](#multica). |
+| `posthog` | personal key (`phx_`): `GET <host>/api/users/@me/` (Bearer); project token (`phc_`): `POST <host>/flags/?v=2` with the token in the JSON body | 401 on every host tried | The value's prefix picks the probe: a project token sent to the private API gets 401, a false `dead`. An unprefixed value falls back to the name (`*-personal-key`, `*-project-key`, `*-project-token`) or a `liveness_kind` tag; otherwise it isn't sent. `phs_` secret keys and `*-posthog-host` / `*-posthog-tracking` config aren't probed. Hosts: the `posthog_host` tag, else US then EU Cloud. A key only works on its own region, so it's `dead` only when every host answers 401. A 403 on the personal route (missing `user:read` scope) reads `unknown`. See [PostHog](#posthog). |
+| `linear` | `POST https://api.linear.app/graphql` with `{ viewer { id } }` | 401 only | Personal API key (`lin_api_…`) sent raw in `Authorization`, as Linear documents it; OAuth access token (`lin_oauth_…`) sent as Bearer. Returns only the key owner's user id. A value with neither prefix isn't sent (the wrong header form would read as a false `dead`). Linear answers rate limiting with 400 `RATELIMITED`, so 400/403/5xx read `unknown`. A bogus key got 401 `AUTHENTICATION_ERROR` on 2026-11-20. No rotation adapter: Linear has no API that issues or revokes personal API keys. See [Linear](#linear). |
+| `anthropic` | LLM API key (`sk-ant-api…`): `GET https://api.anthropic.com/v1/models?limit=1` (`x-api-key` + `anthropic-version`); Claude Code OAuth setup-token: no request, expiry date only | 401 (API key); `expires_at` in the past (setup-token) | The Models API is free (no tokens billed), so it is cheaper than a 1-token Messages call. A bogus `sk-ant-api03-` key got 401 `authentication_error` on 2026-11-20. 403/429/529/5xx read `unknown`. It doesn't check the credit balance, so a valid key on an organization out of credit still reads `live`. Setup-tokens (`claude-code-oauth*`, `*-oauth`, `*-setup-token`, `liveness_kind=oauth-setup-token`, or an `sk-ant-oat` value) are never sent: the check reads the `expires_at` tag. An `sk-ant-admin` Admin API key or a non-`sk-ant-` value isn't sent either. The live 200 path hasn't been confirmed against a real key yet. See [Anthropic](#anthropic). |
 
 Each of the long-tail probes above (PANT-1125, GH #204) returned its listed dead status for a
 bogus key when it was added. They haven't been confirmed against a real live key yet, so the
@@ -126,7 +131,7 @@ Long-tail providers with no probe yet. They read `unknown` (no adapter):
 | Slack incoming webhooks | The URL is the credential. The only call is a POST to it, and a valid payload posts a message. |
 | Slack OAuth app credentials | Client secret, signing secret and verification token don't authenticate any read-only call on their own. |
 
-The other provider sub-issue of #141 adds its own: Autumn (#143).
+The other provider sub-issue of #141 adds its own: Autumn (#143). Linear (#196) is the `linear` row above.
 Vercel (#144), Convex (#142) and Clerk (#145) are the `vercel`, `convex` and `clerk` rows above.
 
 The event-source probes (PANT-1126 / #203) pick their adapter from `provider`, so they only
@@ -214,6 +219,117 @@ per-instance variant, with `delay_old_secrets_expiration_hours` for overlap.
 It's in private beta and needs a Platform API access token, not the instance
 secret key, so auto-rotation isn't built. Rotate in the Clerk Dashboard
 (**API keys**) and re-sync every copy.
+
+## Multica
+
+Multica (PANT-1128, GH #201) is the Hive planning-dispatch integration, so a dead
+`dostal-tech-multica-pat-token` silently breaks planning dispatch rather than a customer-facing
+app. The `multica` probe (see the row above) makes it show up in
+`portunus liveness status --failing` instead:
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag dostal-tech-multica-pat-token \
+  --tags "liveness_provider=multica,multica_url=https://api.multica.ai"
+portunus liveness check dostal-tech-multica-pat-token
+```
+
+Leave out `multica_url` for Multica Cloud. For a self-hosted instance, set it to that instance's
+API address, the same value as the CLI's `server_url`.
+
+PATs expire. A PAT created in **Settings → API Token** expires after 30 days, 90 days (the
+default), 1 year, or never. Only the CLI and daemon renew their own PAT automatically, so a PAT
+stored in Portunus will expire unless something renews it. Once it expires the probe reads
+`dead` with 401. Re-issue runbook and rotation status:
+[rotation.md](rotation.md#multica-personal-access-tokens).
+
+## Anthropic
+
+Anthropic (PANT-1132, GH #197) has two credentials under the `anthropic` provider, with
+different renewal paths, so they get different checks. Neither can be rotated by Portunus: both
+are `manual` in the [rotation matrix](provider-rotation-matrix.md#anthropic-llm-api-key).
+
+- **LLM API key** (`sk-ant-api…`, e.g. `social-engine-prod-anthropic-api-key`): probed with
+  `GET /v1/models?limit=1`. The Models API needs the same `x-api-key` auth as the Messages API but
+  bills no tokens, so it is the cheapest real authenticated request. 401 is `dead`. A 403
+  (`permission_error`) means Anthropic accepted the key, so it reads `unknown`, like 429, 529 and
+  5xx. The Models API doesn't look at billing: a key whose organization has run out of credit still
+  reads `live`.
+- **Claude Code OAuth setup-token** (`sk-ant-oat…`, `claude-code-oauth`,
+  `claude-code-oauth-ffevents-hive`): minted by `claude setup-token`, valid about a year, and only
+  meant for Claude Code. It is not sent to any API. The check reads the reference's `expires_at` tag
+  (`YYYY-MM-DD` or an ISO-8601 timestamp) instead:
+
+  | `expires_at` | Verdict |
+  |---|---|
+  | in the past | `dead` |
+  | within 30 days | `unknown`, and the detail says to re-run `claude setup-token` |
+  | later | `live` (meaning "not expired", not "probed": a revoked setup-token still reads `live`) |
+  | missing or not a date | `unknown` |
+
+  The `unknown` verdict makes `portunus liveness check` exit `1`, which is the reminder.
+
+Which check runs: the `liveness_kind` tag (`api-key` or `oauth-setup-token`), else the name, else
+the value's prefix (read inside the resolver boundary, never returned).
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag claude-code-oauth --tags "expires_at=2027-10-01"
+portunus liveness check claude-code-oauth social-engine-prod-anthropic-api-key
+```
+
+After re-issuing a setup-token, store the new value and move `expires_at` forward a year.
+
+## Linear
+
+Linear (PANT-1133, GH #196) keys are a standing credential with no rotation path: Linear's API
+can't issue or revoke **personal** API keys (`lin_api_…`), only OAuth application tokens, so the
+rotation capability is `manual` and stays that way. Don't re-research it; the evidence is in
+[rotation.md](rotation.md#linear-personal-api-key) and
+[provider-rotation-matrix.md](provider-rotation-matrix.md#linear-personal-api-key). Liveness is
+the only automated check Portunus can give these keys, so a dead one shows up in
+`portunus liveness status --failing` instead of in a broken integration:
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag event-api-prod-linear-api-key --tags "liveness_provider=linear"
+portunus liveness check event-api-prod-linear-api-key
+```
+
+References registered with `provider=linear` don't need the tag. Checked against Linear on
+2026-11-20: a bogus key (raw or Bearer) and a missing header all got 401 `AUTHENTICATION_ERROR`.
+The live 200 path hasn't been confirmed against a real key yet.
+
+## PostHog
+
+PostHog (PANT-1130, GH #199) issues two credentials that are easy to confuse:
+
+- the **project token** (`phc_…`, "project API key"): public, write-only, embedded in apps to send
+  events. Probed with `POST /flags/?v=2`, the route the SDKs call with it. That records no event and
+  creates no person, but PostHog counts it as one feature-flag request.
+- the **personal API key** (`phx_…`): a developer's key for the private API. Probed with
+  `GET /api/users/@me/`, which returns only the key owner's profile.
+
+The private API answers a project token with 401, so probing every PostHog key the same way would
+report every healthy project token as `dead`. The probe reads the value's prefix inside the
+resolver boundary and picks the route from it.
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag mdostal-com-posthog-project-key --tags "liveness_provider=posthog"
+portunus liveness check mdostal-com-posthog-project-key
+# self-hosted, or to pin one Cloud region:
+portunus retag ffe-posthog-api-key --tags "liveness_provider=posthog,posthog_host=https://eu.posthog.com"
+```
+
+Checked against PostHog Cloud on 2026-11-20: a bogus `phx_` key got 401 from `/api/users/@me/` on
+both regions, a bogus `phc_` token got 401 from `/flags`, and a real project token got 200 from its
+own region and 401 from the other one.
+
+Rotation is a separate question; see
+[provider-rotation-matrix.md](provider-rotation-matrix.md#posthog-project-token-and-personal-api-key).
+The project token can be reset over the API (hard cutover, no overlap). A personal API key can't
+manage keys at all, so it is rolled by hand.
 
 ## Parity
 

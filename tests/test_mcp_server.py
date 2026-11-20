@@ -578,7 +578,7 @@ def test_resolve_exec_capturing_runner_never_leaks_on_exception():
 def test_drop_minimal_stores_value(home, monkeypatch):
     from portunus import mcp_server
     result = mcp_server.portunus_drop(name="x", sm_name="sm-x", value="the-value")
-    assert result == {"name": "x", "sm_name": "sm-x", "state": "dropped"}
+    assert result == {"name": "x", "sm_name": "sm-x", "state": "dropped", "backend": "local"}
 
     from portunus import Registry
     reg = Registry()
@@ -597,7 +597,7 @@ def test_drop_full_metadata_passed_through_unmangled(home):
         purpose="payments", injected_as={"dev": "env:STRIPE_KEY"},
         group="gig-tracker/stripe", related=["gig-tracker-stripe-webhook"],
     )
-    assert result == {"name": "gig-tracker-stripe-key", "sm_name": "STRIPE_KEY", "state": "dropped"}
+    assert result == {"name": "gig-tracker-stripe-key", "sm_name": "STRIPE_KEY", "state": "dropped", "backend": "local"}
     ref = Registry().require("gig-tracker-stripe-key")
     assert ref.tags == {"team": "solo"}
     assert ref.injected_as == {"dev": "env:STRIPE_KEY"}
@@ -634,7 +634,7 @@ def test_drop_overwrites_on_duplicate_name_matching_cli_behavior(home):
     from portunus import mcp_server, Registry
     mcp_server.portunus_drop(name="x", sm_name="sm-x", value="first")
     result = mcp_server.portunus_drop(name="x", sm_name="sm-x-v2", value="second")
-    assert result == {"name": "x", "sm_name": "sm-x-v2", "state": "dropped"}
+    assert result == {"name": "x", "sm_name": "sm-x-v2", "state": "dropped", "backend": "local"}
     assert Registry().require("x").sm_name == "sm-x-v2"
 
 
@@ -731,7 +731,7 @@ def test_portunus_sync_no_cached_references(home):
 def test_portunus_drop_accepts_backend_override(home):
     from portunus import mcp_server, Registry
     result = mcp_server.portunus_drop(name="x", sm_name="sm-x", value="v", backend="local")
-    assert result == {"name": "x", "sm_name": "sm-x", "state": "dropped"}
+    assert result == {"name": "x", "sm_name": "sm-x", "state": "dropped", "backend": "local"}
     assert Registry().require("x").backend == "local"
 
 

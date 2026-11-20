@@ -18,10 +18,13 @@ from mcp.server.fastmcp import FastMCP
 
 from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotAuthorized, NotInjectable
-from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
+from .cli import (
+    _build, _build_tree, _collision_message, _eager_sync_down, _TREE_KEY_FNS, _wif_configured,
+)
 from .crawl import crawl_candidates
 from .impact import impact as impact_of
 from .health import run_health
+from .localvault import written_backend_kind
 from .leakscan import (
     add_scan_path,
     load_leak_status,
@@ -33,6 +36,7 @@ from .leakscan import (
 )
 from .discover import DiscoverError, diff_against_registry, list_gcp_secrets, register_discovered
 from .search import search_references
+from . import bitwarden
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
 from .registry import SUGGESTIBLE_FIELDS, AmbiguousMatch, NoMatch, Registry
 from .resolver import UnknownReference
@@ -220,11 +224,11 @@ def portunus_rotation_status(provider: str = "") -> dict:
     through a single job), `gcp` (service-account key create/verify/
     store), `resend` (API key), `grafana-cloud` (access policy token),
     `youtrack` (JetBrains Hub permanent token), `vercel` (access token),
-    `neon` (Postgres role-password reset; needs --retire-old) and `github`
+    `neon` (Postgres role-password reset; needs --retire-old), `upstash`
+    (Redis REST token via password reset; needs --retire-old), `github`
     (OAuth App token reset; other GitHub token types are refused per
-    reference as manual/not-applicable). Stub adapters:
-    stripe. Manual (no
-    programmatic path exists): sentry."""
+    reference as manual/not-applicable) and `stripe` (API key roll via the
+    v2 IAM preview API). Manual (no programmatic path exists): sentry."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)
@@ -328,6 +332,35 @@ def portunus_parity_check(names: Optional[List[str]] = None, all: bool = False,
     if error:
         return {"error": error}
     return {"results": [r.to_dict() for r in results]}
+
+
+@mcp.tool()
+def portunus_bitwarden_search(query: str = "", register: bool = False) -> dict:
+    """Read-only: search the human's Bitwarden vault (via the `bw` CLI) for
+    items -- returns id, name, username, URIs and custom-field NAMES only,
+    never a password or other value. Use when portunus_search comes up empty
+    for a login that may live in Bitwarden (e.g. a social-media account).
+
+    With register=True, login items are written as state=requested,
+    backend=bitwarden placeholders (never injectable until a human enables
+    them; name collisions are reported, never overwritten), so later
+    portunus_search calls find them. Requires an unlocked vault (BW_SESSION
+    exported in Portunus's environment); returns {"error": ...} otherwise.
+    Mirrors `portunus bitwarden list [--search Q] [--register] --json`."""
+    try:
+        items = bitwarden.list_items(query)
+    except bitwarden.BitwardenError as exc:
+        return {"error": str(exc)}
+    out: dict = {"items": [i.to_dict() for i in items]}
+    if register:
+        registry, audit, _broker, _resolver = _build()
+        report = bitwarden.register_items(registry, items)
+        for name in report.registered:
+            audit.append("bitwarden_register", name, "requested")
+        out.update(registered=report.registered,
+                   already_registered=report.already_registered,
+                   conflicts=report.conflicts)
+    return out
 
 
 @mcp.tool()
@@ -665,7 +698,11 @@ def portunus_drop(
     `related` is a plain list of reference names -- no CLI-style comma-
     separated string parsing. `backend` optionally overrides which backend
     THIS reference routes to later (e.g. "gcp") once you've dropped it here
-    locally -- empty means "use the project's default binding." `repo` is
+    locally -- empty (the normal case) records backend="local", because
+    that is where the value was written: the ref resolves from the local
+    vault even when its project's binding is GCP, until it is explicitly
+    synced or migrated (portunus#242). The return carries the recorded
+    `backend` so you can see where it went. `repo` is
     the git repo that consumes this secret (distinct from `project`, which
     can be one cloud project shared by many repos); `source_files` is a
     plain list of file paths in that repo, same posture as `related`.
@@ -687,17 +724,21 @@ def portunus_drop(
         }
     if not value:
         return {"error": "empty secret value; nothing dropped"}
-    ref = registry.add(
-        name, sm_name, scope=scope, kind=kind, state="dropped",
-        provider=provider, project=project, env=env, tags=tags,
-        description=description, purpose=purpose, injected_as=injected_as,
-        group=group, related=related, backend=backend,
-        repo=repo, source_files=source_files,
-    )
+    try:
+        ref = registry.add(
+            name, sm_name, scope=scope, kind=kind, state="dropped",
+            provider=provider, project=project, env=env, tags=tags,
+            description=description, purpose=purpose, injected_as=injected_as,
+            group=group, related=related, backend=written_backend_kind(local_backend, backend),
+            repo=repo, source_files=source_files, reject_collisions=True,
+        )
+    except AmbiguousMatch as exc:
+        return {"error": _collision_message(name, exc)}
     local_backend.store(ref.sm_name, value)
     del value
     broker.audit.append("drop", ref.sm_name, "stored")
-    return {"name": ref.name, "sm_name": ref.sm_name, "state": ref.state}
+    return {"name": ref.name, "sm_name": ref.sm_name, "state": ref.state,
+            "backend": ref.backend}
 
 
 @mcp.tool()
@@ -811,12 +852,16 @@ def portunus_drop_bulk(entries: List[dict]) -> dict:
                 env=entry.get("env", ""), tags=entry.get("tags"),
                 description=entry.get("description", ""), purpose=entry.get("purpose", ""),
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
-                related=entry.get("related"), backend=entry.get("backend", ""),
+                related=entry.get("related"),
+                backend=written_backend_kind(local_backend, entry.get("backend", "")),
+                reject_collisions=True,
             )
             local_backend.store(ref.sm_name, entry_value)
             del entry_value
             broker.audit.append("drop", ref.sm_name, "stored")
             created.append(ref.name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": entry_name, "error": _collision_message(entry_name, exc)})
         except (ValueError, KeyError) as exc:
             failed.append({"name": entry_name, "error": str(exc)})
     return {"created": created, "failed": failed}

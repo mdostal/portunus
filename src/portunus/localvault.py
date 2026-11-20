@@ -37,6 +37,23 @@ class SessionExpired(BackendError):
     existing `except BackendError` call sites stay correct without change."""
 
 
+def written_backend_kind(store_backend, explicit: str = "") -> str:
+    """The ``Reference.backend`` value to record for a ref whose value was
+    just written through ``store_backend`` (portunus#242 / PANT-1218).
+
+    A reference resolves from the backend it was actually written to until
+    it is explicitly synced or migrated. Without this pin, a value dropped or
+    prompted into the local vault for a project whose VaultBinding points at
+    GCP resolved through gcloud instead and failed -- silently, since the
+    store itself reported success. An explicit caller-supplied ``explicit``
+    kind still wins (that IS the explicit "route it elsewhere" step); a
+    non-local store backend (MockBackend in dry runs) records nothing so its
+    own routing is unchanged."""
+    if explicit:
+        return explicit
+    return "local" if isinstance(store_backend, LocalEncryptedBackend) else ""
+
+
 class LocalEncryptedBackend:
     """ARCA local-encrypted tier: an encrypted-at-rest ``SecretBackend``.
 
@@ -110,6 +127,10 @@ class LocalEncryptedBackend:
             raise BackendError(
                 f"local vault: cannot decrypt {sm_name} (wrong master key or corrupt data)"
             ) from exc
+
+    def has(self, sm_name: str) -> bool:
+        """Key presence only -- nothing is decrypted."""
+        return sm_name in self._load()
 
     def remove(self, sm_name: str) -> bool:
         with self._locked():

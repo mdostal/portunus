@@ -1,0 +1,25 @@
+{
+ "mode": "hostile-ext-main-native",
+ "old_sha": "fdc11eb68a860e96",
+ "new_sha": "556120cbe360f7ac",
+ "seed": "ok",
+ "call": {
+  "hasActivation": false,
+  "ok": true
+ },
+ "captured": [],
+ "shot": "/home/node/spike-work/shots/hostile-ext-main-native.png",
+ "internals": [
+  "Message:  PasswordManager::CreatePendingLoginManagers ",
+  "Message:  PasswordManager::IsAutomaticSavePromptAvailable ",
+  "Message:  No provisional save manager ",
+  "CM API save a credential: origin=http://localhost:8765, CredentialType=CredentialType::CREDENTIAL_TYPE_PASSWORD",
+  "Message:  FormFetcherImpl::OnGetPasswordStoreResults ",
+  "Number of results from:   Profile Store: 1 ",
+  "Number of results from:   Account Store: 0 ",
+  "Number of unique matched credentials: 1",
+  "Message:  Decision: UPDATE the saved credential with a new password on Profile Store ",
+  "The new state of the UI:  UPDATE_CONFIRMATION_STATE (3) "
+ ],
+ "leak_check_internals": "clean"
+}

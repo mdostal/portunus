@@ -89,7 +89,7 @@ That's portunus.
       `portunus rotation run`: OAuth refresh tokens, GCP service-account keys, Google Cloud API keys,
       Resend API keys, Grafana Cloud access policy tokens, YouTrack/Hub permanent tokens, Vercel access tokens, and
       GitHub OAuth App tokens from an App you own. GitHub PATs are `manual` because GitHub has no
-      reissue API. Stripe is still a stub that raises. `portunus liveness check` flags dead GitHub
+      reissue API. Stripe API keys rotate through Stripe's v2 IAM preview API. `portunus liveness check` flags dead GitHub
       tokens. See [docs/rotation.md](docs/rotation.md) for the per-subtype capability matrix)*
 - [ ] Scope-aware `list`/`tree` — these two MCP tools still return full-vault metadata regardless
       of the caller's own access scope; only the actual `resolve`/inject path is gated today
@@ -161,8 +161,8 @@ their own (Latin, theme-consistent) names:
 | Component | Role | Where it lives today |
 |---|---|---|
 | **OSTIARIUS** | The gatekeeper API — the *only* way to request things from the vault or deposit things into it (the request/deposit boundary), including metadata-only queries like "what secrets exist for this project". **Three entry points, one implementation**: the `portunus` CLI, the standalone UI's API routes, and an MCP stdio server for other agents/harnesses | `resolver.py` + the `portunus` CLI (`cli.py`) + `mcp_server.py` (`portunus mcp`) |
-| **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice. **Real today:** local-encrypted (default), GCP Secret Manager (keyless via WIF, optionally with a recency-aware pull-only sync-down cache that survives a real network outage by serving the last-known-good cached value), OAuth refresh-token broker, and Chrome's own saved logins (macOS Keychain / Linux Secret Service-KWallet, read-only, Windows deferred — `docs/backends.md`). **Honest stubs, not yet real:** AWS Secrets Manager, HashiCorp Vault, Infisical, Doppler, 1Password, Azure Key Vault — each fails closed with a clear error and a link to [request it](.github/ISSUE_TEMPLATE/adapter-request.yaml), never silently mis-routes. See `docs/architecture.md` for the full picture. | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `VaultBinding`, and the six stub classes); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project) |
-| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **Per-agent access control is real and opt-in**: every call threads an `Identity` (`requester`) through `check_injectable()`, which evaluates it against `roles.py`'s `PolicyRecord`s (`org`/`project`/`env`/`repo` scope + `principal`) via `roles.evaluate()` — every resolve gets a `would-allow`/`would-deny` audit line regardless, but only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been explicitly run for that vault (default: off; a scope with zero configured policies always stays open). Not yet scope-aware: the `list`/`tree` MCP tools, and `approve()`'s token (scoped to a reference name, not the requesting identity) — see Roadmap. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter for it. Eight adapters are real (`auto`), all run via `portunus rotation run`: OAuth refresh tokens (`OAuthRefreshRotationAdapter`), GCP service-account keys (`GCPServiceAccountKeyRotationAdapter`), Google Cloud API keys (`GoogleCloudAPIKeyRotationAdapter`), Resend API keys (`ResendRotationAdapter`), Grafana Cloud org-level access policy tokens (`GrafanaCloudRotationAdapter`), YouTrack/Hub permanent tokens (`YouTrackRotationAdapter`), Vercel access tokens (`VercelRotationAdapter`), and GitHub OAuth App tokens from an App you own (`GitHubRotationAdapter`; GitHub PATs are `manual`, since GitHub has no reissue API). Stripe is still a stub that raises. See `docs/rotation.md`. See `docs/architecture.md` §3/§17. | `broker.py`, `roles.py`, `rotation.py` |
+| **ARCA** | The vault store — **pluggable backends behind one interface**, actually selected per-Reference/per-project (a reference's own `backend` override, else its project's `VaultBinding`, else the global fallback), not one global choice. **Real today:** local-encrypted (default), GCP Secret Manager (keyless via WIF, optionally with a recency-aware pull-only sync-down cache that survives a real network outage by serving the last-known-good cached value), OAuth refresh-token broker, and Chrome's own saved logins (macOS Keychain / Linux Secret Service-KWallet, read-only, Windows deferred — `docs/backends.md`), and a Bitwarden personal/org vault via the `bw` CLI (read-only, metadata-only discovery with `portunus bitwarden list` / `portunus_bitwarden_search`). **Honest stubs, not yet real:** AWS Secrets Manager, HashiCorp Vault, Infisical, Doppler, 1Password, Azure Key Vault — each fails closed with a clear error and a link to [request it](.github/ISSUE_TEMPLATE/adapter-request.yaml), never silently mis-routes. See `docs/architecture.md` for the full picture. | `localvault.py` (`LocalEncryptedBackend`, default); `backend.py` (`SecretBackend`, `GcloudBackend`, `SyncingBackend`, `VaultBinding`, and the six stub classes); `auth.py` (keyless WIF/OIDC credential minting); `discover.py` (read-only enumeration of what already exists in a live provider project); `bitwarden.py` (Bitwarden `bw` CLI discovery + `BitwardenBackend`) |
+| **Petitio** | The approval-gate wrapper — wraps every OSTIARIUS request so access is always gated (grant / gate / approve + lifecycle guard). **Per-agent access control is real and opt-in**: every call threads an `Identity` (`requester`) through `check_injectable()`, which evaluates it against `roles.py`'s `PolicyRecord`s (`org`/`project`/`env`/`repo` scope + `principal`) via `roles.evaluate()` — every resolve gets a `would-allow`/`would-deny` audit line regardless, but only actually *raises* `NotAuthorized` when `portunus roles enforce on` has been explicitly run for that vault (default: off; a scope with zero configured policies always stays open). Not yet scope-aware: the `list`/`tree` MCP tools, and `approve()`'s token (scoped to a reference name, not the requesting identity) — see Roadmap. Adjacent, not the same thing: **rotation provenance** (`rotation.py`) records which provider could rotate a reference and whether Portunus has a real adapter for it. Nine adapters are real (`auto`), all run via `portunus rotation run`: OAuth refresh tokens (`OAuthRefreshRotationAdapter`), GCP service-account keys (`GCPServiceAccountKeyRotationAdapter`), Google Cloud API keys (`GoogleCloudAPIKeyRotationAdapter`), Resend API keys (`ResendRotationAdapter`), Grafana Cloud org-level access policy tokens (`GrafanaCloudRotationAdapter`), YouTrack/Hub permanent tokens (`YouTrackRotationAdapter`), Vercel access tokens (`VercelRotationAdapter`), and GitHub OAuth App tokens from an App you own (`GitHubRotationAdapter`; GitHub PATs are `manual`, since GitHub has no reissue API). Stripe API keys rotate through Stripe's v2 IAM preview API (`StripeRotationAdapter`). See `docs/rotation.md`. See `docs/architecture.md` §3/§17. | `broker.py`, `roles.py`, `rotation.py` |
 | *(audit)* | Tamper-evident hash-chain access log underneath all of the above | `audit.py` |
 
 So: an agent talks to **OSTIARIUS**; **Petitio** decides whether the request may proceed; only then
@@ -397,6 +397,8 @@ portunus find --tags provider=vercel,project=mdostal.com,env=prod
 # Resolve by tags and inject directly at a boundary target:
 portunus inject --tags provider=vercel,project=mdostal.com,env=prod --target env --var VERCEL_TOKEN
 portunus inject --tags provider=vercel,project=mdostal.com,env=prod --target file --format env --key VERCEL_TOKEN --path ./.env.local
+# a file target must not exist yet (never overwritten, never written through a symlink);
+# add --replace to refresh a regular file you own
 
 # Semantic front door -- plain-language request instead of exact tags:
 portunus ask "the vercel secret for mdostal.com in prod" --target env --var VERCEL_TOKEN
@@ -705,7 +707,7 @@ A rotation binding's `account` (the free-text context hint `portunus rotation-bi
 <provider> --account ...` already accepted, e.g. a Vercel team slug) is likewise editable inline
 in a reference's detail view, next to the Auto-rotate button. `status` (`stub`/`real`) stays
 code-driven and is never reachable from the UI — only the OAuth, GCP service-account, Resend,
-Grafana Cloud, YouTrack, Vercel and GitHub (OAuth App token) adapters are real today (Stripe is a stub), and a UI control that could flip a stub to real
+Grafana Cloud, YouTrack, Vercel and GitHub (OAuth App token) adapters are real today (Stripe too, through the v2 IAM preview API), and a UI control that could flip a stub to real
 would misrepresent what actually happens on click.
 
 Bulk-import many secrets at once — e.g. importing a batch of candidate passwords/keys before
@@ -894,6 +896,7 @@ troubleshooting are in [docs/t3-code.md](docs/t3-code.md).
 | `portunus_impact(name, max_depth=None, suggest=True)` | Blast radius of a reference (what a rotation touches), same shape as `portunus impact --json` — read-only, never a value |
 | `portunus_ask_preview(request)` | What a plain-language fetch request would resolve to — metadata only, previews, never injects |
 | `portunus_bindings_show(project="")` | Configured per-project vault bindings (backend/sync_mode/account/WIF audience) |
+| `portunus_bitwarden_search(query="", register=False)` | Metadata-only search of a Bitwarden vault via `bw` (needs `BW_SESSION`); `register=True` writes login items as `state=requested`, `backend=bitwarden` references |
 | `portunus_discover(project, register=False)` | Read-only diff against a live GCP Secret Manager project; `register=True` writes not-yet-registered secrets as `state=requested` |
 | `portunus_suggest_metadata(name, description="", purpose="", group="", tags=None)` | Propose description/purpose/group/tags — lands in a pending sidecar, **never the live field**; a human confirms via `portunus metadata confirm` or the UI |
 | `portunus_crawl_candidates(org="", project="")` | Discovery bundle (sm_name/group/project/org/repo/vault-binding/rotation-binding) for every reference missing metadata — never a value, never a write; read it, then call `portunus_suggest_metadata` for whichever fields you have a real proposal for |
@@ -907,7 +910,7 @@ troubleshooting are in [docs/t3-code.md](docs/t3-code.md).
 | `portunus_drop_bulk(entries)` | Create many local-vault secrets in one call — `{"created": [names], "failed": [{"name","error"}]}`, never a value |
 | `portunus_state(name, state)` | Change a reference's lifecycle state — `{name, state}` |
 | `portunus_sync(project)` | Force a recency check for every cached-mode reference in a project — `{"synced", "already_fresh", "failed"}`, names only |
-| `portunus_rotation_status(provider="")` | Configured per-provider rotation bindings (status/account/capability) — one provider or all. `capability` comes from the adapter registry: `auto` for `oauth`, `gcp`, `resend`, `grafana-cloud`, `youtrack`, `vercel` and `github` (GitHub's per-token-type split is in `docs/rotation.md`), `manual` for `sentry`, `unknown` for the Stripe stub |
+| `portunus_rotation_status(provider="")` | Configured per-provider rotation bindings (status/account/capability) — one provider or all. `capability` comes from the adapter registry: `auto` for `oauth`, `gcp`, `resend`, `grafana-cloud`, `youtrack`, `vercel`, `github` and `stripe` (GitHub's per-token-type split is in `docs/rotation.md`), `manual` for `sentry` |
 
 The injection tools use the same **dual addressing** as the CLI's own `inject`/`ask`: give an
 exact `name` (from a prior `portunus_list`/`portunus_tree` call) or `tags` — never raw
@@ -957,6 +960,12 @@ injection or write fails on it.
 Neither command ever touches a secret value — only account emails and gcloud's own credential
 metadata.
 
+To stop depending on a human session at all, bind the project to a non-interactive identity:
+`portunus bindings set <project> --credential-file <sa-key-or-external-account.json>`, or
+`--account <reauth-free identity> --impersonate-service-account <sa>`, or WIF. See
+[docs/gcp-keyless.md](docs/gcp-keyless.md). When a reauth does hit, the `backend:gcp` check in
+`portunus health` lists those fixes instead of only the raw `gcloud auth login` prompt.
+
 ### OAuth token broker: store a refresh token, mint access tokens on demand
 
 `portunus oauth store/list/remove` + `--backend oauth` let Portunus hold a provider-issued OAuth
@@ -996,7 +1005,7 @@ detected local `gcloud` ADC file** (read directly by the Next.js server; the `cl
 `client_secret`/`refresh_token` values are never sent to or shown in the browser — the form
 shows only "detected: yes/no," never the values themselves) or **enter manually** (masked
 `client_secret`/`refresh_token` fields, same `type="password"` discipline as every other secret
-value in this UI). One submit both stores the credential (`portunus oauth store`) and registers
+value in this UI; leave `client_secret` blank for a public/PKCE client, which has none). One submit both stores the credential (`portunus oauth store`) and registers
 the pointing reference (`portunus drop --backend oauth`) — no behavioral difference from doing
 both by hand.
 
@@ -1201,8 +1210,28 @@ rejected with **403** if it carries an `Origin` other than the UI's own, or if i
 `localhost` / `127.0.0.1` / `[::1]` (this stops DNS rebinding; the check is skipped once you set
 `PORTUNUS_UI_HOST`). It is rejected with **415** if its `Content-Type` isn't
 `application/json`. That means another web page open in your browser can't drive the vault
-through the UI's API. A client with no `Origin` header, such as `curl`, still works as long as it
-sends JSON.
+through the UI's API.
+
+**Write credential.** Those checks stop a web page, not a client that sets its own headers, such
+as `curl` from a container that can reach the host's loopback port. So every non-GET `/api/*`
+request also needs `X-Portunus-Write-Token: <token>`. The server reads the expected token from
+the file named by `PORTUNUS_WRITE_TOKEN_FILE` on every write, so rewriting the file rotates the
+token. A missing or wrong token gets **401**, and the request never reaches the CLI. If no token
+file is configured, every write is refused with **503**. On a single-user machine where nothing
+else can reach the port, set `PORTUNUS_ALLOW_UNAUTHENTICATED_WRITES=1` instead. The server then
+prints a warning banner and runs with writes open. GET routes stay open, and none of them
+returns a secret value.
+
+```bash
+umask 077 && openssl rand -hex 32 > ~/.portunus/ui-write-token
+PORTUNUS_WRITE_TOKEN_FILE=~/.portunus/ui-write-token npm run dev
+```
+
+The page asks for the token the first time it writes and keeps it for that tab. The desktop app
+mints its own token on each launch, so it needs no setup. The CLI and `portunus mcp` change the
+vault directly and never go through HTTP, so they need no token.
+[docs/http-routes.md](docs/http-routes.md) classifies every route and covers rollout for a
+deployment that already has HTTP writers.
 
 **Deploying behind a non-loopback name (containers, reverse proxies).** If anything reaches the
 UI by a name other than `localhost` / `127.0.0.1` / `[::1]`, for example another container
@@ -1318,6 +1347,8 @@ src/portunus/
                  returns/prints minted credentials
   discover.py    ARCA discovery — read-only enumeration of a live provider project's secrets
                  (names/labels only); structurally cannot reach a value (no backend import)
+  bitwarden.py   ARCA — Bitwarden vault via the `bw` CLI: metadata-only discovery/registration
+                 + the one value read BitwardenBackend calls at the resolver boundary
   broker.py      Petitio — grant / gate / approve + lifecycle guard, wired to audit; Identity +
                  requester feeds real, opt-in access-control enforcement (`roles enforce on`)
   roles.py       PolicyRecord store (org/project/env/repo scope + principal) + roles.evaluate()

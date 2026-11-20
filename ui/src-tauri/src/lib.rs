@@ -14,6 +14,7 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 pub struct SidecarState {
     pub child: Mutex<Option<Child>>,
     pub port: u16,
+    pub write_token_file: Option<std::path::PathBuf>,
 }
 
 fn kill_sidecar(app: &tauri::AppHandle) {
@@ -23,6 +24,10 @@ fn kill_sidecar(app: &tauri::AppHandle) {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+        }
+        // The token dies with the sidecar that checked it.
+        if let Some(file) = &state.write_token_file {
+            let _ = std::fs::remove_file(file);
         }
     }
 }
@@ -52,9 +57,11 @@ pub fn run() {
 
             let handle = sidecar::spawn_sidecar(app.handle());
             let port = handle.port;
+            let write_token = handle.write_token;
             app.manage(SidecarState {
                 child: Mutex::new(Some(handle.child)),
                 port,
+                write_token_file: handle.write_token_file,
             });
 
             tray::build_tray(app.handle())?;
@@ -84,7 +91,14 @@ pub fn run() {
             let window_for_thread = window.clone();
             std::thread::spawn(move || {
                 if sidecar::wait_until_healthy(port) {
-                    let url = format!("http://127.0.0.1:{port}");
+                    // The write token rides in the fragment: the page's
+                    // instrumentation-client.ts keeps it in sessionStorage and
+                    // strips it from the URL; a fragment is never sent to the
+                    // server. Hex only, so it needs no escaping.
+                    let url = match &write_token {
+                        Some(token) => format!("http://127.0.0.1:{port}/#write-token={token}"),
+                        None => format!("http://127.0.0.1:{port}"),
+                    };
                     if let Ok(parsed) = tauri::Url::parse(&url) {
                         let _ = window_for_thread.navigate(parsed);
                     }

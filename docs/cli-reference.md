@@ -45,6 +45,7 @@ portunus resolve --exec psql postgres://user:{{secret:db-pass}}@host/db
 ### `drop`
 
 Put a new secret into the local-encrypted vault. Lands at `state=dropped`; run `portunus state <name> enabled` to make it injectable.
+The reference is pinned to `backend=local`. A drop whose org/provider/project/env/repo/tags exactly match an existing reference is refused (exit 4) so lookups stay unambiguous. `drop-bulk`, `prompt` and the MCP tools behave the same way.
 
 ```
 portunus drop <name> <sm_name> [--stdin | --value-file <path>] [flags]
@@ -65,7 +66,7 @@ portunus drop <name> <sm_name> [--stdin | --value-file <path>] [flags]
 | `--related` | Comma-separated related reference names |
 | `--repo` | Git repo that consumes this secret |
 | `--source-files` | Comma-separated file paths in that repo |
-| `--backend` | Per-reference backend override (local/gcp/aws/…) |
+| `--backend` | Where the reference resolves from. Defaults to `local`, which is where `drop` writes the value, so a project binding to GCP never reroutes it (#246). Pass `gcp`/`aws`/… only when the value is pushed there too; until then it resolves from the local copy with a warning |
 | `--keep-whitespace` | Keep leading/trailing whitespace (only the final newline is removed). Implied by `--kind password` |
 
 **Examples:**
@@ -236,8 +237,14 @@ Resolve a reference by tags and inject its value at a boundary target.
 
 ```
 portunus inject --tags <k=v,...> --target env|file [--var <name>] [--path <path>] [--format env|json|yaml] [--key <key>]
-                [--mode 0600|0640|0660] [--group <name|gid>] [--json]
+                [--mode 0600|0640|0660] [--group <name|gid>] [--replace] [--json]
 ```
+
+A `file` target must not exist yet. Inject creates it with `O_CREAT|O_EXCL|O_NOFOLLOW`. If
+anything is already at the path, the inject fails and writes nothing. That covers a file, a
+directory, and a symlink, including a dangling symlink. `--replace` (CLI only, never sent by
+`POST /api/inject`) refreshes a regular file you own. It writes a new temp file beside the
+target and renames it into place. Even with `--replace`, a symlink is refused.
 
 A `file` target is written `0600`, owned by the uid Portunus runs as. A caller running as a
 different uid can't read that file, and can't delete it unless the directory is writable for
@@ -293,9 +300,11 @@ Manage the reference registry directly.
 ```
 portunus reg show
 portunus reg add <name> <sm_name> [--scope <s>] [--kind <k>] [--org <o>] [--project <p>] [--description <d>] [--purpose <p>] [--tags <k=v,...>] [--group <g>] [--related <r,...>] [--repo <repo>]
-portunus reg rm <name>
+portunus reg rm <name> [--purge-value]
 portunus reg json
 ```
+
+`reg rm` removes the registry entry only; the stored value is kept. `--purge-value` also deletes the stored value (local vault only), and is refused while any other reference shares the same backend + sm_name; those references are listed. `reg add` warns when a new reference shares an sm_name with an existing one in the same backend.
 
 **Example:**
 ```sh
@@ -309,8 +318,10 @@ portunus reg add linear-api dostal-linear --provider linear --project mdostal.co
 Update a reference's routing/metadata in place — never touches a value.
 
 ```
-portunus retag <name> [--org <o>] [--provider <p>] [--project <p>] [--env <e>] [--tags <k=v,...>] [--description <d>] [--purpose <p>] [--group <g>] [--related <r,...>] [--repo <repo>] [--source-files <f,...>]
+portunus retag <name> [--org <o>] [--provider <p>] [--project <p>] [--env <e>] [--tags <k=v,...>] [--description <d>] [--purpose <p>] [--group <g>] [--related <r,...>] [--repo <repo>] [--source-files <f,...>] [--backend <kind>|default]
 ```
+
+`--backend` pins where the reference resolves from; `default` clears the pin so it follows the project's binding again.
 
 **Example:**
 ```sh
@@ -338,11 +349,14 @@ portunus retag-bulk --group-prefix ffe-cicd/ --repo firefly-events/flayr --dry-r
 
 ### `vault status`
 
-Check whether this `PORTUNUS_HOME` has ever been initialized.
+Check whether this `PORTUNUS_HOME` has ever been initialized, and run the routing check from
+`portunus health`. The installer runs it at the end.
 
 ```
 portunus vault status [--json]
 ```
+
+`--json` prints `{"initialized": bool, "routing": {"ok": bool, "mismatches": [names], "detail": str}}`.
 
 ---
 
@@ -423,14 +437,23 @@ portunus sync ffe-cicd
 Configure per-project vault bindings (which backend serves a project's secrets).
 
 ```
-portunus bindings set <project> [--backend local|gcp|aws|...] [--sync-mode direct|cached] [--account <email>] [--wif-audience <audience>] [--impersonate-service-account <sa-email>]
+portunus bindings set <project> [--backend local|gcp|aws|...] [--sync-mode direct|cached] [--account <email>] [--wif-audience <audience>] [--impersonate-service-account <sa-email>] [--credential-file <path>|none]
 portunus bindings show [<project>] [--json]
 ```
+
+If the change would send references in that project to a remote store while their values are in
+the local vault (they follow the binding and were written by `drop`/`prompt`), `bindings set`
+lists them and refuses, exits 1 and saves nothing, unless you pass one of:
+`--pin-local` (pin them to `backend=local`), `--push` (gcp only: copy each value into GCP, verify
+it by reading it back, then bind) or `--force`.
 
 `sync-mode=cached` enables a pull-only local cache; `direct` (default) fetches live on every access.
 `--impersonate-service-account` makes every call act as that service account: through the IAM
 Credentials API after a WIF mint, or as gcloud's `--impersonate-service-account` alongside
-`--account`. See [Keyless GCP access](gcp-keyless.md).
+`--account`. `--credential-file` points gcloud at a service account key or `external_account`
+config JSON through `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. This is a non-interactive identity
+that never hits a reauth prompt. Only the absolute path is stored, and `none` clears it. See
+[Keyless GCP access](gcp-keyless.md).
 
 **Example:**
 ```sh
@@ -492,6 +515,46 @@ portunus roles enforce on
 ```
 
 ---
+
+## Account profiles
+
+Several logins for the same service, one active at a time. `profiles.json` in the Portunus
+home holds names, account emails and reference names, never a value.
+
+### `profile`
+
+```bash
+portunus profile add gcloud personal --account me@example.com
+portunus profile add gcloud work --account me@work.example --note "work org"
+portunus profile use gcloud work          # also runs: gcloud config set account me@work.example
+portunus profile add posthog personal --ref posthog-personal-key
+portunus profile add posthog work --ref posthog-work-key
+portunus profile use posthog work         # then reconnect the PostHog MCP server (/mcp)
+portunus profile list [gcloud|posthog] [--json]
+portunus profile remove <provider> <name>
+```
+
+The first profile added for a provider becomes active. `use gcloud` refuses an account that
+isn't logged in to gcloud (`portunus auth login <email>` first). Per-project bindings still
+pass their own `--account`; a gcloud profile sets the account plain `gcloud` commands use.
+
+### `mcp-headers`
+
+A Claude Code MCP `headersHelper`. It prints the active profile's headers as JSON to stdout,
+for example `{"Authorization": "Bearer <key>"}` for PostHog:
+
+```json
+"posthog": {
+  "type": "http",
+  "url": "https://mcp.posthog.com/mcp",
+  "headersHelper": "portunus mcp-headers posthog"
+}
+```
+
+This is a boundary sink. It refuses to write when stdout is a terminal or when
+`CLAUDE_CODE_MCP_SERVER_NAME` isn't set, so running it by hand never shows a key. Each use is
+audited as `mcp-headers posthog:<profile>`. Use a PostHog personal API key made with the
+"MCP Server" scope preset, not an all-access key.
 
 ## MCP / agent
 
@@ -1002,10 +1065,39 @@ Exit code: `0` ok, `1` degraded, `2` down.
 | `audit_chain` | degraded | the audit hash chain verifies (same as `portunus verify`) |
 | `audit_clock` | degraded | `.clock` equals the last audit `seq`, which catches a truncated log tail the chain alone can't see |
 | `bindings` | degraded | `vault-bindings.json` parses (only when present) |
+| `routing` | degraded | no reference follows its binding to a remote store (gcp/aws/…) while its value is in the local vault. It reads key names only. Fix with `portunus doctor --fix-routing` |
 | `backend:<kind>` | degraded | each backend in use: local vault parses and its master key is present and valid; gcloud is on `PATH` and a `versions describe latest` metadata probe on one reference succeeds (WIF-bound references are skipped, since minting writes an audit entry); stub backends fail |
 
 The Docker image runs it as its `HEALTHCHECK`; the UI serves it at `GET /api/health`; the MCP
 server exposes it as `portunus_health`.
+
+---
+
+### `doctor`
+
+Repair state problems. `--fix-routing` finds references that route to a remote backend while their
+value is in the local vault (#246) and pins or migrates them. It is a dry run unless you pass `--apply`.
+
+```
+portunus doctor --fix-routing [--apply] [--prefer local|remote] [--push] [--no-probe] [--json]
+```
+
+For each mismatch it probes the remote with a metadata-only `versions describe` (gcp):
+
+| Remote | Action |
+|---|---|
+| not there | pin `backend=local` |
+| has a value too | skip; choose with `--prefer local` (pin local) or `--prefer remote` (pin to the remote, local copy stays as fallback) |
+| can't tell (auth/network, non-gcp, `--no-probe`) | skip unless `--prefer` is given |
+
+`--push` (gcp only) copies each local value into GCP instead, creating the secret if needed. It
+verifies the copy by reading it back, then removes the plain local copy. Each change writes a
+`routing-fix` audit entry. With `--apply` it exits 1 if anything was skipped or failed.
+
+```sh
+portunus doctor --fix-routing            # see what would change
+portunus doctor --fix-routing --apply    # pin the stranded ones local
+```
 
 ---
 

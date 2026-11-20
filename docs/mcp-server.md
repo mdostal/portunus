@@ -155,6 +155,7 @@ When `T3CODE_THREAD_ID` is set in the server's environment (T3 Code sets it for 
 
 | Tool | Key parameters | Description |
 |---|---|---|
+| `portunus_bitwarden_search` | `query?: str`, `register?: bool` | Search the human's Bitwarden vault via the `bw` CLI (id, name, username, URIs, custom-field names; never a value). Use when `portunus_search` misses a login kept in Bitwarden. With `register=True`, writes login items as `state=requested`, `backend=bitwarden` references. Needs `BW_SESSION`; returns `{"error": ...}` when the vault is locked. |
 | `portunus_discover` | `project: str`, `register?: bool` | List what exists in a live GCP Secret Manager project (names + labels, never values). With `register=True`, writes not-yet-registered entries as `state=requested` placeholders and warms the local cache for `sync_mode=cached` projects. |
 
 ### Sync

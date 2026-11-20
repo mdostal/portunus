@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Protocol, runtime_checkable
 
-from . import chrome_crypto, chrome_discovery
+from . import bitwarden, chrome_crypto, chrome_discovery
 from .auth import (
     AuditChain,
     AuthError,
@@ -40,6 +40,54 @@ from .paths import home
 
 class BackendError(RuntimeError):
     """Raised when a backend cannot return a value (missing / access denied)."""
+
+
+# Markers a remote store's error carries when the SECRET itself is absent
+# (as opposed to auth/network/CLI failures): GCP's gRPC status, AWS's
+# exception name. Deliberately narrow -- "gcloud CLI not found on PATH" or
+# "credential_file ... not found" must NOT count as a missing secret.
+_NOT_FOUND_MARKERS = ("NOT_FOUND", "ResourceNotFoundException", "not found or has no versions")
+
+
+def is_not_found(exc: BaseException) -> bool:
+    """True when `exc` says the remote store has no such secret."""
+    text = str(exc)
+    return any(marker in text for marker in _NOT_FOUND_MARKERS)
+
+
+def _local_has(local, sm_name: str) -> bool:
+    """Key presence in the local tier, without decrypting when possible."""
+    has = getattr(local, "has", None)
+    if has is not None:
+        return bool(has(sm_name))
+    try:
+        local.access(sm_name)
+        return True
+    except BackendError:
+        return False
+
+
+def _warn_local_only(audit, sm_name: str, where: str) -> None:
+    """A reference was served from the local vault because its routed
+    remote said NOT_FOUND. Loud on stderr (never stdout -- MCP stdio and
+    `resolve --json` own stdout) and in the audit chain; never the value."""
+    msg = (f"portunus: warning: {sm_name} is not in {where}; served the local-vault copy "
+           f"instead (last_sync_result=local-only). Pin or migrate it: "
+           f"`portunus doctor --fix-routing` (dry run), then add --apply")
+    print(msg, file=sys.stderr)
+    if audit is not None:
+        try:
+            audit.append("credential-access", sm_name, f"warn:local-only:not-in-{where}")
+        except Exception:  # noqa: BLE001 - a warning must never fail the resolve
+            pass
+
+
+def _remote_hint(exc: BackendError, sm_name: str, where: str) -> BackendError:
+    """Same error, plus where the value actually is and the one fix."""
+    return BackendError(
+        f"{exc} -- note: {sm_name} has a value in the LOCAL vault, but this reference "
+        f"routes to {where}; run `portunus doctor --fix-routing` to pin or migrate it"
+    )
 
 
 @runtime_checkable
@@ -110,6 +158,17 @@ class VaultBinding:
     `roles/iam.workloadIdentityUser` on it instead) -- the fully keyless,
     no-human-login path. Empty means "no impersonation." GCP-specific;
     ignored by other backend types.
+
+    `credential_file` is a path to a gcloud-loadable credential file -- a
+    service account key JSON or an external_account (WIF) config JSON --
+    handed to gcloud through CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE for this
+    project only. Neither kind is subject to a human session's reauth
+    policy, so this is the long-lived, non-interactive path for machines
+    without a harness OIDC token. Only the path is stored here, never the
+    file's contents; the file itself should be 0600. Used when no WIF token
+    is minted; takes precedence over `account` (gcloud ignores `--account`
+    under an override), and composes with `impersonate_service_account`.
+    Empty means "not used." GCP-specific; ignored by other backend types.
     """
 
     project: str
@@ -118,6 +177,7 @@ class VaultBinding:
     impersonate_service_account: str = ""
     backend: str = "gcp"
     sync_mode: str = "direct"
+    credential_file: str = ""
 
 
 def _vault_bindings_path(path: Optional[Path] = None) -> Path:
@@ -155,6 +215,7 @@ def load_vault_bindings(path: Optional[Path] = None) -> Dict[str, VaultBinding]:
                 impersonate_service_account=cfg.get("impersonate_service_account", ""),
                 backend=cfg.get("backend", "gcp"),
                 sync_mode=cfg.get("sync_mode", "direct"),
+                credential_file=cfg.get("credential_file", ""),
             )
             for proj, cfg in raw.items()
         }
@@ -197,11 +258,62 @@ def save_vault_bindings(
             "wif_audience": b.wif_audience, "account": b.account,
             "impersonate_service_account": b.impersonate_service_account,
             "backend": b.backend, "sync_mode": b.sync_mode,
+            "credential_file": b.credential_file,
         }
         for proj, b in bindings.items()
     }
     with flock_path(_vault_bindings_lock_path(path)):
         atomic_write(bindings_path, json.dumps(raw, indent=2))
+
+
+# Substrings gcloud prints when a user credential's session lapsed and only
+# an interactive `gcloud auth login` can renew it. Matched case-insensitively
+# against stderr (which names the secret at most, never a value).
+_GCLOUD_REAUTH_MARKERS = (
+    "reauthentication failed",
+    "cannot prompt during non-interactive execution",
+    "problem refreshing your current auth tokens",
+    "reauthentication is needed",
+    "please run:\n\n  $ gcloud auth login",
+    "invalid_grant",
+    "invalid_rapt",
+)
+
+
+def is_gcloud_reauth_error(stderr: str) -> bool:
+    """True iff gcloud's stderr says the credential needs an interactive
+    reauth -- the failure mode Portunus cannot fix by retrying."""
+    text = (stderr or "").lower()
+    return any(marker in text for marker in _GCLOUD_REAUTH_MARKERS)
+
+
+def gcp_reauth_remediation(project: str, binding: Optional[VaultBinding] = None) -> str:
+    """Self-service recovery text for a reauth-required failure. The first
+    three options are non-interactive and stop the failure from recurring;
+    the last one is the one-off interactive fallback. Names identities and
+    paths only, never a credential."""
+    proj = project or "<project>"
+    account = (binding.account if binding else "") or "<account>"
+    sa = (binding.impersonate_service_account if binding else "") or (
+        f"<sa>@{proj}.iam.gserviceaccount.com"
+    )
+    return (
+        f"GCP credentials for {proj} need an interactive reauth Portunus cannot perform. "
+        "Non-interactive fixes (any one, then re-run `portunus health`): "
+        f"(1) `portunus bindings set {proj} --credential-file <service-account-key-or-"
+        "external-account.json>`; "
+        f"(2) `portunus bindings set {proj} --account <identity-without-reauth-policy> "
+        f"--impersonate-service-account {sa}`; "
+        f"(3) `portunus bindings set {proj} --wif-audience <provider> "
+        f"--impersonate-service-account {sa}`. "
+        f"One-off interactive fallback: `gcloud auth login {account} --no-activate`."
+    )
+
+
+class GcpReauthRequired(BackendError):
+    """gcloud refused because a user credential needs interactive reauth.
+    The message carries gcp_reauth_remediation() so every surface (resolve,
+    health, sync) shows the self-service fix, not just the raw gcloud text."""
 
 
 class GcloudBackend:
@@ -249,6 +361,55 @@ class GcloudBackend:
             return self._binding_providers[project]
         return self.credential_provider
 
+    @staticmethod
+    def _identity(binding: Optional[VaultBinding], token_file) -> tuple:
+        """(leading gcloud flags, extra env or None) for one call.
+
+        Precedence: a minted WIF token file (already carries identity) >
+        the binding's credential_file (SA key / external_account config via
+        CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE) > --account. Impersonation
+        composes with the latter two. Nothing set = ambient gcloud."""
+        if token_file:
+            return [f"--access-token-file={token_file}"], None
+        flags: list = []
+        env = None
+        if binding and binding.credential_file:
+            path = Path(binding.credential_file).expanduser()
+            if not path.is_file():
+                raise BackendError(
+                    f"credential_file for {binding.project} not found: {path}"
+                )
+            env = {**os.environ, "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": str(path)}
+        elif binding and binding.account:
+            # --account selects which already-locally-authenticated gcloud
+            # identity to use, independent of gcloud's single mutable
+            # "active account".
+            flags.append(f"--account={binding.account}")
+        if binding and binding.impersonate_service_account and (
+            binding.credential_file or binding.account
+        ):
+            # The base identity presents its own credential to mint a
+            # short-lived token FOR this service account (requires
+            # roles/iam.serviceAccountTokenCreator on the target) -- lets a
+            # stable, non-reauth-walled identity stand in for a human
+            # Workspace account whose session can expire.
+            flags.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+        return flags, env
+
+    def _run(self, cmd, env, **kwargs):
+        # env only when set: injected test runners predate the kwarg.
+        if env is not None:
+            kwargs["env"] = env
+        return self.runner(cmd, capture_output=True, text=True, timeout=self.timeout, **kwargs)
+
+    def _failure(self, what: str, sm_name: str, project: str, stderr: str) -> BackendError:
+        detail = f"gcloud {what} failed for {sm_name}: {(stderr or '').strip()[:200]}"
+        if is_gcloud_reauth_error(stderr):
+            return GcpReauthRequired(
+                f"{detail} -- {gcp_reauth_remediation(project, self.bindings.get(project))}"
+            )
+        return BackendError(detail)
+
     def access(self, sm_name: str, project: str = "") -> str:
         if shutil.which("gcloud") is None:
             raise BackendError("gcloud CLI not found on PATH")
@@ -256,34 +417,18 @@ class GcloudBackend:
         provider = self._credential_provider_for(effective_project)
         binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
-            cmd = ["gcloud"]
-            if token_file:
-                cmd.append(f"--access-token-file={token_file}")
-            elif binding and binding.account:
-                # Mutually exclusive with --access-token-file: a minted WIF
-                # token already carries identity. --account selects which
-                # already-locally-authenticated gcloud identity to use,
-                # independent of gcloud's single mutable "active account".
-                cmd.append(f"--account={binding.account}")
-                if binding.impersonate_service_account:
-                    # `account` presents its own credential to mint a
-                    # short-lived token FOR this service account (requires
-                    # roles/iam.serviceAccountTokenCreator on the target) --
-                    # lets a stable, non-reauth-walled identity stand in for
-                    # a human Workspace account whose session can expire.
-                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
             cmd.extend(["secrets", "versions", "access", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
             try:
-                proc = self.runner(cmd, capture_output=True, text=True, timeout=self.timeout)
+                proc = self._run(cmd, env)
             except subprocess.TimeoutExpired as exc:
                 raise BackendError(f"gcloud timeout for {sm_name}") from exc
         if proc.returncode != 0:
             # stderr may name the secret but never contains the value.
-            raise BackendError(
-                f"gcloud access failed for {sm_name}: {proc.stderr.strip()[:200]}"
-            )
+            raise self._failure("access", sm_name, effective_project, proc.stderr)
         return proc.stdout
 
     def latest_version(self, sm_name: str, project: str = "") -> str:
@@ -297,31 +442,25 @@ class GcloudBackend:
         provider = self._credential_provider_for(effective_project)
         binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
-            cmd = ["gcloud"]
-            if token_file:
-                cmd.append(f"--access-token-file={token_file}")
-            elif binding and binding.account:
-                cmd.append(f"--account={binding.account}")
-                if binding.impersonate_service_account:
-                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
             cmd.extend(["secrets", "versions", "describe", "latest", f"--secret={sm_name}"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
             cmd.append("--format=json")
             try:
-                proc = self.runner(cmd, capture_output=True, text=True, timeout=self.timeout)
+                proc = self._run(cmd, env)
             except subprocess.TimeoutExpired as exc:
                 raise BackendError(f"gcloud timeout for {sm_name}") from exc
         if proc.returncode != 0:
-            raise BackendError(
-                f"gcloud versions describe failed for {sm_name}: {proc.stderr.strip()[:200]}"
-            )
+            raise self._failure("versions describe", sm_name, effective_project, proc.stderr)
         return json.loads(proc.stdout or "{}").get("createTime", "")
 
     def add_version(self, sm_name: str, value: str, project: str = "") -> str:
         """Write `value` as a new version of an existing secret, under the
         same per-project identity selection as access(): WIF token file, or
-        --account [+ --impersonate-service-account], or ambient gcloud.
+        credential_file / --account [+ --impersonate-service-account], or
+        ambient gcloud.
 
         The value reaches gcloud only on stdin (`--data-file=-`), never argv,
         so it can't show up in `ps` or a shell history. Returns gcloud's
@@ -335,28 +474,55 @@ class GcloudBackend:
         provider = self._credential_provider_for(effective_project)
         binding = self.bindings.get(effective_project)
         with self._access_token_file(provider) as token_file:
-            cmd = ["gcloud"]
-            if token_file:
-                cmd.append(f"--access-token-file={token_file}")
-            elif binding and binding.account:
-                cmd.append(f"--account={binding.account}")
-                if binding.impersonate_service_account:
-                    cmd.append(f"--impersonate-service-account={binding.impersonate_service_account}")
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
             cmd.extend(["secrets", "versions", "add", sm_name, "--data-file=-"])
             if effective_project:
                 cmd.append(f"--project={effective_project}")
             cmd.append("--format=value(name)")
             try:
-                proc = self.runner(
-                    cmd, input=value, capture_output=True, text=True, timeout=self.timeout,
-                )
+                proc = self._run(cmd, env, input=value)
             except subprocess.TimeoutExpired as exc:
                 raise BackendError(f"gcloud timeout adding a version to {sm_name}") from exc
         if proc.returncode != 0:
-            raise BackendError(
-                f"gcloud versions add failed for {sm_name}: {proc.stderr.strip()[:200]}"
-            )
+            raise self._failure("versions add", sm_name, effective_project, proc.stderr)
         return (proc.stdout or "").strip()
+
+    def create_secret(self, sm_name: str, value: str, project: str = "") -> str:
+        """Create `sm_name` (automatic replication) with `value` as its first
+        version. Value on stdin only, same as add_version()."""
+        if shutil.which("gcloud") is None:
+            raise BackendError("gcloud CLI not found on PATH")
+        if not value:
+            raise BackendError("refusing to create a secret with an empty value")
+        effective_project = project or self.project
+        provider = self._credential_provider_for(effective_project)
+        binding = self.bindings.get(effective_project)
+        with self._access_token_file(provider) as token_file:
+            flags, env = self._identity(binding, token_file)
+            cmd = ["gcloud", *flags]
+            cmd.extend(["secrets", "create", sm_name, "--data-file=-",
+                        "--replication-policy=automatic"])
+            if effective_project:
+                cmd.append(f"--project={effective_project}")
+            cmd.append("--format=value(name)")
+            try:
+                proc = self._run(cmd, env, input=value)
+            except subprocess.TimeoutExpired as exc:
+                raise BackendError(f"gcloud timeout creating {sm_name}") from exc
+        if proc.returncode != 0:
+            raise self._failure("secrets create", sm_name, effective_project, proc.stderr)
+        return (proc.stdout or "").strip()
+
+    def push(self, sm_name: str, value: str, project: str = "") -> str:
+        """add_version(), creating the secret first if GCP says NOT_FOUND --
+        the "move a local-only value into GCP" path (#246)."""
+        try:
+            return self.add_version(sm_name, value, project=project)
+        except BackendError as exc:
+            if not is_not_found(exc):
+                raise
+        return self.create_secret(sm_name, value, project=project)
 
     @contextmanager
     def _access_token_file(self, provider: Optional[GCPWorkloadIdentityAuth]):
@@ -678,6 +844,30 @@ class ChromeBackend:
             raise BackendError(f"chrome backend: {exc}") from exc
 
 
+class BitwardenBackend:
+    """Reads one field of one item from the human's own Bitwarden vault via
+    the official `bw` CLI (see bitwarden.py). `sm_name` encodes
+    `"bitwarden:<item-id>[:<field>]"` -- field defaults to `password`;
+    `username`, `totp` (current code), `notes`, or any custom field name also
+    work. Read-only: Portunus never writes to the Bitwarden vault.
+
+    Needs an unlocked vault (`BW_SESSION` exported by the human); fails
+    closed with a remediation message otherwise. No in-memory cache, same
+    rationale as ChromeBackend.
+    """
+
+    def __init__(self, audit: Optional[AuditChain] = None, runner=None):
+        self.audit = audit or AuditChain()
+        self.runner = runner
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        try:
+            item_id, fld = bitwarden.parse_sm_name(sm_name)
+            return bitwarden.get_field(item_id, fld, runner=self.runner)
+        except bitwarden.BitwardenError as exc:
+            raise BackendError(str(exc)) from exc
+
+
 class SyncingBackend:
     """Recency-aware, pull-only sync-down cache -- GCP -> local only, never
     the reverse (portunus-vault-routing). Wraps `remote` (the real backend,
@@ -693,12 +883,23 @@ class SyncingBackend:
     match serves straight from the local cache with zero remote value-fetch;
     a mismatch (or first sync) fetches the real value, caches it, and
     updates the marker.
+
+    Local-only values (#246): `drop`/`prompt`/rotations write the local
+    vault under the PLAIN `sm_name`; this cache tier uses
+    `f"{project}:{sm_name}"`. When the remote says NOT_FOUND and there is
+    no cache entry but a plain local value exists, that value is served
+    with `last_sync_result="local-only"` and a stderr + audit warning --
+    never a bare remote NOT_FOUND. Any other remote failure with a plain
+    local value present raises with a hint naming the real location.
     """
 
-    def __init__(self, remote: SecretBackend, local: SecretBackend, state_path: Path):
+    def __init__(self, remote: SecretBackend, local: SecretBackend, state_path: Path,
+                 audit: Optional[AuditChain] = None, where: str = "gcp"):
         self.remote = remote
         self.local = local
         self.state_path = Path(state_path)
+        self.audit = audit
+        self.where = where
         # "synced" | "fresh" -- which path the most recent access() took.
         # Metadata about the cache's own behavior, never a value; lets
         # `portunus sync`/`portunus_sync` report synced vs. already_fresh
@@ -713,11 +914,26 @@ class SyncingBackend:
     def _save_state(self, state: Dict[str, str]) -> None:
         atomic_write(self.state_path, json.dumps(state, indent=2))
 
+    def _local_only(self, exc: BackendError, sm_name: str) -> str:
+        """Remote failed and the cache tier has nothing: serve a plain local
+        value on NOT_FOUND, else re-raise (with a hint if one exists)."""
+        if not _local_has(self.local, sm_name):
+            raise exc
+        if not is_not_found(exc):
+            raise _remote_hint(exc, sm_name, self.where) from exc
+        value = self.local.access(sm_name)
+        self.last_sync_result = "local-only"
+        _warn_local_only(self.audit, sm_name, self.where)
+        return value
+
     def access(self, sm_name: str, project: str = "") -> str:
         cache_key = f"{project}:{sm_name}"
         latest_version = getattr(self.remote, "latest_version", None)
         if latest_version is None:
-            value = self.remote.access(sm_name, project=project)
+            try:
+                value = self.remote.access(sm_name, project=project)
+            except BackendError as exc:
+                return self._local_only(exc, sm_name)
             self.local.store(cache_key, value)
             self.last_sync_result = "synced"
             return value
@@ -725,7 +941,12 @@ class SyncingBackend:
         state = self._load_state()
         try:
             marker = latest_version(sm_name, project=project)
-        except BackendError as network_exc:
+        except BackendError as remote_exc:
+            if is_not_found(remote_exc):
+                # The remote has no such secret: a cache entry is stale by
+                # definition (deleted upstream), so only a plain local value
+                # -- one that was never in the remote -- may be served.
+                return self._local_only(remote_exc, sm_name)
             # Remote unreachable (network/DNS/timeout). Serve the last-known-
             # good local copy if one exists, rather than hard-failing -- this
             # is what keeps a cached-mode project usable while disconnected.
@@ -738,7 +959,7 @@ class SyncingBackend:
             try:
                 value = self.local.access(cache_key)
             except BackendError:
-                raise network_exc from None
+                return self._local_only(remote_exc, sm_name)
             self.last_sync_result = "stale-offline"
             return value
         if state.get(cache_key) == marker:
@@ -749,9 +970,51 @@ class SyncingBackend:
             except BackendError:
                 pass  # marker recorded but local copy missing -- refetch below
 
-        value = self.remote.access(sm_name, project=project)
+        try:
+            value = self.remote.access(sm_name, project=project)
+        except BackendError as exc:
+            return self._local_only(exc, sm_name)
         self.local.store(cache_key, value)
         state[cache_key] = marker
         self.last_sync_result = "synced"
         self._save_state(state)
+        return value
+
+
+class LocalFallbackBackend:
+    """Wraps a remote store (GCP direct, AWS, ...) for references whose value
+    may live in the local vault instead (#246): `access` asks the remote
+    first; on a remote NOT_FOUND with a plain local value present, serves
+    that with `last_sync_result="local-only"` and a stderr + audit warning.
+    Any other remote failure re-raises, with a hint when a local value
+    exists. The cached-gcp route gets the same behavior inside
+    SyncingBackend itself."""
+
+    def __init__(self, remote: SecretBackend, local: SecretBackend,
+                 audit: Optional[AuditChain] = None, where: str = "remote"):
+        self.remote = remote
+        self.local = local
+        self.audit = audit
+        self.where = where
+        self.last_sync_result: str = ""
+
+    def __getattr__(self, name):
+        # latest_version/add_version/... pass through to the real remote.
+        if name == "remote":  # not yet set (copy/pickle): no recursion
+            raise AttributeError(name)
+        return getattr(self.remote, name)
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        try:
+            value = self.remote.access(sm_name, project=project)
+        except BackendError as exc:
+            if not _local_has(self.local, sm_name):
+                raise
+            if not is_not_found(exc):
+                raise _remote_hint(exc, sm_name, self.where) from exc
+            value = self.local.access(sm_name)
+            self.last_sync_result = "local-only"
+            _warn_local_only(self.audit, sm_name, self.where)
+            return value
+        self.last_sync_result = "remote"
         return value

@@ -106,6 +106,7 @@ VaultBinding fields:
 | `wif_audience` | WIF provider resource name — used to mint a short-lived access token via OIDC exchange |
 | `account` | `gcloud` account email to pass as `--account=`; selects one of multiple locally-authenticated identities independently of `gcloud`'s mutable active-account pointer |
 | `impersonate_service_account` | Service account to impersonate via `--impersonate-service-account=`; requires the `account` identity to hold `roles/iam.serviceAccountTokenCreator` |
+| `credential_file` | Path to a service account key or `external_account` config JSON, passed to `gcloud` via `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. A non-interactive identity that a reauth policy can't expire; takes precedence over `account` and composes with `impersonate_service_account`. See [Keyless GCP access](gcp-keyless.md#2c-long-lived-credential-file-no-oidc-issuer-no-stable-account) |
 | `backend` | `gcp` (default) — which backend adapter handles this project |
 | `sync_mode` | `direct` (live fetch every access) or `cached` (pull-only sync-down; see below) |
 
@@ -119,6 +120,15 @@ VaultBinding fields:
 4. If the remote is unreachable (network/DNS/timeout), serves the last-known-good local copy rather than failing — **offline resilience**.
 
 Sync is always **pull-only**: local-to-GCP pushes never happen through this path.
+
+The cache entry is keyed `"<project>:<sm_name>"`. A plain `sm_name` key in the local vault is a
+value that **lives** locally, written by `drop`, `drop-bulk`, `prompt` or a rotation. Those writes
+pin the reference to `backend=local`, so a binding never reroutes them. For a legacy unpinned
+reference, when GCP answers NOT_FOUND and a plain local value exists, the router serves the local
+value. It warns on stderr and writes a `warn:local-only` audit entry. It does not surface the bare
+NOT_FOUND, and it never serves a stale cache entry for a secret GCP no longer has. Auth and network
+errors are not masked; they raise with a note that a local copy exists. `portunus health` reports
+such references as `routing` degraded, and `portunus doctor --fix-routing` repairs them (#246).
 
 Force a sync for every injectable reference in a project:
 
@@ -211,6 +221,71 @@ portunus resolve my-test-login
 
 ---
 
+## Bitwarden vault
+
+Reads items from your own Bitwarden personal/organization vault (the password manager, not
+Bitwarden Secrets Manager) through the official [`bw` CLI](https://bitwarden.com/help/cli/).
+Use it to find logins that live in Bitwarden rather than in Portunus, such as social-media
+account passwords. **Read-only.** Portunus never writes to your Bitwarden vault.
+
+### Authentication
+
+Portunus never sees your master password or API key. You unlock your own vault and export the
+session token in the shell (or service environment) that runs Portunus:
+
+```bash
+bw login                          # once per machine
+export BW_SESSION=$(bw unlock --raw)
+portunus bitwarden status         # -> bitwarden: unlocked (you@example.com)
+```
+
+`bw` reads `BW_SESSION` from the inherited environment, so the token never appears on a command
+line. If the vault is locked or logged out, every call fails closed with that remediation.
+`portunus health` reports the lock state when any reference routes to `bitwarden`.
+
+### Discovering what's there (metadata only)
+
+```bash
+portunus bitwarden list --search instagram
+portunus bitwarden list --search instagram --json
+# Register login items as state=requested references so `portunus search` finds them
+portunus bitwarden list --search instagram --register
+```
+
+MCP agents use `portunus_bitwarden_search(query, register=False)`. Discovery returns the item id,
+name, type, username, URIs, folder/organization ids and custom-field **names** only. `bw list
+items` returns full item JSON, values included, so Portunus strips every value as soon as it
+parses the output and never returns or prints one.
+
+Registered references are named `bw-<item-name>-<first 8 chars of id>`, tagged `source=bitwarden`
+(plus `username` and `uri`), and land in `state=requested`. They can't be injected until you enable
+them (`portunus state <name> enabled`). A name collision with a different reference is reported
+and never overwritten. Only login items are registered.
+
+### sm_name scheme
+
+```
+bitwarden:<item-id>[:<field>]
+```
+
+`<field>` defaults to `password`. `username`, `totp` (the current code), `notes`, or any custom
+field name on the item also work. To register one by hand:
+
+```bash
+echo "unused" | portunus drop my-ig-login \
+  "bitwarden:11111111-aaaa-bbbb-cccc-000000000001" --backend bitwarden --stdin
+```
+
+### Known limitations
+
+- **Bitwarden Secrets Manager (`bws`, machine-account tokens) is not supported yet.** Only the
+  personal/organization vault is.
+- **No write-back or rotation.** Change a password in Bitwarden itself.
+- **No in-memory cache.** Every resolve calls `bw get`, same rationale as the Chrome backend.
+- `bw` serves its local cache; run `bw sync` to pick up items added on another device.
+
+---
+
 ## Stub backends
 
 The following backends are recognized by Portunus but not yet implemented. Each fails closed with a clear error rather than silently mis-routing to a different backend:
@@ -237,6 +312,7 @@ To request an adapter, use the [adapter-request template](https://github.com/mdo
 | Production with GCP, Workload Identity Federation available | `gcp` |
 | Production with GCP, also need offline resilience or deploy-time snapshot | `gcp` + `sync_mode: cached` |
 | Testing against real, already-authenticated browser credentials (macOS/Linux) | `chrome` |
+| Logins kept in a Bitwarden personal/organization vault | `bitwarden` |
 | Any other cloud provider | Wait for the stub to be implemented |
 
 A single vault can mix backends per-reference using VaultBindings — a development reference on `local` and a production reference on `gcp` coexist without conflict.

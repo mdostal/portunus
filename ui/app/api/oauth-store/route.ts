@@ -84,13 +84,18 @@ export async function POST(req: NextRequest) {
     const client_secret = String(body.client_secret || "");
     const refresh_token = String(body.refresh_token || "");
     const token_endpoint = String(body.token_endpoint || "").trim();
-    if (!client_id || !client_secret || !refresh_token || !token_endpoint) {
+    if (!client_id || !refresh_token || !token_endpoint) {
       return NextResponse.json(
-        { error: "client_id, client_secret, refresh_token, and token_endpoint are all required" },
+        { error: "client_id, refresh_token, and token_endpoint are all required" },
         { status: 400 },
       );
     }
-    credential = { client_id, client_secret, refresh_token, token_endpoint };
+    // client_secret is optional: a public (PKCE) OAuth client has none, and
+    // OAuthRefreshTokenAuth then sends no client_secret field at all. The
+    // key is left out rather than stored empty, because an empty string
+    // would be sent to the token endpoint as an explicit empty secret.
+    credential = { client_id, refresh_token, token_endpoint };
+    if (client_secret) credential.client_secret = client_secret;
   }
 
   const storeResult = await runPortunus(

@@ -36,15 +36,20 @@ from . import t3 as t3_mod
 from . import update as update_mod
 from .audit import AuditChain
 from .auth import AuthError, EnvOIDCTokenSource, GCPWorkloadIdentityAuth
-from . import chrome_discovery
+from . import bitwarden, chrome_discovery
 from .backend import (
-    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, ChromeBackend, DopplerBackend,
+    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
-    VaultBinding, VaultServerBackend, load_vault_bindings, save_vault_bindings,
+    LocalFallbackBackend,
+    VaultBinding, VaultServerBackend, gcp_reauth_remediation, is_not_found, load_vault_bindings,
+    save_vault_bindings,
 )
 from .backup import ExportError, export_archive, import_archive
+from . import routing as routing_mod
+from .routing import REMOTE_STORE_KINDS
 from .paths import home
+from .profiles import PROVIDERS as PROFILE_PROVIDERS, ProfileError, add_profile, emit_mcp_headers, load_profiles, remove_profile, use_profile
 from .rotation import (
     RotationBinding, capability_for_status, load_rotation_bindings,
     rotation_audit_data, update_rotation_bindings,
@@ -74,7 +79,7 @@ from .leakscan import (
     summarize,
 )
 from .discover import DiscoverError, list_gcp_secrets, register_discovered
-from .localvault import LocalEncryptedBackend, SessionExpired
+from .localvault import LocalEncryptedBackend, SessionExpired, written_backend_kind
 from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
 from .adapters import AdapterError, EnvVarAdapter, FileAdapter, describe_file
 from .intent import AmbiguousIntent, classify_intent_kind, parse_intent
@@ -128,6 +133,8 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
             inst = OAuthBackend(local_backend=_for_kind("local"), audit=audit)
         elif kind == "chrome":
             inst = ChromeBackend(audit=audit)
+        elif kind == "bitwarden":
+            inst = BitwardenBackend(audit=audit)
         else:
             inst = fallback_backend
         instances[kind] = inst
@@ -137,17 +144,31 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
         if "synced-gcp" not in instances:
             instances["synced-gcp"] = SyncingBackend(
                 _for_kind("gcp"), _for_kind("local"), home() / "sync-state.json",
+                audit=audit, where="gcp",
             )
         return instances["synced-gcp"]
 
+    def _with_local_fallback(kind: str):
+        """A remote store, but a reference whose value was written to the
+        local vault (drop/prompt/rotation) still resolves: on a remote
+        NOT_FOUND the plain local value is served, loudly (#246)."""
+        if kind not in REMOTE_STORE_KINDS:
+            return _for_kind(kind)
+        key = f"fallback-{kind}"
+        if key not in instances:
+            instances[key] = LocalFallbackBackend(
+                _for_kind(kind), _for_kind("local"), audit=audit, where=kind,
+            )
+        return instances[key]
+
     def router(ref):
         if ref.backend:
-            return _for_kind(ref.backend)
+            return _with_local_fallback(ref.backend)
         binding = vault_bindings.get(ref.project)
         if binding is not None:
             if binding.backend == "gcp" and binding.sync_mode == "cached":
                 return _synced_gcp()
-            return _for_kind(binding.backend)
+            return _with_local_fallback(binding.backend)
         return fallback_backend
 
     return router
@@ -207,27 +228,52 @@ def cmd_reg(args) -> int:
             related = _parse_related(args.related) if args.related else None
         except ValueError as exc:
             return _err(str(exc))
-        ref = registry.add(args.name, args.sm_name, scope=args.scope,
-                           kind=args.kind, org=args.org or "", project=args.project or "",
-                           description=args.description or "", purpose=args.purpose or "",
-                           injected_as=injected_as, group=args.group or "", related=related,
-                           repo=args.repo or "")
+        try:
+            ref = registry.add(args.name, args.sm_name, scope=args.scope,
+                               kind=args.kind, org=args.org or "", project=args.project or "",
+                               description=args.description or "", purpose=args.purpose or "",
+                               injected_as=injected_as, group=args.group or "", related=related,
+                               repo=args.repo or "", reject_collisions=True)
+        except AmbiguousMatch as exc:
+            _err(_collision_message(args.name, exc))
+            return EXIT_AMBIGUOUS
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
+        sharing = _refs_sharing_value(registry, resolver, ref)
+        if sharing:
+            _err(
+                f"warning: {{{{secret:{ref.name}}}}} shares stored value {ref.sm_name!r} "
+                f"in the same backend with: {', '.join(sharing)} -- they resolve to the "
+                "same secret, and purging it for one affects all of them"
+            )
         return 0
     if args.action == "rm":
         ref = registry.get(args.name)
         if ref is None:
             print("no such reference")
             return 0
-        # Best-effort: also purge the underlying stored value from whichever
-        # backend actually serves this reference -- registry.remove() alone
-        # only drops the pointer, leaving the encrypted value (local
-        # backend) or the cloud secret (GCP/other) orphaned forever. Not
-        # every backend supports a programmatic remove (GCP Secret Manager
+        # Default: drop the registry pointer only. Purging the stored value is
+        # opt-in (--purge-value), because several references may share one
+        # backend + sm_name -- an unconditional purge silently destroyed a
+        # value other references still resolved to (portunus#247 / PANT-1407).
+        if not getattr(args, "purge_value", False):
+            registry.remove(args.name)
+            print(
+                f"removed {{{{secret:{args.name}}}}} -- registry entry only "
+                f"(stored value {ref.sm_name!r} kept; pass --purge-value to delete it)"
+            )
+            return 0
+        sharing = _refs_sharing_value(registry, resolver, ref)
+        if sharing:
+            return _err(
+                f"refusing to purge stored value {ref.sm_name!r}: still used by "
+                f"{', '.join(sharing)} in the same backend. Nothing was removed. "
+                "Run without --purge-value to drop only this registry entry."
+            )
+        # Not every backend supports a programmatic remove (GCP Secret Manager
         # deletion is deliberately out of scope here -- a human should do
-        # that explicitly in the console); those are skipped silently, the
-        # registry entry is still removed either way.
-        backend = resolver.backend_for(ref) if resolver.backend_for else resolver.backend
+        # that explicitly in the console); the registry entry is still
+        # removed either way.
+        backend = _backend_of(resolver, ref)
         purged_value = False
         if hasattr(backend, "remove"):
             try:
@@ -248,6 +294,37 @@ def cmd_reg(args) -> int:
         print(json.dumps({r.name: r.to_dict() for r in registry}, indent=2))
         return 0
     return _err(f"unknown reg action: {args.action}")
+
+
+def _backend_of(resolver, ref):
+    return resolver.backend_for(ref) if resolver.backend_for else resolver.backend
+
+
+def _storage_kinds(backend) -> set:
+    """The storage tiers a backend instance reads/writes, as a set of classes.
+    Compared by class, not identity: the router builds a separate
+    LocalEncryptedBackend for the fallback and for kind="local", but both
+    hit the same on-disk vault. A SyncingBackend counts as both its remote
+    and its local cache tier. Over-matching is deliberate -- a false
+    "shared" only blocks a purge, a false "unshared" loses data."""
+    kinds = {type(backend)}
+    for attr in ("remote", "local"):
+        inner = getattr(backend, attr, None)
+        if inner is not None and not isinstance(inner, (str, bytes, os.PathLike)):
+            kinds.add(type(inner))
+    return kinds
+
+
+def _refs_sharing_value(registry, resolver, ref) -> list:
+    """Names of other references whose sm_name equals ref's and that resolve
+    to the same storage backend -- i.e. would lose their value if ref's
+    stored value were purged. Metadata only; never touches a value."""
+    mine = _storage_kinds(_backend_of(resolver, ref))
+    return sorted(
+        other.name for other in registry
+        if other.name != ref.name and other.sm_name == ref.sm_name
+        and mine & _storage_kinds(_backend_of(resolver, other))
+    )
 
 
 def _parse_tags(raw: str) -> dict:
@@ -302,7 +379,8 @@ def _adapter_from_args(args):
     return (
         FileAdapter(),
         {"path": args.path, "fmt": args.format, "key": args.key,
-         "mode": args.mode, "group": args.group},
+         "mode": args.mode, "group": args.group,
+         "replace": bool(getattr(args, "replace", False))},
         f"file:{args.path}",
     )
 
@@ -407,9 +485,26 @@ def _cmd_ask_rotate(tag_set, registry, broker) -> int:
     broker.audit.append("semantic_op", ref.sm_name, "requested:rotate")
     print(
         f"flagged {{{{secret:{ref.name}}}}} for rotation -- "
-        f"a human can rotate it via the UI or `portunus drop` a new value"
+        f"{_ask_rotate_next_step(ref)}"
     )
     return 0
+
+
+def _ask_rotate_next_step(ref) -> str:
+    """What to tell the requester after flagging. If the provider has an
+    automatic adapter (e.g. Stripe since PANT-1409), point at the one
+    command that rotates without the value ever entering chat; otherwise the
+    human paths. Metadata-only: never resolves the value."""
+    from .rotation import rotation_adapter_for
+
+    provider = ref.provider or (ref.sm_name.split(":")[0] if ":" in ref.sm_name else "")
+    adapter = rotation_adapter_for(provider) if provider else None
+    if adapter is not None and getattr(adapter, "capability", lambda: "stub")() == "auto":
+        return (
+            f"rotate it automatically with `portunus rotation run {ref.name}` "
+            f"(add --retire-old if the old value leaked)"
+        )
+    return "a human can rotate it via the UI or `portunus drop` a new value"
 
 
 def _cmd_ask_list(tag_set, registry, broker) -> int:
@@ -444,6 +539,8 @@ def _print_reference_list(refs) -> None:
             f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
             f"(provider={ref.provider}, env={ref.env}, state={ref.state})"
         )
+        if ref.backend:
+            print(f"    backend:     {ref.backend}")
         if ref.description:
             print(f"    description: {ref.description}")
         if ref.purpose:
@@ -608,6 +705,10 @@ def cmd_retag(args) -> int:
         kwargs["repo"] = args.repo
     if source_files is not None:
         kwargs["source_files"] = source_files
+    if getattr(args, "backend", ""):
+        # "default" clears the pin so the ref follows its project's
+        # VaultBinding again -- metadata only, it never moves a value.
+        kwargs["backend"] = "" if args.backend == "default" else args.backend
 
     try:
         ref = registry.retag(args.name, **kwargs)
@@ -620,7 +721,8 @@ def cmd_retag(args) -> int:
 
     broker.audit.append("retag", ref.sm_name, "ok")
     print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
-          f"(org={ref.org}, provider={ref.provider}, project={ref.project}, env={ref.env}, tags={ref.tags})")
+          f"(org={ref.org}, provider={ref.provider}, project={ref.project}, env={ref.env}, "
+          f"tags={ref.tags}, backend={ref.backend or '(binding)'})")
     return 0
 
 
@@ -753,6 +855,59 @@ def cmd_browser_list(args) -> int:
         return 0
     for l in logins:
         print(f"  {l.origin_url}  {l.username_value}")
+    return 0
+
+
+def cmd_bitwarden_status(args) -> int:
+    """Show whether the Bitwarden vault is reachable/unlocked. Metadata only."""
+    try:
+        st = bitwarden.status()
+    except bitwarden.BitwardenError as exc:
+        return _err(str(exc))
+    if args.json:
+        print(json.dumps(st))
+        return 0
+    print(f"bitwarden: {st.get('status') or 'unknown'}"
+          + (f" ({st['userEmail']})" if st.get("userEmail") else "")
+          + (f" @ {st['serverUrl']}" if st.get("serverUrl") else ""))
+    if st.get("status") != "unlocked":
+        print(f"  -> {bitwarden.LOCKED_REMEDIATION}")
+    return 0
+
+
+def cmd_bitwarden_list(args) -> int:
+    """List Bitwarden items (names/usernames/URIs only, never a value);
+    --register writes login items as state=requested, backend=bitwarden
+    placeholders so `portunus search` finds them."""
+    try:
+        items = bitwarden.list_items(args.search)
+    except bitwarden.BitwardenError as exc:
+        return _err(str(exc))
+    report = None
+    if args.register:
+        registry, audit, _broker, _resolver = _build()
+        report = bitwarden.register_items(registry, items)
+        for name in report.registered:
+            audit.append("bitwarden_register", name, "requested")
+    if args.json:
+        out = {"items": [i.to_dict() for i in items]}
+        if report is not None:
+            out.update(registered=report.registered,
+                       already_registered=report.already_registered,
+                       conflicts=report.conflicts)
+        print(json.dumps(out))
+        return 0
+    if not items:
+        print("(no matching Bitwarden items)")
+    for i in items:
+        uri = i.uris[0] if i.uris else ""
+        print(f"  {i.id}  {i.name}  {i.username}  {uri}".rstrip())
+    if report is not None:
+        print(f"registered {len(report.registered)} (state=requested), "
+              f"{len(report.already_registered)} already registered, "
+              f"{len(report.conflicts)} name conflicts")
+        for c in report.conflicts:
+            print(f"  conflict: {c}")
     return 0
 
 
@@ -893,6 +1048,22 @@ def cmd_session_remove(args) -> int:
     return 0
 
 
+
+def _collision_message(name: str, exc: AmbiguousMatch) -> str:
+    others = [c for c in exc.candidates if c != name]
+    return (f"{name!r} would have exactly the same tags as {', '.join(others)} -- "
+            "two references must differ in at least one tag (e.g. add --tags key=<which>) "
+            "so they can be resolved and retagged independently; nothing was stored")
+
+
+def _warn_unpushed(ref) -> None:
+    """An explicit remote backend on a drop: the value is still only local."""
+    if ref.backend in REMOTE_STORE_KINDS:
+        print(f"note: {ref.name}'s value was written to the LOCAL vault; it resolves from "
+              f"there until {ref.sm_name} exists in {ref.backend} (for gcp: `portunus "
+              f"doctor --fix-routing --push --apply`)", file=sys.stderr)
+
+
 def _clean_value(raw: str, keep_whitespace: bool) -> str:
     """Default: trim surrounding whitespace (pasted keys often carry a stray
     space or newline). With keep_whitespace (--keep-whitespace, implied by
@@ -959,18 +1130,27 @@ def cmd_drop(args) -> int:
         source_files = _parse_related(args.source_files) if args.source_files else []
     except ValueError as exc:
         return _err(str(exc))
-    ref = registry.add(
-        args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
-        org=args.org, provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
-        description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related, backend=args.backend, repo=args.repo,
-        source_files=source_files,
-    )
+    try:
+        ref = registry.add(
+            args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
+            org=args.org, provider=args.provider, project=args.project, env=args.env,
+            tags=extra_tags, description=args.description, purpose=args.purpose,
+            injected_as=injected_as, group=args.group, related=related,
+            # Pin on write (#246): the value goes to the local vault, so the
+            # reference says so -- never "" left to follow a remote binding.
+            backend=written_backend_kind(backend, args.backend or ""), repo=args.repo,
+            source_files=source_files, reject_collisions=True,
+        )
+    except AmbiguousMatch as exc:
+        _err(_collision_message(args.name, exc))
+        return EXIT_AMBIGUOUS
     backend.store(ref.sm_name, value)
+    _warn_unpushed(ref)
     del value  # scrub our local reference promptly
     broker.audit.append("drop", ref.sm_name, "stored")
     print(
-        f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} (state=dropped; "
+        f"dropped {{{{secret:{ref.name}}}}} -> {ref.sm_name} "
+        f"(backend={ref.backend or 'default'}, state=dropped; "
         f"run `portunus state {ref.name} enabled` to allow injection)"
     )
     return 0
@@ -1153,12 +1333,17 @@ def cmd_drop_bulk(args) -> int:
                 env=entry.get("env", ""), tags=entry.get("tags"),
                 description=entry.get("description", ""), purpose=entry.get("purpose", ""),
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
-                related=entry.get("related"), backend=entry.get("backend", ""),
+                related=entry.get("related"),
+                backend=written_backend_kind(backend, entry.get("backend", "")),
+                reject_collisions=True,
             )
             backend.store(ref.sm_name, value)
             del value
             broker.audit.append("drop", ref.sm_name, "stored")
+            _warn_unpushed(ref)
             created.append(ref.name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": entry_name, "error": _collision_message(entry_name, exc)})
         except (ValueError, KeyError) as exc:
             failed.append({"name": entry_name, "error": str(exc)})
 
@@ -1478,6 +1663,124 @@ def cmd_health(args) -> int:
     return health_mod.exit_code(result)
 
 
+def _routing_state():
+    """(registry, bindings, local vault key names, mismatches) -- metadata only."""
+    registry = Registry()
+    bindings = load_vault_bindings()
+    keys = routing_mod.local_vault_keys(home())
+    return registry, bindings, keys, routing_mod.find_mismatches(registry, bindings, keys)
+
+
+def _probe_remote(backend, kind: str, sm_name: str, project: str) -> str:
+    """'present' | 'absent' | 'unknown: <why>' -- a metadata-only recency
+    probe (gcp `versions describe`); other kinds can't be probed yet."""
+    if kind != "gcp":
+        return f"unknown: {kind} cannot be probed"
+    try:
+        backend.latest_version(sm_name, project=project)
+        return "present"
+    except (BackendError, AuthError, ValueError) as exc:
+        if is_not_found(exc):
+            return "absent"
+        return f"unknown: {str(exc)[:160]}"
+
+
+def _push_local_value(local, gcp, ref_sm_name: str, project: str) -> None:
+    """Copy a local-only value into GCP, read it back to verify, then drop
+    the plain local copy (it would otherwise shadow nothing but still read
+    as a routing mismatch). The value never leaves this process's memory."""
+    value = local.access(ref_sm_name)
+    try:
+        gcp.push(ref_sm_name, value, project=project)
+        if gcp.access(ref_sm_name, project=project) != value:
+            raise BackendError(f"read-back of {ref_sm_name} from gcp did not match; "
+                               "local copy kept")
+    finally:
+        del value
+    local.remove(ref_sm_name)
+
+
+def cmd_doctor(args) -> int:
+    """`portunus doctor --fix-routing`: find references that resolve from a
+    remote backend while their value is in the local vault (#246) and pin
+    or migrate them. Dry run unless --apply."""
+    if not args.fix_routing:
+        return _err("nothing to do -- pass --fix-routing")
+    registry, bindings, _keys, mismatches = _routing_state()
+    audit = AuditChain()
+    local = LocalEncryptedBackend()
+    gcp = GcloudBackend(bindings=bindings, audit=audit)
+
+    plan = []
+    for m in mismatches:
+        if args.push:
+            if m.routes_to != "gcp":
+                plan.append((m, "skip", f"--push supports gcp only (routes to {m.routes_to})"))
+            else:
+                plan.append((m, "push", "copy the local value into GCP, verify, drop local copy"))
+            continue
+        remote = "unknown: not probed (--no-probe)" if args.no_probe else \
+            _probe_remote(gcp, m.routes_to, m.sm_name, m.project)
+        if remote == "absent" or args.prefer == "local":
+            why = (f"not in {m.routes_to}" if remote == "absent"
+                   else f"--prefer local ({m.routes_to}: {remote})")
+            plan.append((m, "pin-local", why))
+        elif args.prefer == "remote":
+            plan.append((m, "pin-remote",
+                         f"--prefer remote ({m.routes_to}: {remote}); local copy becomes a fallback"))
+        elif remote == "present":
+            plan.append((m, "skip", f"value exists in BOTH local and {m.routes_to} -- "
+                                    "choose with --prefer local|remote"))
+        else:
+            plan.append((m, "skip", f"{m.routes_to} {remote} -- choose with --prefer local|remote"))
+
+    results = []
+    failed = 0
+    for m, action, why in plan:
+        outcome = "planned" if action != "skip" else "skipped"
+        if args.apply and action != "skip":
+            try:
+                if action == "pin-local":
+                    registry.retag(m.name, backend="local")
+                elif action == "pin-remote":
+                    registry.retag(m.name, backend=m.routes_to)
+                elif action == "push":
+                    _push_local_value(local, gcp, m.sm_name, m.project)
+                outcome = "applied"
+                audit.append("routing-fix", m.sm_name, f"ok:{action}")
+            except (BackendError, AuthError, KeyError, ValueError) as exc:
+                outcome, why = "failed", str(exc)[:200]
+                audit.append("routing-fix", m.sm_name, f"error:{action}")
+                failed += 1
+        if outcome == "skipped" and args.apply:
+            failed += 1
+        results.append({**m.to_dict(), "action": action, "reason": why, "outcome": outcome})
+
+    if args.json:
+        print(json.dumps({"dry_run": not args.apply, "mismatches": results}, indent=2))
+    else:
+        if not results:
+            print("routing ok: every reference resolves from where its value is")
+        else:
+            head = "would" if not args.apply else "did"
+            print(f"{len(results)} reference(s) route to a remote backend but their value "
+                  f"is in the local vault ({'dry run' if not args.apply else 'applied'}):")
+            for r in results:
+                print(f"  {r['outcome']:<8} {r['action']:<10} {r['name']}  "
+                      f"(project={r['project'] or '-'}, routes_to={r['routes_to']}) -- {r['reason']}")
+            if not args.apply:
+                print(f"re-run with --apply to make these changes ({head} change nothing yet)")
+    return 1 if failed else 0
+
+
+def _routing_report() -> dict:
+    """For `vault status`: the health routing check, standalone."""
+    _registry, _bindings, _keys, mismatches = _routing_state()
+    return {"ok": not mismatches, "mismatches": [m.name for m in mismatches],
+            "detail": (routing_mod.summarize(mismatches) if mismatches
+                       else "every reference resolves from where its value is")}
+
+
 def cmd_auth_gcp(args) -> int:
     """Mint a GCP WIF access token and report identity/scope/expiry -- never the token.
 
@@ -1531,17 +1834,27 @@ def cmd_auth_login(args) -> int:
     return 0
 
 
-def _probe_gcloud_account(account: str, impersonate_service_account: str = "") -> bool:
-    """True iff gcloud can mint a token for `account` right now, without a
-    prompt. Being listed in `gcloud auth list` is not enough: a Workspace
-    account whose session hit its reauth policy is still listed but fails
-    every call. The minted token lands in proc.stdout and is dropped here --
-    only the exit code is used."""
-    cmd = ["gcloud", "auth", "print-access-token", f"--account={account}"]
+def _probe_gcloud_account(
+    account: str, impersonate_service_account: str = "", credential_file: str = "",
+) -> bool:
+    """True iff gcloud can mint a token for `account` (or, when set, the
+    `credential_file` identity) right now, without a prompt. Being listed in
+    `gcloud auth list` is not enough: a Workspace account whose session hit
+    its reauth policy is still listed but fails every call. The minted token
+    lands in proc.stdout and is dropped here -- only the exit code is used."""
+    cmd = ["gcloud", "auth", "print-access-token"]
+    kwargs = {}
+    if credential_file:
+        kwargs["env"] = {
+            **os.environ,
+            "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": str(Path(credential_file).expanduser()),
+        }
+    else:
+        cmd.append(f"--account={account}")
     if impersonate_service_account:
         cmd.append(f"--impersonate-service-account={impersonate_service_account}")
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, **kwargs)
     except subprocess.TimeoutExpired:
         return False
     return proc.returncode == 0
@@ -1569,6 +1882,12 @@ def _binding_credential_state(binding, credentialed=None):
     listed-or-not check and relies on the mint probe alone."""
     if binding.wif_audience:
         return "wif", _wif_credential_state()
+    if binding.credential_file:
+        if not Path(binding.credential_file).expanduser().is_file():
+            return "credential-file", "missing"
+        if _probe_gcloud_account("", binding.impersonate_service_account, binding.credential_file):
+            return "credential-file", "ok"
+        return "credential-file", "expired"
     if binding.account:
         if credentialed is not None and binding.account not in credentialed:
             return "account", "missing"
@@ -1576,6 +1895,66 @@ def _binding_credential_state(binding, credentialed=None):
             return "account", "ok"
         return "account", "expired"
     return "ambient", "unchecked"
+
+
+def cmd_profile_add(args) -> int:
+    registry = Registry()
+    try:
+        p = add_profile(args.provider, args.name, account=args.account, ref=args.ref, note=args.note, known_ref=lambda r: r in registry)
+    except ProfileError as exc:
+        return _err(str(exc))
+    print(f"added {args.provider} profile {p.name}" + (f" ({p.account})" if p.account else f" (ref {p.ref})"))
+    return 0
+
+
+def cmd_profile_use(args) -> int:
+    try:
+        p = use_profile(args.provider, args.name)
+    except ProfileError as exc:
+        return _err(str(exc))
+    extra = f": gcloud now uses {p.account}" if args.provider == "gcloud" else ": reconnect the PostHog MCP server (/mcp) to pick it up"
+    print(f"{args.provider} profile {p.name} is active{extra}")
+    return 0
+
+
+def cmd_profile_list(args) -> int:
+    data = load_profiles()
+    providers = [args.provider] if args.provider else list(data)
+    if args.json:
+        print(json.dumps({pr: {"active": data[pr].active, "profiles": {n: {"account": p.account, "ref": p.ref, "note": p.note} for n, p in data[pr].profiles.items()}} for pr in providers}))
+        return 0
+    for pr in providers:
+        print(f"{pr}:")
+        if not data[pr].profiles:
+            print("  (none)")
+        for n, p in sorted(data[pr].profiles.items()):
+            mark = "*" if n == data[pr].active else " "
+            print(f"  {mark} {n:<16} {p.account or p.ref}" + (f"  -- {p.note}" if p.note else ""))
+    return 0
+
+
+def cmd_profile_remove(args) -> int:
+    try:
+        remove_profile(args.provider, args.name)
+    except ProfileError as exc:
+        return _err(str(exc))
+    print(f"removed {args.provider} profile {args.name}")
+    return 0
+
+
+def cmd_mcp_headers(args) -> int:
+    """headersHelper boundary sink. The value goes only to stdout when stdout is Claude Code's pipe (see
+    profiles.emit_mcp_headers); errors go to stderr and name the profile, never the value."""
+    _, _, _, resolver = _build()
+    try:
+        emit_mcp_headers(args.provider, resolver, sys.stdout)
+    except ProfileError as exc:
+        return _err(str(exc))
+    except UnknownReference as exc:
+        return _err(f"the active {args.provider} profile points at a missing reference {exc.args[0]!r}")
+    except (NotInjectable, ApprovalRequired, NotAuthorized, BackendError) as exc:
+        return _err(str(exc))
+    return 0
 
 
 def cmd_auth_status(args) -> int:
@@ -1598,7 +1977,9 @@ def cmd_auth_status(args) -> int:
 
     have_gcloud = shutil.which("gcloud") is not None
     credentialed = set()
-    if have_gcloud and any(b.account and not b.wif_audience for b in bindings.values()):
+    if have_gcloud and any(
+        b.account and not b.wif_audience and not b.credential_file for b in bindings.values()
+    ):
         try:
             proc = subprocess.run(
                 ["gcloud", "auth", "list", "--format=json"], capture_output=True, text=True, timeout=30,
@@ -1617,6 +1998,7 @@ def cmd_auth_status(args) -> int:
             "mode": mode,
             "state": state,
             "impersonate_service_account": binding.impersonate_service_account,
+            "credential_file": binding.credential_file,
         }
 
     unusable = [p for p, info in report.items() if info["state"] not in ("ok", "ready", "unchecked")]
@@ -1633,16 +2015,27 @@ def cmd_auth_status(args) -> int:
             who = info["account"] or "(no account set)"
             if info["mode"] == "wif":
                 who = "wif"
+            elif info["mode"] == "credential-file":
+                who = f"credential-file {info['credential_file']}"
             if info["impersonate_service_account"]:
                 who += f" -> {info['impersonate_service_account']}"
             print(f"{project}: {who} -- {labels[info['state']]}")
         for project in unusable:
             info = report[project]
-            if info["state"] == "expired":
+            if info["mode"] == "credential-file":
+                if info["state"] == "missing":
+                    print(f"  fix: credential file not found -- re-point it with "
+                          f"`portunus bindings set {project} --credential-file <path>`")
+                else:
+                    print("  fix: the credential file was rejected (revoked/disabled key, or a "
+                          "missing impersonation grant) -- issue a new key and re-point it with "
+                          f"`portunus bindings set {project} --credential-file <path>`")
+            elif info["state"] == "expired":
                 print(
                     f"  fix: gcloud auth login {info['account']} --no-activate"
                     "  (keeps your active account unchanged)"
                 )
+                print(f"  avoid next time: {gcp_reauth_remediation(project, bindings[project])}")
             elif info["state"] == "missing" and info["account"]:
                 print(f"  fix: gcloud auth login {info['account']} --no-activate")
     if args.strict and unusable:
@@ -1667,7 +2060,10 @@ def cmd_gcp_add_version(args) -> int:
         if state not in ("ok", "ready", "unchecked"):
             hint = ""
             if mode == "account":
-                hint = f" -- run `gcloud auth login {binding.account} --no-activate`"
+                hint = f" -- {gcp_reauth_remediation(args.project, binding)}"
+            elif mode == "credential-file":
+                hint = (" -- check the file, or re-point it with "
+                        f"`portunus bindings set {args.project} --credential-file <path>`")
             return _err(f"credential preflight failed for {args.project}: {mode}/{state}{hint}")
     if args.stdin:
         value = _clean_value(sys.stdin.read(), args.keep_whitespace)
@@ -1739,13 +2135,16 @@ def cmd_discover(args) -> int:
     registry, _audit, _broker, resolver = _build()
     account = ""
     impersonate_service_account = ""
+    credential_file = ""
     binding = load_vault_bindings().get(args.project)
     if binding:
         account = binding.account
         impersonate_service_account = binding.impersonate_service_account
+        credential_file = binding.credential_file
     try:
         discovered = list_gcp_secrets(
-            args.project, account=account, impersonate_service_account=impersonate_service_account
+            args.project, account=account, impersonate_service_account=impersonate_service_account,
+            credential_file=credential_file,
         )
     except DiscoverError as exc:
         return _err(str(exc))
@@ -1813,16 +2212,74 @@ def cmd_bindings_set(args) -> int:
     )
     backend = args.backend if args.backend else (existing.backend if existing else "gcp")
     sync_mode = args.sync_mode if args.sync_mode else (existing.sync_mode if existing else "direct")
-    bindings[args.project] = VaultBinding(
+    credential_file = existing.credential_file if existing else ""
+    cred_arg = getattr(args, "credential_file", "")
+    if cred_arg == "none":
+        credential_file = ""
+    elif cred_arg:
+        # Store an absolute path (the MCP server / daemon may run from another
+        # cwd). The file is read by gcloud, never by Portunus.
+        cred_path = Path(cred_arg).expanduser().resolve()
+        if not cred_path.is_file():
+            return _err(f"--credential-file not found: {cred_path}")
+        if cred_path.stat().st_mode & 0o077:
+            print(f"warning: {cred_path} is readable by group/other -- run `chmod 600 {cred_path}`",
+                  file=sys.stderr)
+        credential_file = str(cred_path)
+    new_binding = VaultBinding(
         project=args.project, wif_audience=wif_audience, account=account,
         impersonate_service_account=impersonate_service_account,
-        backend=backend, sync_mode=sync_mode,
+        backend=backend, sync_mode=sync_mode, credential_file=credential_file,
     )
+    # Never silently strand local values (#246): references in this project
+    # that follow the binding but whose value is in the local vault would
+    # start resolving from a remote store that doesn't have them.
+    registry = Registry()
+    stranded = routing_mod.rerouted_by_binding(
+        registry, args.project, backend, routing_mod.local_vault_keys(home()),
+        previous_backend=existing.backend if existing else "local",
+    )
+    if stranded and not (args.pin_local or args.push or args.force):
+        print(f"refusing: binding {args.project} to {backend} would reroute "
+              f"{len(stranded)} reference(s) whose value is in the LOCAL vault:", file=sys.stderr)
+        for ref in stranded:
+            print(f"  {ref.name}  ({ref.sm_name}, state={ref.state})", file=sys.stderr)
+        push_hint = "  --push       copy them into GCP first (verified), then bind\n" \
+            if backend == "gcp" else ""
+        print("re-run with one of:\n"
+              "  --pin-local  keep them resolving from the local vault (backend=local)\n"
+              f"{push_hint}"
+              "  --force      bind anyway (they resolve from the local copy only while the "
+              "remote says NOT_FOUND)", file=sys.stderr)
+        return 1
+    if stranded and args.push:
+        if backend != "gcp":
+            return _err(f"--push supports gcp only, not {backend}")
+        audit = AuditChain()
+        gcp = GcloudBackend(bindings={**bindings, args.project: new_binding}, audit=audit)
+        local = LocalEncryptedBackend()
+        for ref in stranded:
+            try:
+                _push_local_value(local, gcp, ref.sm_name, args.project)
+            except (BackendError, AuthError) as exc:
+                audit.append("routing-fix", ref.sm_name, "error:push")
+                return _err(f"push of {ref.name} failed, binding NOT changed: {exc}")
+            audit.append("routing-fix", ref.sm_name, "ok:push")
+            print(f"  pushed  {ref.name} -> gcp {args.project}/{ref.sm_name}")
+    elif stranded and args.pin_local:
+        for ref in stranded:
+            registry.retag(ref.name, backend="local")
+            print(f"  pinned  {ref.name} -> backend=local")
+    elif stranded:
+        print(f"warning: --force: {len(stranded)} local-only reference(s) now route to "
+              f"{backend}: {', '.join(r.name for r in stranded)}", file=sys.stderr)
+    bindings[args.project] = new_binding
     save_vault_bindings(bindings)
     print(
         f"binding set: {args.project} (backend={backend}, sync_mode={sync_mode}, "
         f"account={account or '-'}, wif_audience={wif_audience or '-'}, "
-        f"impersonate_service_account={impersonate_service_account or '-'})"
+        f"impersonate_service_account={impersonate_service_account or '-'}, "
+        f"credential_file={credential_file or '-'})"
     )
     return 0
 
@@ -2359,6 +2816,7 @@ def cmd_bindings_show(args) -> int:
                 "account": b.account, "wif_audience": b.wif_audience,
                 "impersonate_service_account": b.impersonate_service_account,
                 "backend": b.backend, "sync_mode": b.sync_mode,
+                "credential_file": b.credential_file,
             }
             for proj, b in bindings.items()
         }))
@@ -2370,7 +2828,8 @@ def cmd_bindings_show(args) -> int:
         print(
             f"  {proj}  backend={b.backend}  sync_mode={b.sync_mode}  "
             f"account={b.account or '-'}  wif_audience={b.wif_audience or '-'}  "
-            f"impersonate_service_account={b.impersonate_service_account or '-'}"
+            f"impersonate_service_account={b.impersonate_service_account or '-'}  "
+            f"credential_file={b.credential_file or '-'}"
         )
     return 0
 
@@ -2442,10 +2901,14 @@ def cmd_vault_status(args) -> int:
     rather than duplicated as filesystem logic in TypeScript."""
     base = home()
     initialized = (base / "registry.json").exists() or (base / "vault-bindings.json").exists()
+    # The health routing check (#246): a reference resolving from a backend
+    # that doesn't hold its value is the first thing worth knowing.
+    routing = _routing_report()
     if args.json:
-        print(json.dumps({"initialized": initialized}))
+        print(json.dumps({"initialized": initialized, "routing": routing}))
         return 0
     print("initialized" if initialized else "not yet initialized (first run)")
+    print(f"routing: {'ok' if routing['ok'] else 'DEGRADED'} -- {routing['detail']}")
     return 0
 
 
@@ -3255,8 +3718,11 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     a.add_argument("--related", default="", help="comma-separated reference names")
     a.add_argument("--repo", default="", help="the git repo that consumes this secret")
-    rm = rs.add_parser("rm", help="remove a reference")
+    rm = rs.add_parser("rm", help="remove a reference (registry entry only by default)")
     rm.add_argument("name")
+    rm.add_argument("--purge-value", action="store_true",
+                    help="also delete the stored value; refused while another reference "
+                         "shares the same backend + sm_name")
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
 
@@ -3303,6 +3769,9 @@ def build_parser() -> argparse.ArgumentParser:
     inj.add_argument("--group", default="",
                       help="group name or gid to own the file (--target file); portunus must "
                            "belong to it, or it must be the directory's setgid group")
+    inj.add_argument("--replace", action="store_true",
+                      help="(--target file) replace an existing regular file at --path. Without it "
+                           "inject refuses any existing file, and a symlink is refused either way")
     inj.add_argument("--json", action="store_true",
                       help="print {message, file: {uid, gid, mode, readable_by}} on success")
     inj.set_defaults(func=cmd_inject)
@@ -3319,6 +3788,8 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--mode", default="", choices=("", "0600", "0640", "0660"),
                       help="file mode (--target file; default 0600), as for inject")
     ask.add_argument("--group", default="", help="group name or gid to own the file (--target file), as for inject")
+    ask.add_argument("--replace", action="store_true",
+                      help="(--target file) replace an existing regular file at --path, as for inject")
     ask.add_argument("--json", action="store_true", help="machine-readable output for resolve-only calls (UI consumer)")
     ask.add_argument("--name", default="", help="required for an 'add' request, e.g. --name vercel-mdostal")
     ask.add_argument("--tags", default="",
@@ -3341,6 +3812,13 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--repo", default="", help="the git repo that consumes this secret")
     rt.add_argument("--source-files", default="",
                      help="comma-separated file paths in that repo, replaces the source_files list")
+    rt.add_argument(
+        "--backend", default="",
+        choices=("", "default", "local", "gcp", "aws", "vault", "infisical", "doppler",
+                 "onepassword", "azure", "oauth", "chrome", "bitwarden"),
+        help="pin which backend this reference resolves from ('default' clears the pin so it "
+             "follows the project's VaultBinding). Metadata only: it does not move the value",
+    )
     rt.set_defaults(func=cmd_retag)
 
     rtb = sub.add_parser(
@@ -3442,6 +3920,23 @@ def build_parser() -> argparse.ArgumentParser:
     br_list.add_argument("--json", action="store_true")
     br_list.set_defaults(func=cmd_browser_list)
 
+    bw = sub.add_parser(
+        "bitwarden",
+        help="Bitwarden vault discovery via the `bw` CLI (metadata only -- see backend=bitwarden for resolving a value)",
+    )
+    bw_sub = bw.add_subparsers(dest="action", required=True)
+    bw_status = bw_sub.add_parser("status", help="is the Bitwarden vault reachable and unlocked?")
+    bw_status.add_argument("--json", action="store_true")
+    bw_status.set_defaults(func=cmd_bitwarden_status)
+    bw_list = bw_sub.add_parser(
+        "list", help="list Bitwarden items (id, name, username, URIs -- never a value)",
+    )
+    bw_list.add_argument("--search", default="", help="filter like `bw list items --search`")
+    bw_list.add_argument("--register", action="store_true",
+                         help="write login items as state=requested backend=bitwarden references")
+    bw_list.add_argument("--json", action="store_true")
+    bw_list.set_defaults(func=cmd_bitwarden_list)
+
     dr = sub.add_parser(
         "drop",
         help="put a secret INTO Arca (local-encrypted); lands state=dropped",
@@ -3466,10 +3961,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
-        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome"),
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden"),
         default="",
-        help="override which backend this one reference uses (default: '' -- follow the "
-             "project's VaultBinding/PORTUNUS_BACKEND as normal)",
+        help="which backend this reference resolves from (default: local -- where drop "
+             "writes the value; a remote backend here means you will push it there "
+             "yourself, until then it resolves from the local copy)",
     )
     dr.add_argument(
         "--keep-whitespace", action="store_true",
@@ -3671,6 +4167,25 @@ def build_parser() -> argparse.ArgumentParser:
     hl.add_argument("--json", action="store_true")
     hl.set_defaults(func=cmd_health)
 
+    doc = sub.add_parser(
+        "doctor",
+        help="repair state problems; --fix-routing pins or migrates references that route "
+             "to a remote backend while their value is in the local vault (dry run first)",
+    )
+    doc.add_argument("--fix-routing", action="store_true",
+                     help="find references whose routed backend doesn't hold their value")
+    doc.add_argument("--apply", action="store_true", help="make the changes (default: dry run)")
+    doc.add_argument("--prefer", choices=("local", "remote"), default="",
+                     help="when the remote also has (or can't be checked for) the value: pin to "
+                          "local, or pin to the remote with the local copy as fallback")
+    doc.add_argument("--push", action="store_true",
+                     help="gcp: copy each local-only value into GCP (verified), then drop the "
+                          "local copy -- instead of pinning local")
+    doc.add_argument("--no-probe", action="store_true",
+                     help="don't ask the remote whether it has the value (offline)")
+    doc.add_argument("--json", action="store_true")
+    doc.set_defaults(func=cmd_doctor)
+
     auth_p = sub.add_parser("auth", help="check keyless cloud credential minting")
     auth_sub = auth_p.add_subparsers(dest="provider", required=True)
     auth_gcp = auth_sub.add_parser("gcp", help="mint a GCP WIF access token without printing it")
@@ -3690,6 +4205,35 @@ def build_parser() -> argparse.ArgumentParser:
     auth_status.add_argument("--strict", action="store_true",
                              help="exit 1 if any binding's credential is missing or expired")
     auth_status.set_defaults(func=cmd_auth_status)
+
+    prof_p = sub.add_parser("profile", help="several logins per provider (gcloud, posthog), one active, swapped with `use`")
+    prof_sub = prof_p.add_subparsers(dest="profile_cmd", required=True)
+    prof_add = prof_sub.add_parser("add", help="add or replace a profile (the first one for a provider becomes active)")
+    prof_add.add_argument("provider", choices=PROFILE_PROVIDERS)
+    prof_add.add_argument("name")
+    prof_add.add_argument("--account", default="", help="gcloud: the logged-in account email")
+    prof_add.add_argument("--ref", default="", help="posthog: the vault reference holding a PostHog personal API key")
+    prof_add.add_argument("--note", default="")
+    prof_add.set_defaults(func=cmd_profile_add)
+    prof_use = prof_sub.add_parser("use", help="make a profile active (gcloud: also `gcloud config set account`)")
+    prof_use.add_argument("provider", choices=PROFILE_PROVIDERS)
+    prof_use.add_argument("name")
+    prof_use.set_defaults(func=cmd_profile_use)
+    prof_list = prof_sub.add_parser("list", help="list profiles and which is active (names only)")
+    prof_list.add_argument("provider", nargs="?", choices=PROFILE_PROVIDERS)
+    prof_list.add_argument("--json", action="store_true")
+    prof_list.set_defaults(func=cmd_profile_list)
+    prof_rm = prof_sub.add_parser("remove", help="remove a profile")
+    prof_rm.add_argument("provider", choices=PROFILE_PROVIDERS)
+    prof_rm.add_argument("name")
+    prof_rm.set_defaults(func=cmd_profile_remove)
+
+    mh_p = sub.add_parser(
+        "mcp-headers",
+        help="Claude Code MCP headersHelper: print the active profile's headers as JSON (only into Claude Code's pipe)",
+    )
+    mh_p.add_argument("provider", choices=PROFILE_PROVIDERS)
+    mh_p.set_defaults(func=cmd_mcp_headers)
 
     gcp_p = sub.add_parser("gcp", help="write to GCP Secret Manager through a project's binding")
     gcp_sub = gcp_p.add_subparsers(dest="action", required=True)
@@ -3738,6 +4282,18 @@ def build_parser() -> argparse.ArgumentParser:
     bnd_set.add_argument("--impersonate-service-account", default="",
                           help="service account email to act as: via the IAM Credentials API "
                                "after a WIF mint, or gcloud --impersonate-service-account with --account")
+    bnd_set.add_argument("--credential-file", default="",
+                          help="service account key or external_account (WIF) config JSON gcloud loads "
+                               "for this project -- non-interactive, never hits a reauth prompt; "
+                               "only the path is stored ('none' clears it)")
+    strand = bnd_set.add_mutually_exclusive_group()
+    strand.add_argument("--pin-local", action="store_true",
+                        help="if references in this project have local-only values, pin them "
+                             "to backend=local before rebinding")
+    strand.add_argument("--push", action="store_true",
+                        help="gcp only: copy local-only values into GCP (verified) before rebinding")
+    strand.add_argument("--force", action="store_true",
+                        help="rebind even though local-only values would be rerouted")
     bnd_set.set_defaults(func=cmd_bindings_set)
     bnd_show = bnd_sub.add_parser("show", help="show one or all bindings (real values, not presence-only)")
     bnd_show.add_argument("project", nargs="?", default="")

@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import http from "node:http";
 import { test, expect } from "@playwright/test";
-import { STUB_LOG } from "../playwright.config";
+import { STUB_LOG, WRITE_TOKEN } from "../playwright.config";
 
 // ui/proxy.ts: mutating /api/* calls must be same-origin JSON on a loopback
 // Host, and a rejected call must never reach the `portunus` CLI. Uses raw
 // node:http (not the browser or fetch) so Origin/Host/Content-Type go out
-// exactly as a hostile page or rebinding attack would send them.
+// exactly as a hostile page or rebinding attack would send them. The write
+// credential itself has its own spec (write-credential.spec.ts).
 
 const PORT = 3100;
 // Unique to this spec. Other specs (inject-abort.spec.ts) run in parallel
@@ -68,6 +69,7 @@ test.describe("API guard (proxy.ts)", () => {
     const res = await post({
       Origin: `http://127.0.0.1:${PORT}`,
       "Content-Type": "application/json; charset=utf-8",
+      "X-Portunus-Write-Token": WRITE_TOKEN,
     });
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ ok: true, message: "stub ok", file: null });
@@ -77,7 +79,8 @@ test.describe("API guard (proxy.ts)", () => {
   });
 
   test("the UI's own browser fetch still works", async ({ page }) => {
-    await page.goto("/");
+    // instrumentation-client.ts takes the token from the fragment and adds it.
+    await page.goto(`/#write-token=${encodeURIComponent(WRITE_TOKEN)}`);
     const status = await page.evaluate(async () => {
       const res = await fetch("/api/inject", {
         method: "POST",

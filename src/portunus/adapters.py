@@ -14,6 +14,7 @@ import grp
 import json
 import os
 import stat
+import tempfile
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -67,10 +68,27 @@ class FileAdapter:
     0600 as Portunus's uid answers ok and leaves the caller a file it can't
     read. Group and mode are applied before the value is written, so a file
     that can't be given them never holds the value.
+
+    The target must not exist yet, and a symlink there is never followed
+    (first-cut-trust t1c). The path comes from whoever called inject -- over
+    HTTP, possibly a process that can also plant files -- so following a
+    symlink, or truncating a file someone else made, would write the value
+    wherever they pointed it. The file is created with
+    O_CREAT|O_EXCL|O_NOFOLLOW: the kernel refuses an existing file or link in
+    one step, with no check-then-open gap. It is created at its final name,
+    not a temp name renamed into place: rename() replaces whatever is there,
+    and a temp file left behind when the UI kills an abandoned inject
+    (PANT-1003) would hold the value under a name nobody cleans up.
+
+    `replace=True` is the CLI-only escape hatch for refreshing a file you
+    own (`portunus inject --replace`, never sent by the UI's HTTP route): it
+    still refuses a symlink, writes a fresh temp file (mkstemp: O_EXCL, no
+    follow) in the same directory and os.replace()s it over the target,
+    which swaps the directory entry and never writes through it.
     """
 
     def inject(self, value: str, path: str = "", fmt: str = "", key: str = "",
-               mode: str = "", group: str = "") -> None:
+               mode: str = "", group: str = "", replace: bool = False) -> None:
         if fmt not in _FILE_FORMATS:
             raise AdapterError(f"unsupported file format: {fmt!r} (want one of {_FILE_FORMATS})")
         if not key:
@@ -93,26 +111,58 @@ class FileAdapter:
 
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        existed = target.exists()
-        # Create the file 0600 from the start. write_text-then-chmod left it
-        # readable under the default umask until the chmod ran (PANT-1003).
-        # fchmod covers a pre-existing file, whose mode O_CREAT doesn't touch.
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as fh:
+        if replace:
+            if target.is_symlink():
+                raise AdapterError(f"refusing to write {path}: it is a symlink")
+            if target.exists() and not target.is_file():
+                raise AdapterError(f"refusing to write {path}: it is not a regular file")
+            fd, created = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+        else:
             try:
-                os.fchmod(fh.fileno(), 0o600)
-                if gid is not None and os.fstat(fh.fileno()).st_gid != gid:
-                    os.fchown(fh.fileno(), -1, gid)
-                os.fchmod(fh.fileno(), file_mode)
-            except OSError as exc:
-                if not existed:
-                    target.unlink(missing_ok=True)
+                # 0600 from the start: write_text-then-chmod left it readable
+                # under the default umask until the chmod ran (PANT-1003).
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW, 0o600)
+            except FileExistsError:
                 raise AdapterError(
-                    f"cannot give {path} group {group!r} / mode {oct(file_mode)}: "
-                    f"{exc.strerror} (portunus runs as uid {os.getuid()}; it can only "
-                    f"set a group it belongs to, or the directory's own setgid group)"
+                    f"refusing to write {path}: something already exists there "
+                    f"(inject never overwrites or follows a symlink; pick a new path, "
+                    f"or from the CLI pass --replace for a regular file you own)"
                 ) from None
-            fh.write(content)
+            except OSError as exc:
+                raise AdapterError(f"cannot create {path}: {exc.strerror}") from None
+            created = str(target)
+
+        try:
+            with os.fdopen(fd, "w") as fh:
+                try:
+                    os.fchmod(fh.fileno(), 0o600)
+                    if gid is not None and os.fstat(fh.fileno()).st_gid != gid:
+                        os.fchown(fh.fileno(), -1, gid)
+                    os.fchmod(fh.fileno(), file_mode)
+                except OSError as exc:
+                    raise AdapterError(
+                        f"cannot give {path} group {group!r} / mode {oct(file_mode)}: "
+                        f"{exc.strerror} (portunus runs as uid {os.getuid()}; it can only "
+                        f"set a group it belongs to, or the directory's own setgid group)"
+                    ) from None
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+            if replace:
+                os.replace(created, target)
+        except BaseException:
+            # Only ever the file this call created (O_EXCL / mkstemp), never
+            # one that was there before.
+            try:
+                os.unlink(created)
+            except FileNotFoundError:
+                pass
+            raise
+
+
+# Not every platform has it (Windows); there, O_EXCL alone still refuses an
+# existing link, since O_CREAT|O_EXCL never follows one.
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 def _file_mode(mode: str) -> int:

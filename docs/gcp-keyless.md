@@ -95,6 +95,38 @@ portunus bindings set $PROJECT --account <stable-account> --impersonate-service-
 This account needs no Secret Manager grants of its own. That is why an account that gets
 `IAM_PERMISSION_DENIED` on a secret can still write it, as the service account.
 
+## 2c. Long-lived credential file (no OIDC issuer, no stable account)
+
+When neither WIF nor a reauth-free account is available, point the binding at a credential
+file gcloud can load non-interactively: a service account key JSON, or an `external_account`
+(WIF) config JSON from `gcloud iam workload-identity-pools create-cred-config`. Neither kind is
+subject to a human session's reauth policy, so `backend:gcp` stops expiring on you.
+
+```bash
+gcloud iam service-accounts keys create ~/.config/portunus/$PROJECT-sa.json \
+  --iam-account=$SA --project=$PROJECT --account=$ADMIN
+chmod 600 ~/.config/portunus/$PROJECT-sa.json
+
+portunus bindings set $PROJECT --credential-file ~/.config/portunus/$PROJECT-sa.json
+portunus auth status --strict   # mode credential-file, state ok
+```
+
+Portunus stores only the absolute path, and gives it to gcloud through
+`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` for this project's calls only. Your active account and
+other projects are not affected. `--account` is ignored while a credential file is set.
+`--impersonate-service-account` still applies, so a narrowly-scoped key can act as the project
+service account. `--credential-file none` clears it. A service account key is a long-lived
+secret: keep it 0600 (`bindings set` warns otherwise), rotate it, and prefer WIF when you can.
+
+## When reauth is required
+
+If a gcloud call fails because a user credential needs an interactive reauth, Portunus raises
+`GcpReauthRequired`. Its message (also shown in `portunus health` under `backend:gcp`) lists
+the non-interactive fixes (2a, 2b, 2c above) next to the one-off `gcloud auth login <account>
+--no-activate`. When the probe succeeds but runs on a human user credential with no
+impersonation or credential file, `backend:gcp` stays `ok` and adds a note that this identity
+can expire.
+
 ## Per-command `--account`: never change the active account
 
 Every Portunus GCP call for a bound project passes `--account=` (and

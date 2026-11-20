@@ -9,6 +9,13 @@ if [ "$1" = "health" ]; then
   echo '{"status": "ok", "checks": [{"name": "home", "ok": true, "detail": "stub"}]}'
   exit 0
 fi
+# `oauth store ... --stdin` records which keys the credential bundle on stdin
+# carries (names only, never a value), so e2e/oauth-store.spec.ts can tell a
+# public-client bundle (no client_secret key) from a confidential one.
+if [ "$1" = "oauth" ] && [ "$2" = "store" ] && [ -n "$PORTUNUS_STUB_LOG" ]; then
+  keys="$(grep -o '"[a-z_]*":' | tr -d '":' | sort | tr '\n' ' ')"
+  echo "oauth-store-keys $3 $4: $keys" >> "$PORTUNUS_STUB_LOG"
+fi
 # A file-target inject whose path contains "slow-" behaves like a slow vault
 # backend: it waits, then writes the file (see e2e/inject-abort.spec.ts).
 path=""

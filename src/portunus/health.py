@@ -34,6 +34,7 @@ from cryptography.fernet import Fernet
 
 from .audit import verify_entries
 from .backend import BackendError, GcloudBackend, VaultBinding
+from . import routing
 from .paths import home_path
 from .registry import Reference
 
@@ -86,6 +87,7 @@ def run_health(runner: Optional[Callable] = None) -> dict:
     _check_audit(report, base)
     bindings = _check_bindings(report, base)
     _check_backends(report, base, refs, bindings, runner)
+    _check_routing(report, base, refs, bindings)
     return report.to_dict()
 
 
@@ -253,6 +255,7 @@ def _check_bindings(report: _Report, base: Path) -> Dict[str, VaultBinding]:
                 impersonate_service_account=cfg.get("impersonate_service_account", ""),
                 backend=cfg.get("backend", "gcp") if source is path else "gcp",
                 sync_mode=cfg.get("sync_mode", "direct") if source is path else "direct",
+                credential_file=cfg.get("credential_file", "") if source is path else "",
             )
             for proj, cfg in raw.items()
         }
@@ -269,6 +272,20 @@ def _backend_kind(ref: Reference, bindings: Dict[str, VaultBinding], fallback: s
         return ref.backend
     binding = bindings.get(ref.project)
     return binding.backend if binding is not None else fallback
+
+
+def _check_bitwarden(report, refs) -> None:
+    from . import bitwarden  # local import: health stays importable without it
+    try:
+        st = bitwarden.status()
+    except bitwarden.BitwardenError as exc:
+        report.add("backend:bitwarden", False, str(exc))
+        return
+    ok = st.get("status") == "unlocked"
+    detail = f"{len(refs)} references; bw vault is {st.get('status') or 'unknown'}"
+    if not ok:
+        detail += f" -- {bitwarden.LOCKED_REMEDIATION}"
+    report.add("backend:bitwarden", ok, detail)
 
 
 def _check_backends(report, base, refs, bindings, runner) -> None:
@@ -289,12 +306,29 @@ def _check_backends(report, base, refs, bindings, runner) -> None:
             _check_gcp(report, routed[kind], bindings, runner)
         elif kind == "oauth":
             report.add("backend:oauth", True, "served from the local vault")
+        elif kind == "bitwarden":
+            _check_bitwarden(report, routed[kind])
         elif kind in _STUB_BACKENDS:
             report.add(f"backend:{kind}", False,
                        f"{len(routed[kind])} references route to {kind}, which is a "
                        "fail-closed stub")
         else:
             report.add(f"backend:{kind}", False, f"unknown backend {kind!r}")
+
+
+def _check_routing(report, base, refs, bindings) -> None:
+    """#246: a reference that follows its project's binding to a remote
+    store while its value sits in the local vault resolves from a store it
+    was never written to. Key names only -- no decrypt, no network."""
+    fallback = os.environ.get("PORTUNUS_BACKEND", "local")
+    fallback = "gcp" if fallback == "gcloud" else fallback
+    if fallback == "mock":
+        return
+    mismatches = routing.find_mismatches(refs, bindings, routing.local_vault_keys(base), fallback)
+    if mismatches:
+        report.add("routing", False, routing.summarize(mismatches))
+    else:
+        report.add("routing", True, "every reference resolves from where its value is")
 
 
 def _check_local(report: _Report, base: Path) -> None:
@@ -346,6 +380,16 @@ def _check_gcp(report, refs, bindings, runner) -> None:
     try:
         backend.latest_version(ref.sm_name, project=ref.project)
     except (BackendError, ValueError) as exc:
+        # GcpReauthRequired's message already carries the self-service,
+        # non-interactive fixes (gcp_reauth_remediation).
         report.add("backend:gcp", False, f"latest_version probe on {ref.name} failed: {exc}")
         return
-    report.add("backend:gcp", True, f"latest_version probe on {ref.name} ok")
+    detail = f"latest_version probe on {ref.name} ok"
+    if not (binding and (binding.credential_file or binding.impersonate_service_account)):
+        # Healthy now, but on a human user credential that a reauth policy
+        # will eventually expire -- say so before it degrades.
+        who = f"account {binding.account}" if binding and binding.account else "ambient gcloud user"
+        detail += (f" (on {who}, which can expire into an interactive reauth; for a "
+                   f"non-interactive identity: `portunus bindings set {ref.project or '<project>'} "
+                   "--credential-file <key.json>` or --impersonate-service-account)")
+    report.add("backend:gcp", True, detail)

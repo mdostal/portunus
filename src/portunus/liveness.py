@@ -45,7 +45,10 @@ long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
 probes a deploy key and reads deployment env vars for parity; PANT-1127 adds
 APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
 probes API keys only; Clerk, PANT-1148, probes the instance secret key
-against the JWKS endpoint). See docs/liveness.md.
+against the JWKS endpoint; PostHog, PANT-1130, picks its probe from the
+key's prefix because a project token and a personal API key authenticate
+different routes; Anthropic, PANT-1132, probes LLM API keys via the free Models
+API and only date-checks Claude Code OAuth setup-tokens). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -1470,3 +1473,563 @@ class ClerkLivenessAdapter(CredentialKindLivenessAdapter):
 
 
 register_liveness_adapter("clerk", ClerkLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Stripe (PANT-1134, GH #195). The stored key's TYPE is read from its prefix
+# inside the resolver boundary -- the prefix class is the only thing that
+# leaves it -- so `liveness check` doubles as the metadata-only answer to
+# "is this a standard or a restricted key?".
+# ---------------------------------------------------------------------------
+
+# Prefix -> (key type, mode). Longest prefixes first: `sk_org_` before `sk_`.
+_STRIPE_KEY_PREFIXES: Tuple[Tuple[str, str, str], ...] = (
+    ("sk_org_live_", "organization secret key", "live"),
+    ("sk_org_test_", "organization secret key", "test"),
+    ("sk_live_", "secret key", "live"),
+    ("sk_test_", "secret key", "test"),
+    ("rk_live_", "restricted key", "live"),
+    ("rk_test_", "restricted key", "test"),
+    ("pk_live_", "publishable key", "live"),
+    ("pk_test_", "publishable key", "test"),
+    ("whsec_", "webhook signing secret", ""),
+)
+
+
+def stripe_key_type(value: str) -> Tuple[str, str]:
+    """(key type, mode) of a Stripe value from its prefix alone -- never
+    anything after it. ("", "") when the prefix isn't a known Stripe one.
+    Only call inside a resolver boundary."""
+    value = value.strip()
+    for prefix, kind, mode in _STRIPE_KEY_PREFIXES:
+        if value.startswith(prefix):
+            return kind, mode
+    return "", ""
+
+
+def describe_stripe_key_type(kind: str, mode: str) -> str:
+    if not kind:
+        return "unrecognised prefix (not sk_/rk_/pk_/whsec_)"
+    return f"{mode} {kind}" if mode else kind
+
+
+class StripeLivenessAdapter(HTTPLivenessAdapter):
+    """Stripe: `GET https://api.stripe.com/v1/balance` with a secret or
+    restricted key as a bearer token -- a read of the account balance, no
+    side effects. Stripe answers an invalid, expired or rolled-and-expired
+    key with 401, so 401 is dead.
+
+    A 403 means Stripe authenticated the key but it lacks the permission:
+    for a restricted key (`rk_`) without Balance read that is a working
+    key, so it reads live with that reason. For any other key a 403 is
+    unexpected and reads unknown.
+
+    Every result's detail names the key type taken from the prefix
+    (`live restricted key`, `test secret key`, ...); nothing after the
+    prefix leaves the boundary. Values that authenticate nothing on their
+    own -- a publishable key (`pk_`, which Stripe rejects on server
+    endpoints), a webhook signing secret (`whsec_`), an unrecognised prefix
+    -- read unknown without a request, never a false dead. Organization
+    keys (`sk_org_`) need a `Stripe-Context` header naming an account, so
+    they are not probed either. A reference whose name says
+    `publishable-key` is skipped by sweeps."""
+
+    URL = "https://api.stripe.com/v1/balance"
+    _PROBED_TYPES = ("secret key", "restricted key")
+    _SKIP_NAME_KINDS = ("publishable-key", "webhook-secret")
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__(
+            "stripe",
+            HTTPProbe(url=self.URL, dead_statuses=(401,)),
+            transport=transport, timeout=timeout,
+        )
+
+    def can_probe(self, ref) -> bool:
+        return credential_kind(ref, self._SKIP_NAME_KINDS) == ""
+
+    def check(self, ref, resolver) -> LivenessResult:
+        def boundary(value: str) -> Tuple[str, str, Optional[int]]:
+            kind, mode = stripe_key_type(value)
+            if kind not in self._PROBED_TYPES:
+                return kind, mode, None
+            code = self._transport(
+                self.probe.method, self.probe.url, self.probe.headers_for(value.strip()),
+                self._timeout,
+            )
+            return kind, mode, code
+
+        kind, mode, code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        key = describe_stripe_key_type(kind, mode)
+        if code is None:
+            reason = {
+                "publishable key": "a publishable key is public and Stripe rejects it on "
+                                   "server endpoints",
+                "webhook signing secret": "a webhook signing secret is never sent to Stripe's "
+                                          "API; it only verifies incoming webhook signatures",
+                "organization secret key": "an organization key needs a Stripe-Context account "
+                                           "header to make any account-level call",
+            }.get(kind, "not a Stripe API key")
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"{key}: not probed -- {reason}")
+        status = self.probe.classify(code)
+        note = ""
+        if code == 403 and kind == "restricted key":
+            status, note = LIVE, " (authenticated; key has no Balance read permission)"
+        return LivenessResult(ref.name, self.provider, status, http_status=code,
+                              detail=f"{key}: {self.probe.method} {self.probe.url} -> {code}{note}")
+
+
+register_liveness_adapter("stripe", StripeLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Multica (PANT-1128, GH #201). A workspace personal access token (`mul_...`)
+# authenticates the Multica REST API; the cheapest authenticated read is
+# `GET /api/me`. Self-hosted instances answer on their own API host.
+# ---------------------------------------------------------------------------
+
+# Reference tag: the Multica API base URL, for a self-hosted instance.
+MULTICA_URL_TAG = "multica_url"
+MULTICA_DEFAULT_URL = "https://api.multica.ai"
+
+
+class MulticaLivenessAdapter(HTTPLivenessAdapter):
+    """Multica: `GET <api>/api/me` with the PAT as a bearer token. It returns
+    only the token owner's own profile, with no workspace or issue data. The
+    auth middleware answers a missing, unknown, revoked or expired token with
+    401 `invalid token` (a bogus `mul_` token got 401 from both
+    api.multica.ai and a self-hosted backend on 2026-11-20). Its 403s are a
+    temporarily disabled user or a CSRF failure, not a bad token, so they
+    stay unknown.
+
+    The API base comes from the `multica_url` tag (a self-hosted instance's
+    public API address), else `https://api.multica.ai`. A token checked
+    against the wrong instance reads 401, a false dead, so set the tag for
+    self-hosted tokens. A tag that isn't an http(s) URL reads unknown with
+    no request.
+
+    A value that isn't a `mul_` PAT reads unknown without a request: the
+    server would answer 401 for it, and a `mat_` run token or a session JWT
+    stored here by mistake isn't the credential this reference names."""
+
+    PATH = "/api/me"
+    NOT_PAT = -1  # boundary sentinel: never a real HTTP status
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        super().__init__("multica",
+                         HTTPProbe(url=MULTICA_DEFAULT_URL + self.PATH, dead_statuses=(401,)),
+                         transport=transport, timeout=timeout)
+
+    @staticmethod
+    def base_url(ref) -> str:
+        """The API base for `ref`, or "" when the tag is not an http(s) URL."""
+        tagged = ((getattr(ref, "tags", None) or {}).get(MULTICA_URL_TAG, "") or "").strip()
+        if not tagged:
+            return MULTICA_DEFAULT_URL
+        parsed = urllib.parse.urlsplit(tagged)
+        if (parsed.scheme not in ("http", "https") or not parsed.netloc or "@" in parsed.netloc
+                or parsed.query or parsed.fragment):
+            return ""
+        return tagged.rstrip("/")
+
+    def check(self, ref, resolver) -> LivenessResult:
+        base = self.base_url(ref)
+        if not base:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"{MULTICA_URL_TAG!r} tag is not an http(s) URL -- not probed")
+        url = base + self.PATH
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if not value.startswith("mul_"):
+                return self.NOT_PAT
+            return self._transport("GET", url, self.probe.headers_for(value), self._timeout)
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NOT_PAT:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: stored value is not a Multica PAT (no mul_ prefix)")
+        return LivenessResult(ref.name, self.provider, self.probe.classify(code), http_status=code,
+                              detail=f"GET {url} -> {code}")
+
+
+register_liveness_adapter("multica", MulticaLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# PostHog (PANT-1130, GH #199). PostHog issues two different credentials that
+# are easy to mix up, and each one is checked a different way:
+#
+# * personal API key (`phx_...`): a developer's key for the private API.
+#   Probed with `GET /api/users/@me/`.
+# * project API key / project token (`phc_...`): the public, write-only token
+#   apps embed to send events. The private API rejects it with 401, so probing
+#   it there would read as a false "dead". It is probed with `POST /flags`,
+#   the route the SDKs call with it, which answers an unknown token with 401.
+#
+# Checked against PostHog Cloud on 2026-11-20: a bogus `phx_` key got 401 from
+# `/api/users/@me/` on both regions; a bogus `phc_` token got 401 from
+# `/flags/?v=2` on both regions; a real project token got 200 from its own
+# region and 401 from the other. That last result is why a Cloud key is only
+# `dead` when both regions reject it.
+# ---------------------------------------------------------------------------
+
+# Reference tag: a PostHog base URL, for a self-hosted instance or to pin one
+# Cloud region (`https://eu.posthog.com`). Without it both Cloud regions are tried.
+POSTHOG_HOST_TAG = "posthog_host"
+POSTHOG_CLOUD_HOSTS = ("https://us.posthog.com", "https://eu.posthog.com")
+
+# transport(method, url, headers, body, timeout) -> HTTP status code
+BodyTransport = Callable[[str, str, Mapping[str, str], Optional[bytes], float], int]
+
+
+def _default_body_transport(method: str, url: str, headers: Mapping[str, str],
+                            body: Optional[bytes], timeout: float) -> int:
+    """Like `_default_transport`, but can send a request body. The response
+    body is never read: `/flags` answers a valid token with the project's
+    flag definitions."""
+    headers = {"User-Agent": "portunus-liveness", **headers}
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+        exc.close()
+        return code
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise LivenessError(f"request failed: {type(reason).__name__}") from None
+
+
+class PostHogLivenessAdapter:
+    """PostHog: which credential a reference holds decides the probe.
+
+    The stored value's prefix decides first, inside the boundary: `phx_` is
+    a personal API key, `phc_` a project token, `phs_` a project secret key
+    (not probed: it is only accepted together with the project token, for
+    local flag evaluation). An older value without a prefix falls back to the
+    `liveness_kind` tag or the reference name (`*-personal-key`,
+    `*-project-key`, `*-project-token`, ...). A value nothing identifies is
+    not sent.
+
+    Personal key: `GET <host>/api/users/@me/` (Bearer). 401 is dead. 403 is
+    a key PostHog accepted that lacks the `user:read` scope, so it stays
+    unknown.
+
+    Project token: `POST <host>/flags/?v=2` with `{"api_key": ..,
+    "distinct_id": "portunus-liveness"}`. 401 is dead. It records no event
+    and creates no person; PostHog does count it as one feature-flag request.
+
+    Host: the `posthog_host` tag, else both Cloud regions (US first). A key
+    is live as soon as one host accepts it and dead only when every host
+    answers 401. Anything else stays unknown.
+
+    `*-posthog-host` and `*-posthog-tracking` references are configuration,
+    not credentials, and are left out of sweeps."""
+
+    provider = "posthog"
+    PERSONAL, PROJECT = "personal-key", "project-key"
+    # Name suffixes / `liveness_kind` values -> credential.
+    KINDS: Dict[str, str] = {
+        "personal-key": PERSONAL, "personal-api-key": PERSONAL,
+        "project-key": PROJECT, "project-api-key": PROJECT, "project-token": PROJECT,
+    }
+    CONFIG_KINDS = ("host", "tracking")
+    PATHS = {PERSONAL: "/api/users/@me/", PROJECT: "/flags/?v=2"}
+    NO_KIND = -1     # boundary sentinel: never a real HTTP status
+    SECRET_KEY = -2  # boundary sentinel: phs_ project secret key
+
+    def __init__(self, transport: Optional[BodyTransport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        self._transport = transport or _default_body_transport
+        self._timeout = timeout
+
+    def can_probe(self, ref) -> bool:
+        return credential_kind(ref, self.CONFIG_KINDS) not in self.CONFIG_KINDS
+
+    @staticmethod
+    def hosts(ref) -> Tuple[str, ...]:
+        """Base URLs to try, or () when the tag is not an http(s) URL."""
+        tagged = ((getattr(ref, "tags", None) or {}).get(POSTHOG_HOST_TAG, "") or "").strip()
+        if not tagged:
+            return POSTHOG_CLOUD_HOSTS
+        parsed = urllib.parse.urlsplit(tagged)
+        if (parsed.scheme not in ("http", "https") or not parsed.netloc or "@" in parsed.netloc
+                or parsed.query or parsed.fragment):
+            return ()
+        return (tagged.rstrip("/"),)
+
+    def kind_from_name(self, ref) -> str:
+        return self.KINDS.get(credential_kind(ref, self.KINDS), "")
+
+    def check(self, ref, resolver) -> LivenessResult:
+        if not self.can_probe(ref):
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: PostHog host/tracking setting -- config, not a credential")
+        hosts = self.hosts(ref)
+        if not hosts:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"{POSTHOG_HOST_TAG!r} tag is not an http(s) URL -- not probed")
+        named = self.kind_from_name(ref)
+        trail: List[Tuple[str, int]] = []   # (request line, status) -- never the value
+        picked = {}
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if value.startswith("phs_"):
+                return self.SECRET_KEY
+            kind = (self.PERSONAL if value.startswith("phx_")
+                    else self.PROJECT if value.startswith("phc_") else named)
+            if not kind:
+                return self.NO_KIND
+            picked["kind"] = kind
+            code = self.NO_KIND
+            for host in hosts:
+                url = host + self.PATHS[kind]
+                if kind == self.PERSONAL:
+                    code = self._transport("GET", url, {"Authorization": f"Bearer {value}"}, None,
+                                           self._timeout)
+                    trail.append((f"GET {url}", code))
+                else:
+                    body = json.dumps({"api_key": value, "distinct_id": "portunus-liveness"}).encode()
+                    code = self._transport("POST", url, {"Content-Type": "application/json"}, body,
+                                           self._timeout)
+                    trail.append((f"POST {url}", code))
+                if 200 <= code < 300:
+                    break
+            return code
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.SECRET_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: phs_ project secret key -- only accepted "
+                                         "together with the project token for local flag evaluation")
+        if code == self.NO_KIND:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: value has no phx_/phc_ prefix and neither the name nor a "
+                                         f"{KIND_TAG!r} tag says personal-key or project-key")
+        codes = [c for _, c in trail]
+        if any(200 <= c < 300 for c in codes):
+            status = LIVE
+        elif codes and all(c == 401 for c in codes):
+            status = DEAD
+        else:
+            status = UNKNOWN
+        detail = f"{picked['kind']}: " + "; ".join(f"{line} -> {c}" for line, c in trail)
+        return LivenessResult(ref.name, self.provider, status, http_status=code, detail=detail)
+
+
+register_liveness_adapter("posthog", PostHogLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Linear API keys (PANT-1133, GH #196). Rotation is a dead end (no API issues
+# or revokes personal API keys -- docs/rotation.md, provider-rotation-matrix.md),
+# so liveness is the only automated check Portunus can give these.
+# ---------------------------------------------------------------------------
+
+class LinearLivenessAdapter:
+    """Linear: `POST https://api.linear.app/graphql` with `{ viewer { id } }`,
+    which returns only the key owner's user id.
+
+    The prefix picks the Authorization header inside the boundary: a
+    personal API key (`lin_api_`) is sent raw, as Linear documents it; an
+    OAuth access token (`lin_oauth_`) is sent as a Bearer token. A value
+    with neither prefix is not sent: the wrong header form would read as a
+    false `dead`.
+
+    401 (`AUTHENTICATION_ERROR`) is dead. Everything else -- 400 (Linear
+    answers rate limiting with `RATELIMITED` on 400), 403, 5xx -- is
+    unknown. The response body is never read."""
+
+    provider = "linear"
+    URL = "https://api.linear.app/graphql"
+    BODY = json.dumps({"query": "{ viewer { id } }"}).encode()
+    NO_KIND = -1  # boundary sentinel: never a real HTTP status
+    KINDS = (("lin_api_", "personal API key", ""), ("lin_oauth_", "OAuth access token", "Bearer "))
+
+    def __init__(self, transport: Optional[BodyTransport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        self._transport = transport or _default_body_transport
+        self._timeout = timeout
+
+    def check(self, ref, resolver) -> LivenessResult:
+        picked = {}
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            for prefix, label, scheme in self.KINDS:
+                if value.startswith(prefix):
+                    picked["kind"] = label
+                    headers = {"Authorization": scheme + value, "Content-Type": "application/json"}
+                    return self._transport("POST", self.URL, headers, self.BODY, self._timeout)
+            return self.NO_KIND
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NO_KIND:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: value has no lin_api_ (personal API key) or "
+                                         "lin_oauth_ (OAuth access token) prefix")
+        status = LIVE if 200 <= code < 300 else DEAD if code == 401 else UNKNOWN
+        return LivenessResult(ref.name, self.provider, status, http_status=code,
+                              detail=f"{picked['kind']}: POST {self.URL} -> {code}")
+
+
+register_liveness_adapter("linear", LinearLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Anthropic (PANT-1132, GH #197). Two credentials share the `anthropic`
+# provider and must not be checked the same way:
+#
+# * LLM API key (`sk-ant-api...`): probed with `GET /v1/models?limit=1`. The
+#   Models API is free -- no tokens are billed, unlike even a 1-token Messages
+#   request -- and needs the same `x-api-key` auth as every other call.
+# * Claude Code OAuth setup-token (`sk-ant-oat...`, e.g. `claude-code-oauth`):
+#   minted by `claude setup-token`, valid ~1 year, and only meant for Claude
+#   Code. It is not sent anywhere; the check reads its expiry date from the
+#   `expires_at` tag and warns ahead of it.
+#
+# Checked against api.anthropic.com on 2026-11-20: a bogus `sk-ant-api03-`
+# key got 401 `authentication_error` from `/v1/models`, with or without the
+# `anthropic-version` header.
+# ---------------------------------------------------------------------------
+
+# Reference tag: when a Claude Code OAuth setup-token expires (`YYYY-MM-DD`).
+EXPIRES_AT_TAG = "expires_at"
+ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=1"
+ANTHROPIC_VERSION = "2023-06-01"
+# Days before `expires_at` at which a setup-token stops reading `live`.
+OAUTH_EXPIRY_WARN_DAYS = 30
+
+
+def _parse_expiry(raw: str) -> Optional[int]:
+    """`YYYY-MM-DD` (end of that day, UTC) or a full ISO-8601 timestamp ->
+    epoch seconds. None when unparseable."""
+    from datetime import datetime, timedelta, timezone
+
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+            day = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return int((day + timedelta(days=1)).timestamp()) - 1
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
+
+
+class AnthropicLivenessAdapter:
+    """Anthropic: an LLM API key gets a live probe, a Claude Code OAuth
+    setup-token gets an expiry check.
+
+    Which one a reference holds: the `liveness_kind` tag (`api-key` or
+    `oauth-setup-token`), else the name (`*-api-key`; `*claude-code-oauth*`,
+    `*-oauth`, `*-setup-token`), else the stored value's prefix, read inside
+    the boundary. A value that is not an `sk-ant-` key is never sent.
+
+    API key: `GET https://api.anthropic.com/v1/models?limit=1` with
+    `x-api-key` and `anthropic-version`. Free (no tokens billed). 401 is
+    dead. 403 (`permission_error`) is a key Anthropic accepted, so it stays
+    unknown, as do 429/529/5xx. The Models API does not look at the credit
+    balance: a valid key on an organization out of credit still reads live.
+    An `sk-ant-admin` Admin API key is not probed: the Models API would reject
+    it with 401, a false dead.
+
+    OAuth setup-token: no request. `expires_at` past -> dead; within
+    `OAUTH_EXPIRY_WARN_DAYS` -> unknown (so `liveness check` exits non-zero as
+    the reminder); later -> live; no tag -> unknown. `live` here means "not
+    expired", not "probed" -- a revoked setup-token still reads live. Renewal
+    is manual: re-run `claude setup-token`, store the new value, update the tag."""
+
+    provider = "anthropic"
+    API, OAUTH = "api-key", "oauth-setup-token"
+    KINDS: Dict[str, str] = {
+        "api-key": API, "anthropic-api-key": API,
+        "oauth-setup-token": OAUTH, "setup-token": OAUTH, "oauth-token": OAUTH, "oauth": OAUTH,
+    }
+    NOT_KEY = -1     # boundary sentinels: never a real HTTP status
+    ADMIN_KEY = -2
+    OAUTH_VALUE = -3
+
+    def __init__(self, transport: Optional[Transport] = None, timeout: float = _DEFAULT_TIMEOUT,
+                 now: Optional[Callable[[], float]] = None,
+                 warn_days: int = OAUTH_EXPIRY_WARN_DAYS):
+        self._transport = transport or _default_transport
+        self._timeout = timeout
+        self._now = now or time.time
+        self.warn_days = warn_days
+
+    def kind_from_name(self, ref) -> str:
+        if "claude-code-oauth" in ref.name:
+            return self.OAUTH
+        return self.KINDS.get(credential_kind(ref, self.KINDS), "")
+
+    def check(self, ref, resolver) -> LivenessResult:
+        named = self.kind_from_name(ref)
+        if named == self.OAUTH:
+            return self.check_expiry(ref)
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if value.startswith("sk-ant-oat"):
+                return self.OAUTH_VALUE
+            if value.startswith("sk-ant-admin"):
+                return self.ADMIN_KEY
+            if not value.startswith("sk-ant-"):
+                return self.NOT_KEY
+            return self._transport("GET", ANTHROPIC_MODELS_URL,
+                                   {"x-api-key": value, "anthropic-version": ANTHROPIC_VERSION},
+                                   self._timeout)
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.OAUTH_VALUE:
+            return self.check_expiry(ref)
+        if code == self.ADMIN_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: sk-ant-admin Admin API key -- the Models API "
+                                         "only accepts LLM API keys")
+        if code == self.NOT_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: stored value is not an Anthropic key (no sk-ant- prefix)")
+        if 200 <= code < 300:
+            status = LIVE
+        elif code == 401:
+            status = DEAD
+        else:
+            status = UNKNOWN
+        return LivenessResult(ref.name, self.provider, status, http_status=code,
+                              detail=f"GET {ANTHROPIC_MODELS_URL} -> {code}")
+
+    def check_expiry(self, ref) -> LivenessResult:
+        """Expiry-date check for a Claude Code OAuth setup-token. Reads only
+        the `expires_at` tag; never resolves or sends the value."""
+        raw = (getattr(ref, "tags", None) or {}).get(EXPIRES_AT_TAG, "") or ""
+        prefix = "oauth-setup-token (not probed): "
+        if not raw.strip():
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=prefix + f"no {EXPIRES_AT_TAG!r} tag -- set it to the token's "
+                                                  "expiry date (YYYY-MM-DD, ~1 year after `claude setup-token`)")
+        expires = _parse_expiry(raw)
+        if expires is None:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=prefix + f"{EXPIRES_AT_TAG!r} tag is not a date (YYYY-MM-DD)")
+        when = time.strftime("%Y-%m-%d", time.gmtime(expires))
+        left = expires - int(self._now())
+        if left < 0:
+            return LivenessResult(ref.name, self.provider, DEAD,
+                                  detail=prefix + f"expired {when} -- re-run `claude setup-token`")
+        days = left // 86400
+        if days < self.warn_days:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=prefix + f"expires {when} (in {days} days) -- re-run "
+                                                  "`claude setup-token` and update the tag")
+        return LivenessResult(ref.name, self.provider, LIVE,
+                              detail=prefix + f"expires {when} (in {days} days)")
+
+
+register_liveness_adapter("anthropic", AnthropicLivenessAdapter)

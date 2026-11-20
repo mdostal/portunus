@@ -254,7 +254,8 @@ def test_completion_stores_audits_and_deletes_the_file(home, card, capsys):
     )
     assert rc == 0
     assert result == {"name": "sudo-pw", "state": "enabled", "stored": True,
-                      "gated": True, "surface": "t3", "file_removed": True}
+                      "gated": True, "surface": "t3", "file_removed": True,
+                      "backend": "local"}
     assert not path.exists()
     assert LocalEncryptedBackend().access("dostal-sudo") == SECRET
     drops = [e for e in AuditChain().entries() if e["action"] == "drop"]
@@ -445,7 +446,8 @@ def test_mcp_two_call_handoff(home, card, monkeypatch):
     arguments = dict(first["then"]["arguments"], value_file=str(path))
     second = getattr(mcp_server, first["then"]["tool"])(**arguments)
     assert second == {"name": "sudo-pw", "state": "enabled", "stored": True,
-                      "gated": True, "surface": "t3", "file_removed": True}
+                      "gated": True, "surface": "t3", "file_removed": True,
+                      "backend": "local"}
     assert not path.exists()
     assert SECRET.strip() not in json.dumps([first, second])
     ref = Registry().require("sudo-pw")
