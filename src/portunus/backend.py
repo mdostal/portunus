@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Protocol, runtime_checkable
 
-from . import bitwarden, chrome_crypto, chrome_discovery
+from . import bitwarden, chrome_crypto, chrome_discovery, keystore
 from .auth import (
     AuditChain,
     AuthError,
@@ -865,6 +865,30 @@ class BitwardenBackend:
             item_id, fld = bitwarden.parse_sm_name(sm_name)
             return bitwarden.get_field(item_id, fld, runner=self.runner)
         except bitwarden.BitwardenError as exc:
+            raise BackendError(str(exc)) from exc
+
+
+class KeychainBackend:
+    """Reads one item from the OS keystore -- macOS Keychain, Linux Secret
+    Service (GNOME Keyring / KWallet) or Windows Credential Manager (see
+    keystore.py). `sm_name` encodes `"keychain:<service>[:<account>]"`.
+    Read-only, no in-memory cache (same rationale as ChromeBackend). A locked
+    or unreachable keystore fails closed; nothing falls back to another store.
+    """
+
+    def __init__(self, audit: Optional[AuditChain] = None, runner=None,
+                 platform: Optional[str] = None, win_reader=None):
+        self.audit = audit or AuditChain()
+        self.runner = runner
+        self.platform = platform
+        self.win_reader = win_reader
+
+    def access(self, sm_name: str, project: str = "") -> str:
+        try:
+            service, account = keystore.parse_sm_name(sm_name)
+            return keystore.read(service, account, platform=self.platform,
+                                 runner=self.runner, win_reader=self.win_reader)
+        except keystore.KeystoreError as exc:
             raise BackendError(str(exc)) from exc
 
 

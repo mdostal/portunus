@@ -288,6 +288,12 @@ def _check_bitwarden(report, refs) -> None:
     report.add("backend:bitwarden", ok, detail)
 
 
+def _check_keychain(report, refs) -> None:
+    from . import keystore
+    ok, detail = keystore.tool_status()
+    report.add("backend:keychain", ok, f"{len(refs)} references; {detail}")
+
+
 def _check_backends(report, base, refs, bindings, runner) -> None:
     fallback = os.environ.get("PORTUNUS_BACKEND", "local")
     fallback = "gcp" if fallback == "gcloud" else fallback
@@ -308,6 +314,8 @@ def _check_backends(report, base, refs, bindings, runner) -> None:
             report.add("backend:oauth", True, "served from the local vault")
         elif kind == "bitwarden":
             _check_bitwarden(report, routed[kind])
+        elif kind == "keychain":
+            _check_keychain(report, routed[kind])
         elif kind in _STUB_BACKENDS:
             report.add(f"backend:{kind}", False,
                        f"{len(routed[kind])} references route to {kind}, which is a "

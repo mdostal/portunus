@@ -42,7 +42,7 @@ from .identity_token import (
 )
 from . import bitwarden, chrome_discovery
 from .backend import (
-    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, DopplerBackend,
+    AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, KeychainBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
     LocalFallbackBackend,
@@ -139,6 +139,8 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
             inst = ChromeBackend(audit=audit)
         elif kind == "bitwarden":
             inst = BitwardenBackend(audit=audit)
+        elif kind == "keychain":
+            inst = KeychainBackend(audit=audit)
         else:
             inst = fallback_backend
         instances[kind] = inst
@@ -4036,7 +4038,7 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument(
         "--backend", default="",
         choices=("", "default", "local", "gcp", "aws", "vault", "infisical", "doppler",
-                 "onepassword", "azure", "oauth", "chrome", "bitwarden"),
+                 "onepassword", "azure", "oauth", "chrome", "bitwarden", "keychain"),
         help="pin which backend this reference resolves from ('default' clears the pin so it "
              "follows the project's VaultBinding). Metadata only: it does not move the value",
     )
@@ -4182,7 +4184,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="comma-separated file paths in that repo declaring/referencing this secret")
     dr.add_argument(
         "--backend",
-        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden"),
+        choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden", "keychain"),
         default="",
         help="which backend this reference resolves from (default: local -- where drop "
              "writes the value; a remote backend here means you will push it there "
