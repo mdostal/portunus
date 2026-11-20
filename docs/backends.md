@@ -121,6 +121,15 @@ VaultBinding fields:
 
 Sync is always **pull-only**: local-to-GCP pushes never happen through this path.
 
+The cache entry is keyed `"<project>:<sm_name>"`. A plain `sm_name` key in the local vault is a
+value that **lives** locally, written by `drop`, `drop-bulk`, `prompt` or a rotation. Those writes
+pin the reference to `backend=local`, so a binding never reroutes them. For a legacy unpinned
+reference, when GCP answers NOT_FOUND and a plain local value exists, the router serves the local
+value. It warns on stderr and writes a `warn:local-only` audit entry. It does not surface the bare
+NOT_FOUND, and it never serves a stale cache entry for a secret GCP no longer has. Auth and network
+errors are not masked; they raise with a note that a local copy exists. `portunus health` reports
+such references as `routing` degraded, and `portunus doctor --fix-routing` repairs them (#246).
+
 Force a sync for every injectable reference in a project:
 
 ```bash

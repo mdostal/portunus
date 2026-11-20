@@ -4,7 +4,22 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Secrets resolve from where they were stored (PANT-1408, GH #246).** `drop`, `drop-bulk`,
+  `prompt` and `portunus_prompt` wrote to the local vault but left `backend=""`. In a project bound
+  to `gcp cached`, the value was looked up in GCP and failed with a bare NOT_FOUND. These writes
+  now pin `backend=local`. An unpinned reference whose remote says NOT_FOUND falls back to its
+  local value, with a warning and an audit entry; other errors name where the value really is.
+  A write whose tags exactly match an existing reference is refused.
+
 ### Added
+
+- **`portunus doctor --fix-routing`**: finds stranded references and pins them local, pins them
+  remote (`--prefer remote`) or pushes them into GCP (`--push`, verified). It is a dry run unless
+  `--apply`. `portunus health` reports them as a degraded `routing` check, and `vault status` (run
+  by the installer) shows it. `bindings set` refuses to reroute local-only references unless
+  `--pin-local`, `--push` or `--force`. `retag --backend <kind>|follow` pins or unpins a reference.
 
 - **Anthropic liveness check (`anthropic`, PANT-1132, GH #197).** An LLM API key (`sk-ant-api…`)
   is probed with `GET https://api.anthropic.com/v1/models?limit=1`, which bills no tokens; 401 is
