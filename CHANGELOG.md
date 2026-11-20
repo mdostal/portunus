@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Stripe: key type confirmed, liveness probe, honest `manual` rotation (PANT-1134, #195).**
+  Earlier research expected restricted keys (`rk_`) to rotate through a
+  `POST /v1/restricted_keys` API. Stripe has no such endpoint. Every Stripe key type (secret,
+  publishable, restricted) is created and rotated only in the Dashboard, so no restricted-key
+  adapter was built. `StripeRotationAdapter` now reports `manual` instead of being a stub, and
+  `rotation run` prints the Dashboard rotation steps. New `stripe` liveness probe
+  (`GET /v1/balance`): it checks `sk_`/`rk_` keys and names each key's type from its prefix
+  without exposing anything after it. A restricted key without Balance read reads `live`.
+  `pk_`, `whsec_` and `sk_org_` values are never sent. The provider matrix and rotation docs are
+  corrected to match.
+
 - **Upstash Redis REST token rotation (PANT-1129, #200).** Research settled the open question: the
   Developer API's `POST /v2/redis/reset-password/{id}` regenerates the database password **and**
   both REST tokens (standard and read-only), so they are one credential. New

@@ -223,9 +223,8 @@ def portunus_rotation_status(provider: str = "") -> dict:
     `neon` (Postgres role-password reset; needs --retire-old), `upstash`
     (Redis REST token via password reset; needs --retire-old) and `github`
     (OAuth App token reset; other GitHub token types are refused per
-    reference as manual/not-applicable). Stub adapters:
-    stripe. Manual (no
-    programmatic path exists): sentry."""
+    reference as manual/not-applicable). Manual (no
+    programmatic path exists): sentry, stripe."""
     bindings = load_rotation_bindings()
     if provider:
         binding = bindings.get(provider)

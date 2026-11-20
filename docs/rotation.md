@@ -38,7 +38,7 @@ new one).
 | `neon` | Postgres connection string (role password) | **auto** | `NeonRotationAdapter`: reset the role password via the Neon API → store the connection string with only its password replaced → wait for Neon's operations → verify with a real connect + `SELECT 1`. A reset is destructive by design (no add-then-retire path), so it requires `--retire-old`. Needs `neon_project_id`, `neon_branch_id` and `neon_api_key_ref` tags; see [Neon Postgres connection strings](#neon-postgres-connection-strings). Liveness: the `neon` probe. |
 | `upstash` | Redis REST token (standard; read-only optional) | **auto** | `UpstashRotationAdapter`: check (Developer API `GET /redis/database/{id}` must return the stored token) → `POST /redis/reset-password/{id}` → store the new REST token → verify with a REST `PING`. The reset also regenerates the read-only token and the Redis password, revokes the old ones at once and restarts the database, so it requires `--retire-old`. Needs `upstash_database_id`, `upstash_api_key_ref` and `upstash_email_ref` (or `upstash_email`) tags; see [Upstash Redis REST tokens](#upstash-redis-rest-tokens). **Not** the Developer API key itself (unknown). |
 | `zernio` | API key; webhook signing secret | **auto** | `ZernioRotationAdapter` / `portunus rotate zernio`: rotates **and pushes** to every env-var target (Vercel, Convex) in order. API key: create (copies scope/profiles/permission) → verify (`GET /v1/profiles`) → store → push → `--retire-old` **deletes** the old key. Webhook secret: Portunus generates it → push to receivers (Vercel production redeployed) → `PUT /v1/webhooks/settings` → test delivery must be accepted → rejected deliveries redelivered; `--rollback` restores the previous secret. See [zernio-rotation.md](zernio-rotation.md). |
-| `stripe` | API key | stub | Not yet implemented. |
+| `stripe` | Secret (`sk_`), restricted (`rk_`) and publishable (`pk_`) API keys | **manual** | Stripe's public API has no endpoint that creates, rolls or expires an API key of any type. The Dashboard's **Rotate key** action is the only path (an expiry of up to 7 days keeps the old key working during the switch). This includes restricted keys: the `POST /v1/restricted_keys` API assumed in early research doesn't exist (PANT-1134). `StripeRotationAdapter` is registered so `rotation run` prints the Dashboard steps. Liveness: the `stripe` probe, which also reports each key's type from its prefix. |
 | `linear` (personal API key) | Personal API key | **manual** | Linear's rotation API covers OAuth *application* tokens only — personal API keys have no programmatic rotation path. Human re-issue required: generate a new key in Linear settings, update the stored credential via `portunus oauth store` (if OAuth-shaped) or `portunus drop --backend local`. |
 | `resend` | API key (`re_...`) | **auto** | `ResendRotationAdapter`: create → verify (read-only `GET /api-keys`, sends no email) → store. `--retire-old` **deletes** the old key — Resend has no disable. Needs `tags["resend_api_key_id"]` for `--retire-old`; see [Resend API keys](#resend-api-keys) below. |
 | `grafana-cloud` (org access policy token) | Grafana Cloud access policy token (`glc_...`) | **auto** | `GrafanaCloudRotationAdapter`: create a sibling token under the same access policy → verify (read-only GET with the new token) → store. `--retire-old` **deletes** the old token — the API has no disable. Needs `grafana_access_policy_id` + `grafana_region` tags; see [Grafana Cloud access policy tokens](#grafana-cloud-access-policy-tokens). **Not** a self-hosted Grafana admin password (manual) or a stack data-source credential (unknown). |
@@ -643,12 +643,9 @@ they're reported `unknown` without any request. `liveness check` exits 2 when an
 
 ## Stubs (not yet implemented)
 
-The following adapters are registered but raise on `.rotate()`. File an adapter request at
-the link in the error message if you need one of these:
-
-- **Stripe** — API keys.
-
-(GitHub is no longer a stub. See [GitHub](#github-per-credential-subtype) above.)
+No rotation adapter is a stub today. Stripe used to be one. It's now `manual` (PANT-1134),
+because Stripe has no API for rotating any of its key types. GitHub isn't a stub either. See
+[GitHub](#github-per-credential-subtype) above.
 
 ---
 

@@ -447,7 +447,9 @@ Note: GitHub App installation tokens rotate automatically (1-hour TTL) and are n
 
 Stripe's Dashboard provides a "Roll API key" action for standard keys. No Stripe REST API endpoint exists for creating new standard API keys or rolling existing ones programmatically.
 
-**Stripe restricted keys** (`rk_...`) are a different credential type with a documented API for creation and deletion (`POST /v1/restricted_keys`, `DELETE /v1/restricted_keys/{id}`). None of the stored keys appear to be restricted keys based on naming convention. If any are confirmed to be restricted keys, the finding for that credential changes to `auto`.
+**Correction 2026-11-20 (PANT-1134):** an earlier version of this entry said restricted keys (`rk_...`) had a documented creation/deletion API (`POST /v1/restricted_keys`, `DELETE /v1/restricted_keys/{id}`) and would be `auto`. That's wrong. The Stripe API reference has no such resource (`https://docs.stripe.com/api/restricted_keys` returns 404). [Restricted API keys](https://docs.stripe.com/keys/restricted-api-keys) and [API keys](https://docs.stripe.com/keys#rolling-keys) describe creating, rotating and expiring every key type (secret, publishable, restricted) only on the Dashboard's API keys page. Stripe Apps can have Stripe mint a RAK when the app is installed, but that's app installation, not rotation of an existing key. **Every Stripe API key type is `manual`**, whatever its prefix.
+
+**Liveness** is separate and real: the `stripe` probe (`GET /v1/balance`) checks `sk_`/`rk_` keys and names the key type from the prefix (for example `live restricted key`), without logging anything after the prefix. Running `portunus liveness check <ref>` on each Stripe reference is how to confirm which stored keys are standard and which are restricted.
 
 ---
 
@@ -666,5 +668,5 @@ The following secret names in `ffe-cicd` store configuration values (URLs, IDs, 
 
 - **AWS credentials**: No AWS access keys, secret keys, or session tokens. `AWSSecretsManagerBackend` is a stub (backend.py); no AWS-backed references exist.
 - **HashiCorp Vault / Infisical / Doppler / 1Password / Azure Key Vault tokens**: All stub backends (backend.py); no references backed by these providers.
-- **Stripe restricted API keys** (`rk_...`): Not observed; if present, rotation capability would be `auto`.
+- **Stripe restricted API keys** (`rk_...`): Not observed by name. They would be `manual` anyway, because Stripe has no restricted-key API (see the Stripe entry above).
 - **OAuth refresh token bundles** (`oauth:*` namespace): Not stored via `portunus oauth store`; the `OAuthBackend` machinery exists (auth.py, backend.py) but is unused in this vault.

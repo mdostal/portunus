@@ -197,15 +197,16 @@ cycle, `--retire-old` deletes because Hub has no disable), `VercelRotationAdapte
 access tokens: same cycle, `--retire-old` deletes because Vercel has no disable) and `GitHubRotationAdapter` (OAuth App tokens
 from an App the operator owns, reset in place; every other GitHub subtype is refused as
 manual/not-applicable, decided per reference by `capability_for(ref)`). All run via
-`portunus rotation run <ref>`. **Stripe is still a stub**
-that raise `RotationAdapterError` and report `capability() == "unknown"`. The per-provider
+`portunus rotation run <ref>`. **Stripe and Sentry are manual**: the providers have no
+rotation API, so their adapters raise `RotationAdapterError` with the human re-issue steps and
+report `capability() == "manual"`. The per-provider
 capability matrix lives in [`docs/rotation.md`](rotation.md), and
 `tests/test_rotation_docs_drift.py` fails if an `auto` adapter isn't listed as auto there.
 
 ```mermaid
 graph TD
-    accTitle: Rotation provenance -- eight real adapters, one stub
-    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp, google-api-key, resend, grafana-cloud, youtrack, vercel and github to real adapters and stripe to a stub that raises. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
+    accTitle: Rotation provenance -- eight real adapters, one manual (Stripe)
+    accDescr: RotationBinding records which provider and what account context. The adapter registry maps oauth, gcp, google-api-key, resend, grafana-cloud, youtrack, vercel and github to real adapters and stripe to a manual adapter that raises with the Dashboard steps. A real adapter that needs an admin credential resolves it through Portunus's own resolver, never a special-cased credential path.
 
     RB["RotationBinding<br/>(provider, status: real|stub|manual, account)<br/>PORTUNUS_HOME/rotation-bindings.json"]
     Registry["RotationAdapter registry<br/>(rotation_adapter_for)"]
@@ -220,7 +221,7 @@ graph TD
     Registry -->|youtrack| YT["YouTrackRotationAdapter<br/>capability: auto"]
     Registry -->|github| GH["GitHubRotationAdapter<br/>capability: auto (OAuth App tokens)<br/>manual/n.a. per subtype"]
     Registry -->|vercel| Vercel["VercelRotationAdapter<br/>capability: auto"]
-    Registry -->|stripe| Stub["stub: raises RotationAdapterError<br/>capability: unknown"]
+    Registry -->|stripe| Stripe["StripeRotationAdapter<br/>raises: Dashboard rotation only<br/>capability: manual"]
     RB -.->|provider context| Registry
 
     GCP -->|optional admin_credential_ref resolved via| SelfResolve["resolver.resolve_call(<br/>'{{secret:...}}', boundary=...)"]
@@ -244,7 +245,7 @@ the normal resolve path. `GCPServiceAccountKeyRotationAdapter` already does this
 `admin_credential_ref`, and `ResendRotationAdapter` always does (its admin key is the
 `resend_admin_ref` reference, or the rotated reference itself), and so do `VercelRotationAdapter`
 (`vercel_admin_ref`, or the rotated reference itself) and `GoogleCloudAPIKeyRotationAdapter`
-(when `google_api_key_admin_ref` is set); the remaining stub adapters are meant to
+(when `google_api_key_admin_ref` is set); any future adapter is meant to
 follow the same pattern once built.
 
 ## 6. The desktop app is packaging, not a new component
