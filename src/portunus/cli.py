@@ -4,6 +4,10 @@ Registry management, policy (gate/approve/grant), the audit chain, and the
 boundary-only resolver. No subcommand ever prints a secret value to stdout;
 ``resolve`` either execs a command with the value in argv, or writes a 0600
 temp file and prints its *path*.
+
+The one exception is ``t3 op``, the 1Password-CLI-compatible reader the T3
+Code server spawns: it writes a value to a pipe, never a terminal, and only
+after a human has turned it on. Its guard rails are in ``t3.py``.
 """
 from __future__ import annotations
 
@@ -25,9 +29,11 @@ from typing import Dict, List, Optional
 
 from . import __version__
 from . import agent_setup
+from . import card as card_mod
 from . import diagnose as diagnose_mod
 from . import health as health_mod
 from . import prompt as prompt_mod
+from . import t3 as t3_mod
 from . import totp as totp_mod
 from . import update as update_mod
 from .audit import AuditChain
@@ -547,6 +553,8 @@ def _print_reference_list(refs) -> None:
         )
         if ref.backend:
             print(f"    backend:     {ref.backend}")
+        if ref.card:
+            print(f"    card:        {card_mod.display(ref.card)}")
         if ref.description:
             print(f"    description: {ref.description}")
         if ref.purpose:
@@ -1226,7 +1234,33 @@ def cmd_prompt(args) -> int:
     and store it directly -- built for agents, which can run this but never
     see the value. Prints one JSON object of metadata only: {"name",
     "state", "stored": true}, {"cancelled": true} or {"error"}. Exit codes:
-    0 stored (or pending, for --surface ui), 2 cancelled, 1 error."""
+    0 stored (or pending, for --surface ui and the first call of --surface
+    t3), 2 cancelled, 1 error.
+
+    --surface t3 (what auto picks inside a T3 Code thread) prints a handoff
+    naming the T3 Code card tool to call; --value-file PATH then stores what
+    that card saved and deletes the file.
+
+    --kind card asks for a payment card's fields (number, expiry, CVC,
+    name, postal code), checks them (Luhn, expiry not in the past) and
+    stores them as one reference shown only as brand + last four. Its t3
+    completion takes --value-file FIELD=PATH once per field."""
+    value_file = ""
+    value_files: dict = {}
+    for item in args.value_file or []:
+        key, sep, path = item.partition("=")
+        if sep and not os.path.isabs(item) and key in (card_mod.FIELD_KEYS + ("card",)):
+            if key in value_files:
+                return _err(f"--value-file {key}= given twice")
+            value_files[key] = path
+        elif value_file or value_files:
+            return _err("--value-file takes one PATH, or FIELD=PATH per card field (--kind card)")
+        else:
+            value_file = item
+    if value_file and value_files:
+        return _err("--value-file takes one PATH, or FIELD=PATH per card field (--kind card)")
+    if value_files and args.kind != card_mod.KIND:
+        return _err("--value-file FIELD=PATH is only for --kind card")
     registry, _, broker, resolver = _build()
     try:
         tags = _parse_tags(args.tags) if args.tags else {}
@@ -1241,8 +1275,12 @@ def cmd_prompt(args) -> int:
     )
     result = prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=args.surface,
-        open_ui=_open_ui, timeout=args.timeout,
+        open_ui=_open_ui, timeout=args.timeout, value_file=value_file,
+        value_files=value_files or None, cli=True,
     )
+    if args.home and "cli" in result.get("then", {}):
+        # The completing call has to land in the same vault.
+        result["then"]["cli"][1:1] = ["--home", args.home]
     print(json.dumps(result))
     if "error" in result:
         return 1
@@ -1251,10 +1289,106 @@ def cmd_prompt(args) -> int:
     return 0
 
 
+# --- T3 Code ---------------------------------------------------------------
+def cmd_t3_status(args) -> int:
+    """Report how the T3 Code integration is set up -- never mutates
+    anything and never reads a value."""
+    report = t3_mod.status()
+    if args.json:
+        print(json.dumps(report))
+        return 0
+    launcher = report["launcher"]
+    print(f"reader: {'enabled' if report['enabled'] else 'disabled (run `portunus t3 enable`)'}")
+    if not launcher["installed"]:
+        print("launcher: no `op` on PATH (run `portunus t3 install-shim`)")
+    elif launcher["ours"]:
+        print(f"launcher: {launcher['path']} (Portunus)")
+    else:
+        print(f"launcher: {launcher['path']} is NOT the Portunus launcher "
+              "(probably the 1Password CLI)")
+    print(f"T3 Code thread: {'yes' if report['in_t3_thread'] else 'no'} "
+          f"(T3CODE_THREAD_ID {'set' if report['in_t3_thread'] else 'not set'}); "
+          f"`portunus prompt` picks the {report['prompt_surface']} surface")
+    provider = report["provider"]
+    print("In T3 Code: Settings -> Secrets -> Add provider")
+    print(f"  kind:    {provider['kind']}")
+    print(f"  name:    {provider['name']}")
+    print(f"  account: {provider['account']}")
+    print(f"reference format: {report['reference_format']}")
+    return 0
+
+
+def _cmd_t3_set_enabled(on: bool) -> int:
+    t3_mod.set_enabled(on)
+    AuditChain().append("t3_config_changed", "-", f"reader {'enabled' if on else 'disabled'}")
+    if on:
+        print("T3 Code reader: enabled. T3 Code can now read enabled references through the "
+              "`op` launcher (gated references still need `portunus approve`).")
+    else:
+        print("T3 Code reader: disabled.")
+    return 0
+
+
+def cmd_t3_enable(args) -> int:
+    """Turn the T3 Code reader on. Until this runs, `portunus t3 op` (the
+    `op` launcher) refuses every read."""
+    return _cmd_t3_set_enabled(True)
+
+
+def cmd_t3_disable(args) -> int:
+    return _cmd_t3_set_enabled(False)
+
+
+def cmd_t3_install_shim(args) -> int:
+    """Write the `op` launcher T3 Code's 1Password provider will run."""
+    try:
+        result = t3_mod.install_shim(args.dir or None, force=args.force)
+    except (t3_mod.ShimError, OSError) as exc:
+        return _err(str(exc))
+    print(f"installed {result['path']} -> {' '.join(result['command'])} t3 op")
+    for warning in result["warnings"]:
+        print(f"portunus: warning: {warning}", file=sys.stderr)
+    if not t3_mod.is_enabled():
+        print("the reader is still disabled: run `portunus t3 enable`")
+    return 0
+
+
+def cmd_t3_uninstall_shim(args) -> int:
+    try:
+        result = t3_mod.uninstall_shim(args.dir or None)
+    except (t3_mod.ShimError, OSError) as exc:
+        return _err(str(exc))
+    if not result["removed"]:
+        print("no Portunus launcher found; nothing removed")
+        return 0
+    for path in result["removed"]:
+        print(f"removed {path}")
+    return 0
+
+
+def cmd_t3_ref(args) -> int:
+    """Print the reference to type into T3 Code for one Portunus reference
+    name. A name, never a value."""
+    registry = Registry()
+    if args.name not in registry:
+        return _err(f"unknown reference: {args.name}")
+    try:
+        print(t3_mod.t3_reference(args.name))
+    except t3_mod.BadReference as exc:
+        return _err(str(exc))
+    return 0
+
+
+def cmd_t3_op(args) -> int:
+    """The 1Password-CLI-compatible entry point. main() normally routes
+    `t3 op` here before argparse sees op's own flags."""
+    return t3_mod.op_main(args.argv, _build)
+
+
 def cmd_tty_entry(args) -> int:
     """Internal: the masked prompt that `prompt` runs inside a spawned
     terminal window. Not meant to be called directly."""
-    return prompt_mod.tty_entry(args.fifo, args.banner)
+    return prompt_mod.tty_entry(args.fifo, args.banner, card=args.card)
 
 
 def cmd_drop_bulk(args) -> int:
@@ -1420,26 +1554,168 @@ def _parse_ttl(raw: str):
     raise ValueError(f"invalid --ttl {raw!r}: use a tick count (3) or a duration (90s, 30m, 2h, 1d)")
 
 
+def _refuse_agent_approval(broker, name: str, what: str) -> Optional[int]:
+    """An agent may ask for an approval but never grant one (GH #251)."""
+    from . import approval as approval_mod
+
+    marker = approval_mod.agent_marker()
+    if not marker:
+        return None
+    ref = broker.registry.get(name) if name else None
+    broker.audit.append(what, ref.sm_name if ref else (name or "-"),
+                        f"refused:agent requester:{approval_mod.requester_name()} "
+                        f"marker:{marker}")
+    return _err(f"refused: {what} looks like it is running inside an agent ({marker} is "
+                "set). An agent cannot approve its own access. Ask for it with "
+                "`portunus request-approval` and let the human approve.")
+
+
+def _read_factor_code(args, prompt_text: str = "authenticator code: ") -> str:
+    code = getattr(args, "code", None)
+    if code:
+        return code.strip()
+    if not sys.stdin.isatty():
+        return ""
+    return getpass.getpass(prompt_text).strip()
+
+
 def cmd_approve(args) -> int:
+    from . import approval as approval_mod
+
     _, _, broker, _ = _build()
+    refused = _refuse_agent_approval(broker, args.name, "approve")
+    if refused is not None:
+        return refused
+    if broker.registry.get(args.name) is None:
+        return _err(f"unknown reference: {args.name}")
+    req = None
+    if args.request:
+        try:
+            req = approval_mod.load_request(args.request)
+        except approval_mod.RequestError as exc:
+            return _err(str(exc))
+        if req.name != args.name:
+            return _err(f"request {req.id} is for {req.name}, not {args.name}")
+        if req.status != "pending":
+            return _err(f"request {req.id} is {req.status}")
+        print(f"request {req.id}: {req.summary()}", file=sys.stderr)
+    factor = ""
+    if approval_mod.factor_enrolled():
+        code = _read_factor_code(args)
+        if not code or not approval_mod.verify_code(code):
+            ref = broker.registry.get(args.name)
+            broker.audit.append("approve", ref.sm_name,
+                                "refused:bad-code channel:cli"
+                                + (f" request:{req.id}" if req else ""))
+            return _err("refused: the authenticator code did not match (pass --code or "
+                        "type it when asked)")
+        factor = "totp"
+    else:
+        print("warning: no approval factor is enrolled, so anything that can run "
+              "`portunus` as you can approve. Run `portunus approval enroll` once.",
+              file=sys.stderr)
+    approver = os.environ.get("USER") or "unknown"
+    if req is not None:
+        broker.approve(args.name, ttl_seconds=approval_mod.WINDOW_SECONDS,
+                       approver=approver, once=True, requester=req.requester,
+                       channel="cli", request_id=req.id, factor=factor)
+        approval_mod.decide(req, "approved", approver, "cli")
+        print(f"approved request {req.id}: one resolve of {args.name} by {req.requester} "
+              f"within {approval_mod.WINDOW_SECONDS // 60} minutes")
+        return 0
     try:
         unit, amount = _parse_ttl(str(args.ttl))
     except ValueError as exc:
         return _err(str(exc))
     if amount <= 0:
         return _err("--ttl must be positive")
-    try:
-        if unit == "seconds":
-            broker.approve(args.name, ttl_seconds=amount)
-        else:
-            broker.approve(args.name, ttl=amount)
-    except KeyError:
-        return _err(f"unknown reference: {args.name}")
+    kwargs = dict(approver=approver, once=args.once, channel="cli", factor=factor)
     if unit == "seconds":
-        print(f"approved {args.name} for {args.ttl} (wall-clock)")
+        broker.approve(args.name, ttl_seconds=amount, **kwargs)
     else:
-        print(f"approved {args.name} for the next {amount} access(es)")
+        broker.approve(args.name, ttl=amount, **kwargs)
+    once = " (one resolve)" if args.once else ""
+    if unit == "seconds":
+        print(f"approved {args.name} for {args.ttl} (wall-clock){once}")
+    else:
+        print(f"approved {args.name} for the next {amount} access(es){once}")
     return 0
+
+
+def cmd_approval(args) -> int:
+    from . import approval as approval_mod
+
+    _, _, broker, _ = _build()
+    if args.action == "status":
+        pending = approval_mod.pending_requests()
+        out = {"factor_enrolled": approval_mod.factor_enrolled(),
+               "pending": [{"request_id": r.id, "name": r.name, "requester": r.requester,
+                            "summary": r.summary(),
+                            "expires_in_seconds": max(0, int(r.expires_at - time.time()))}
+                           for r in pending]}
+        if args.json:
+            print(json.dumps(out, indent=2))
+            return 0
+        print(f"approval factor: {'enrolled' if out['factor_enrolled'] else 'not enrolled'}")
+        if not pending:
+            print("no pending requests")
+        for r in out["pending"]:
+            print(f"  {r['request_id']}  {r['summary']}  "
+                  f"(expires in {r['expires_in_seconds'] // 60}m) -> "
+                  f"portunus approve {r['name']} --request {r['request_id']}")
+        return 0
+    refused = _refuse_agent_approval(broker, "", f"approval-{args.action}")
+    if refused is not None:
+        return refused
+    if not sys.stdin.isatty() and not getattr(args, "code", None):
+        return _err(f"`portunus approval {args.action}` needs a terminal")
+    if args.action == "remove":
+        if not approval_mod.factor_enrolled():
+            return _err("no approval factor is enrolled")
+        code = _read_factor_code(args, "current authenticator code: ")
+        if not approval_mod.verify_code(code):
+            return _err("refused: the authenticator code did not match")
+        approval_mod.remove_factor()
+        broker.audit.append("approval-remove", "-", "removed:totp")
+        print("approval factor removed")
+        return 0
+    # enroll
+    if approval_mod.factor_enrolled():
+        if not args.replace:
+            return _err("an approval factor is already enrolled (use --replace)")
+        code = _read_factor_code(args, "current authenticator code: ")
+        if not approval_mod.verify_code(code):
+            return _err("refused: the current authenticator code did not match")
+    secret = approval_mod.new_secret()
+    account = f"{os.environ.get('USER', 'user')}@{socket.gethostname()}"
+    print("Add this to an authenticator app on a device your agents cannot reach "
+          "(your phone, not this machine):")
+    print(f"  secret: {secret}")
+    print(f"  uri:    {approval_mod.provisioning_uri(secret, account)}")
+    confirm = getpass.getpass("type the 6-digit code it shows now: ").strip()
+    try:
+        approval_mod.enroll(secret, confirm)
+    except approval_mod.FactorError as exc:
+        return _err(str(exc))
+    broker.audit.append("approval-enroll", "-", "enrolled:totp")
+    print("approval factor enrolled. Approvals from T3 Code, a dialog or "
+          "`portunus approve` now need a code from that app.")
+    return 0
+
+
+def cmd_request_approval(args) -> int:
+    from . import approval as approval_mod
+
+    registry, _, broker, _ = _build()
+    out = approval_mod.run_request(
+        registry, broker, args.name, purpose=args.purpose or "", amount=args.amount or "",
+        merchant=args.merchant or "", surface=args.surface, request_id=args.request or "",
+        code_file=args.code_file or "", cli=True,
+    )
+    print(json.dumps(out, indent=2))
+    if out.get("error"):
+        return 1
+    return 0 if out.get("approved") or out.get("pending") else 1
 
 
 def cmd_grant(args) -> int:
@@ -1474,6 +1750,8 @@ def cmd_status(args) -> int:
     print(f"sm_name:       {ref.sm_name}")
     print(f"state:         {ref.state}")
     print(f"approval-gate: {'yes' if ref.approval == 'required' else 'no'}")
+    if ref.card:
+        print(f"card:          {card_mod.display(ref.card)}")
     if ref.secret_type:
         print(f"secret-type:   {ref.secret_type}")
     return 0
@@ -2856,7 +3134,7 @@ def cmd_sync(args) -> int:
     synced, fresh, failed = [], [], []
     for ref in registry.list_by_project(args.project):
         try:
-            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
+            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env(), consume=False)
         except (NotInjectable, ApprovalRequired, NotAuthorized):
             continue  # not currently injectable/authorized -- nothing to sync, not a failure
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend
@@ -3070,7 +3348,16 @@ def cmd_vault_access_verify(args) -> int:
     return 0
 
 
-_DEFAULT_UI_URL = "http://localhost:3000"
+# Not 3000: many other dev servers default to it, so `ui open` could land the
+# human in the wrong app (GH #251). 127.0.0.1, not localhost, because the UI
+# binds 127.0.0.1 and "localhost" may resolve to ::1 first. The UI's npm
+# scripts read the same PORTUNUS_UI_PORT, so the two cannot disagree.
+_DEFAULT_UI_PORT = 7781
+
+
+def _default_ui_url() -> str:
+    port = os.environ.get("PORTUNUS_UI_PORT", "").strip() or str(_DEFAULT_UI_PORT)
+    return f"http://127.0.0.1:{port}"
 
 
 def _ui_reachable(url: str, timeout: float = 1.5) -> bool:
@@ -3115,7 +3402,7 @@ def cmd_ui_open(args) -> int:
 def _open_ui(fulfill: str = "") -> dict:
     """Open the dashboard (optionally at the ?fulfill=<name> deep link).
     Returns {"url"} or {"error"}; shared by `ui open` and `prompt --surface ui`."""
-    base_url = os.environ.get("PORTUNUS_UI_URL", _DEFAULT_UI_URL)
+    base_url = os.environ.get("PORTUNUS_UI_URL") or _default_ui_url()
     url = base_url
     if fulfill:
         sep = "&" if "?" in url else "?"
@@ -4222,7 +4509,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("sm_name", help="vault key, e.g. dostal-sudo")
     pr.add_argument("--scope", default="")
     pr.add_argument("--kind", default="password",
-                    help="default password (leading/trailing whitespace is kept)")
+                    help="default password (leading/trailing whitespace is kept). card asks "
+                         "for a payment card's fields, checks them and shows it only as "
+                         "brand + last four")
     pr.add_argument("--org", default="")
     pr.add_argument("--provider", default="")
     pr.add_argument("--project", default="")
@@ -4239,8 +4528,15 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--confirm", action="store_true",
                     help="ask twice in dialog surfaces (terminal surfaces always ask twice)")
     pr.add_argument("--surface", default="auto", choices=("auto",) + prompt_mod.SURFACES,
-                    help="input surface (default auto: first available desktop dialog, "
-                         "then a terminal window). ui opens the dashboard and returns pending")
+                    help="input surface (default auto: the T3 Code card inside a T3 Code "
+                         "thread, else the first available desktop dialog, then a terminal "
+                         "window; PORTUNUS_PROMPT_SURFACE overrides the pick). ui opens the "
+                         "dashboard and returns pending. t3 returns a handoff for the T3 "
+                         "Code secret card; finish it with --value-file")
+    pr.add_argument("--value-file", action="append", default=[],
+                    help="finish a t3 prompt: the absolute path the T3 Code card returned. "
+                         "The value is stored and the file is deleted. For --kind card, "
+                         "FIELD=PATH once per field (number, expiry, cvc, name, postal)")
     pr.add_argument("--timeout", type=int, default=prompt_mod.DEFAULT_TIMEOUT,
                     help="seconds to wait for the human (default %(default)s)")
     pr.add_argument("--type", dest="secret_type", choices=tuple(_SECRET_TYPE_ARGS), default="secret",
@@ -4260,7 +4556,64 @@ def build_parser() -> argparse.ArgumentParser:
     tty = sub.add_parser("_tty-entry")
     tty.add_argument("fifo")
     tty.add_argument("--banner", default="")
+    tty.add_argument("--card", action="store_true")
     tty.set_defaults(func=cmd_tty_entry)
+
+    t3 = sub.add_parser(
+        "t3",
+        help="T3 Code integration: let T3 Code's secret-provider slot read from the vault "
+             "through a 1Password-CLI-compatible `op` launcher",
+    )
+    t3_sub = t3.add_subparsers(dest="action", required=True)
+
+    t3_status = t3_sub.add_parser(
+        "status", help="show whether the reader is enabled, which `op` is on PATH and what "
+                       "to type into T3 Code -- never mutates anything",
+    )
+    t3_status.add_argument("--json", action="store_true")
+    t3_status.set_defaults(func=cmd_t3_status)
+
+    t3_enable = t3_sub.add_parser(
+        "enable", help="allow T3 Code to read from the vault through the `op` launcher",
+    )
+    t3_enable.set_defaults(func=cmd_t3_enable)
+
+    t3_disable = t3_sub.add_parser("disable", help="refuse every read through the `op` launcher")
+    t3_disable.set_defaults(func=cmd_t3_disable)
+
+    t3_install = t3_sub.add_parser(
+        "install-shim", help="write the `op` launcher T3 Code's 1Password provider runs",
+    )
+    t3_install.add_argument(
+        "--dir", default="",
+        help="directory to write `op` into (default: next to the `portunus` executable, "
+             "else ~/.local/bin); it must be on the PATH of the T3 Code server",
+    )
+    t3_install.add_argument(
+        "--force", action="store_true",
+        help="install even when an `op` that is not ours (the 1Password CLI) is in the way",
+    )
+    t3_install.set_defaults(func=cmd_t3_install_shim)
+
+    t3_uninstall = t3_sub.add_parser(
+        "uninstall-shim", help="remove the `op` launcher (only one Portunus wrote)",
+    )
+    t3_uninstall.add_argument("--dir", default="", help="directory to remove `op` from "
+                                                        "(default: next to `portunus`, then PATH)")
+    t3_uninstall.set_defaults(func=cmd_t3_uninstall_shim)
+
+    t3_ref = t3_sub.add_parser(
+        "ref", help="print the op://portunus/<name>/value reference for a reference name",
+    )
+    t3_ref.add_argument("name")
+    t3_ref.set_defaults(func=cmd_t3_ref)
+
+    t3_op = t3_sub.add_parser(
+        "op", help="internal: what the `op` launcher runs. Accepts only the two calls T3 "
+                   "Code makes (`read`, `inject`) and refuses unless the reader is enabled",
+    )
+    t3_op.add_argument("argv", nargs=argparse.REMAINDER)
+    t3_op.set_defaults(func=cmd_t3_op)
 
     drb = sub.add_parser(
         "drop-bulk",
@@ -4289,7 +4642,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="a tick count (default 3: audit-clock ticks, roughly accesses) or a wall-clock "
              "duration such as 90s, 30m, 2h, 1d",
     )
+    ap.add_argument("--once", action="store_true",
+                    help="the approval lets exactly one resolve through")
+    ap.add_argument("--request", metavar="ID",
+                    help="approve an agent's pending request: one resolve, by that "
+                         "requester, within 10 minutes")
+    ap.add_argument("--code", help="authenticator code (asked for when omitted)")
     ap.set_defaults(func=cmd_approve)
+
+    apf = sub.add_parser("approval", help="the human's approval factor and pending requests")
+    apf_sub = apf.add_subparsers(dest="action", required=True)
+    apf_en = apf_sub.add_parser("enroll", help="enroll an authenticator app (TOTP)")
+    apf_en.add_argument("--replace", action="store_true")
+    apf_en.add_argument("--code", help="current code, with --replace")
+    apf_st = apf_sub.add_parser("status", help="factor state and pending requests")
+    apf_st.add_argument("--json", action="store_true")
+    apf_rm = apf_sub.add_parser("remove", help="remove the enrolled factor")
+    apf_rm.add_argument("--code", help="current authenticator code")
+    apf.set_defaults(func=cmd_approval)
+
+    rqa = sub.add_parser("request-approval",
+                         help="ask the human to allow ONE use of a gated reference")
+    rqa.add_argument("name")
+    rqa.add_argument("--purpose", help="what the value is for (shown to the human)")
+    rqa.add_argument("--amount", help="amount, e.g. '$12.00' (shown to the human)")
+    rqa.add_argument("--merchant", help="who is paid (shown to the human)")
+    rqa.add_argument("--surface", default="auto",
+                     help="auto, t3, cli, or a dialog (osascript, kdialog, zenity, pinentry)")
+    rqa.add_argument("--request", metavar="ID", help="complete a pending t3 request")
+    rqa.add_argument("--code-file", help="the file the T3 Code card returned")
+    rqa.set_defaults(func=cmd_request_approval)
 
     gr = sub.add_parser(
         "grant", help="record an access widening in the audit log only (makes no IAM change)",
@@ -5004,7 +5386,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui_open = ui_sub.add_parser(
         "open",
-        help="open the vault UI in a browser (PORTUNUS_UI_URL, default http://localhost:3000)",
+        help="open the vault UI in a browser (PORTUNUS_UI_URL, else http://127.0.0.1:$PORTUNUS_UI_PORT, default port 7781)",
     )
     ui_open.add_argument(
         "--fulfill", default="",
@@ -5015,7 +5397,39 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _t3_op_argv(argv: List[str]) -> Optional[tuple]:
+    """(home, op argv) when `argv` is `[--home X] t3 op ...`, else None.
+    That call is routed around argparse: its arguments are 1Password CLI
+    flags (`--cache=false`, `--account=...`), and a mistake must produce one
+    short line on stderr, not a usage screen."""
+    rest = list(argv)
+    home_override = ""
+    if rest[:1] == ["--home"] and len(rest) >= 2:
+        home_override, rest = rest[1], rest[2:]
+    elif rest and rest[0].startswith("--home="):
+        home_override, rest = rest[0].split("=", 1)[1], rest[1:]
+    if rest[:2] == ["t3", "op"]:
+        return home_override, rest[2:]
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    t3_op = _t3_op_argv(raw_argv)
+    if t3_op is not None:
+        # No update notice and no background update check on this path.
+        home_override, op_argv = t3_op
+        if not home_override:
+            return t3_mod.op_main(op_argv, _build)
+        prior = os.environ.get("PORTUNUS_HOME")
+        os.environ["PORTUNUS_HOME"] = home_override
+        try:
+            return t3_mod.op_main(op_argv, _build)
+        finally:
+            if prior is None:
+                os.environ.pop("PORTUNUS_HOME", None)
+            else:
+                os.environ["PORTUNUS_HOME"] = prior
     parser = build_parser()
     args = parser.parse_args(argv)
     # `mcp` is a long-running stdio server (a passive-check subprocess/stderr

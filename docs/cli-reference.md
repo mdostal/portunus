@@ -1,6 +1,6 @@
 # CLI Reference
 
-Full reference for the `portunus` CLI. Every command is metadata-only by design — no command ever prints a secret value to stdout; `resolve` either execs a command with the value in argv or writes a 0600 temp file and prints its *path*.
+Full reference for the `portunus` CLI. Every command is metadata-only by design — no command ever prints a secret value to stdout; `resolve` either execs a command with the value in argv or writes a 0600 temp file and prints its *path*. The one exception is [`t3 op`](#t3-op), which the T3 Code server runs to read a value over a pipe; it is off until `portunus t3 enable`.
 
 **Global flags** (any command):
 
@@ -85,7 +85,7 @@ portunus drop gh-2fa dostal-gh-2fa --qr ~/Downloads/github-2fa.png --provider gi
 Have the **human** enter a secret through an out-of-band surface and store it directly. Built for agents: the caller can run it from a non-interactive tool channel but only ever gets metadata back, never the value, its length or a hash. Prints one JSON object.
 
 ```
-portunus prompt <name> <sm_name> [--provider ..] [--project ..] [--kind password] [--enable] [--gate] [--confirm] [--surface auto|kdialog|zenity|osascript|pinentry|konsole|gnome-terminal|xterm|terminal-app|ui] [--timeout 300]
+portunus prompt <name> <sm_name> [--provider ..] [--project ..] [--kind password] [--enable] [--gate] [--confirm] [--surface auto|kdialog|zenity|osascript|pinentry|konsole|gnome-terminal|xterm|terminal-app|ui|t3] [--value-file <path>] [--timeout 300]
 ```
 
 | Flag | Description |
@@ -95,7 +95,8 @@ portunus prompt <name> <sm_name> [--provider ..] [--project ..] [--kind password
 | `--enable` | Set `state=enabled` after storing (default: lands `state=dropped`) |
 | `--gate` | Require `portunus approve` before each use |
 | `--confirm` | Ask twice in dialog surfaces (terminal windows always ask twice) |
-| `--surface` | `auto` (default) picks the first available: `osascript` on macOS; `kdialog`, `zenity`, GUI `pinentry`, then a terminal window on Linux (needs `DISPLAY`/`WAYLAND_DISPLAY`). `ui` creates a `requested` placeholder and opens the dashboard's fulfill page |
+| `--surface` | `auto` (default) picks `t3` inside a T3 Code thread (`T3CODE_THREAD_ID` is set), otherwise the first available: `osascript` on macOS; `kdialog`, `zenity`, GUI `pinentry`, then a terminal window on Linux (needs `DISPLAY`/`WAYLAND_DISPLAY`). `ui` creates a `requested` placeholder and opens the dashboard's fulfill page. `t3` returns a handoff for a T3 Code secret card |
+| `--value-file` | Finish a `t3` prompt: the absolute path the T3 Code card returned. The value is stored and the file is deleted. Only valid with `--surface auto` or `t3` |
 | `--timeout` | Seconds to wait for the human |
 | `--type totp\|recovery-code` | Ask for a 2FA setup key (otpauth URI or base32) or a recovery code. An invalid seed stores nothing. `recovery-code` is always gated. Not available with `--surface ui` |
 
@@ -106,6 +107,19 @@ Results: `{"name", "state", "stored": true, "gated", "surface"}` (exit 0), `{"ca
 ```sh
 portunus prompt sudo-pw dostal-sudo --provider linux --description "sudo on workstation" --enable --gate
 ```
+
+**The `t3` surface.** Portunus cannot show a T3 Code secret card itself; only the agent can call T3 Code's `request_secret` tool. So this surface takes two runs:
+
+1. `portunus prompt <name> <sm_name> --surface t3` stores nothing and prints a handoff (exit 0): `{"stored": false, "pending": true, "surface": "t3", "name", "card": {"tool": "mcp__t3-code__request_secret", "arguments": {"label", "reason", "delivery": "file"}}, "then": {"tool": "portunus_prompt", "arguments": {...}, "cli": [...]}, "note"}`. The agent calls the card tool with `card.arguments`; the card returns the path of a 0600 file holding what the human typed.
+2. `portunus prompt <name> <sm_name> --value-file <path>` (with the same metadata flags) stores the value and deletes the file: `{"name", "state", "stored": true, "gated", "surface": "t3", "file_removed": true}`.
+
+`--value-file` must be an absolute path to a regular file (not a symlink) owned by the current user, with no group or other permission bits, between 1 byte and 64 KiB. Otherwise the command prints `{"error"}`, stores nothing and leaves the file alone. One trailing newline is removed from the value. If storing fails the file is kept; if the file cannot be deleted after a successful store the result has `"file_removed": false` and a `warning`.
+
+**`--kind card`.** A payment card is asked for as fields (number, expiry, CVC, and optionally the name on the card and the billing postal code) and stored as **one** reference whose value is a small JSON object (`{"number", "exp_month", "exp_year", "cvc", "name"?, "postal"?}`). Before anything is stored the number must pass the Luhn check and the expiry must be this month or later; the CVC must be 3 digits (4 on American Express). `zenity` shows one form; `kdialog`, `osascript` and `pinentry` ask one field at a time; a terminal window asks field by field. A field that fails a check is asked again (up to 3 tries). Only the brand and last four digits are kept outside the vault, and that is all `list`, `status`, the MCP tools and the UI ever show: `visa ••••4242`. The stored result adds `"kind": "card", "card": "visa ••••4242"`. `--surface ui` cannot take a card.
+
+With `--surface t3` the handoff has a `cards` list instead of one `card`: one T3 Code card per field (`{"field", "required", "tool", "arguments"}`), because a T3 Code card holds one value. Finish with one `--value-file FIELD=PATH` per field the human filled in (`portunus prompt visa-work dostal-visa-work --kind card --value-file number=/p1 --value-file expiry=/p2 --value-file cvc=/p3`), or a single `--value-file card=PATH` holding every field as JSON or `field: value` lines. A card that fails a check is not stored and its files are deleted.
+
+`PORTUNUS_PROMPT_SURFACE=<surface>` changes what `auto` picks (for example `kdialog` to keep the desktop dialog inside T3 Code). An explicit `--surface` wins over it. See [Portunus with T3 Code](t3-code.md).
 
 ---
 
@@ -489,13 +503,53 @@ portunus gate <name> [--off]
 
 ### `approve`
 
-Grant a time-boxed approval for a gated reference.
+Grant a time-boxed approval for a gated reference. **Humans only:** run inside an agent (any of `DOSTAL_AGENT`, `PORTUNUS_AGENT`, `AI_AGENT`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `T3CODE_THREAD_ID`, `MULTICA_AGENT_ID` is set) it is refused with exit 1 and an audited `refused:agent` line.
 
 ```
-portunus approve <name> [--ttl <N | duration>]
+portunus approve <name> [--ttl <N | duration>] [--once] [--request <id>] [--code <code>]
 ```
 
-`--ttl` is either a number of audit-clock ticks (roughly accesses; default 3) or a wall-clock duration such as `90s`, `30m`, `2h` or `1d`. A duration isn't capped by access count, so `portunus approve sudo-pw --ttl 2h` gives a two-hour window.
+| Flag | Description |
+|---|---|
+| `--ttl` | A number of audit-clock ticks (roughly accesses; default 3) or a wall-clock duration such as `90s`, `30m`, `2h` or `1d`. `portunus approve sudo-pw --ttl 2h` gives a two-hour window |
+| `--once` | The approval lets exactly one resolve through |
+| `--request` | Approve an agent's pending request (see `request-approval`): one resolve, only by that requester, within 10 minutes. The request's purpose, amount and merchant are printed first |
+| `--code` | The authenticator code. When an approval factor is enrolled (`portunus approval enroll`) a valid code is required and is asked for when omitted; a wrong or reused code is refused and audited. Without a factor, `approve` works as before but warns |
+
+The audit line records `approved:<approver>` plus `requester:`, `channel:`, `request:`, `factor:` and `uses:1` where they apply.
+
+---
+
+### `approval`
+
+The human's approval factor and the queue of pending requests.
+
+```
+portunus approval enroll [--replace]
+portunus approval status [--json]
+portunus approval remove [--code <code>]
+```
+
+`enroll` prints a new TOTP secret and `otpauth://` URI for an authenticator app (put it on a device your agents cannot reach, such as your phone) and saves it once you type a current code. The secret is kept in the local encrypted vault, the state file holds no secret. `--replace` and `remove` need a current code. `enroll` and `remove` are refused inside an agent. `status` lists pending requests with the command that approves each.
+
+---
+
+### `request-approval`
+
+Ask the human to allow **one** use of a gated reference. This is what an agent runs instead of `approve`. Never returns a value. Prints one JSON object.
+
+```
+portunus request-approval <name> --purpose "<what for>" [--amount "$12.00"] [--merchant "<who is paid>"] [--surface auto|t3|cli|osascript|kdialog|zenity|pinentry]
+portunus request-approval <name> --request <id> --code-file <path>
+```
+
+The human sees `<requester> asks to pay <amount> to <merchant> for <purpose> (with <name>)` and approves with a code from their authenticator app:
+
+- **t3** (picked by `auto` inside a T3 Code thread): returns `{"pending": true, "request_id", "card": {...}, "then": {...}}`. The agent raises the card; the human types the code into it; the agent finishes with `--request <id> --code-file <path>`. The file is deleted. Three wrong codes deny the request.
+- **a desktop dialog**: the human types the code (up to 3 tries) or cancels, which denies the request. Channel `dialog:<surface>`.
+- **cli**, or when no factor is enrolled: returns `{"pending": true, "request_id", "ask_human_to_run": "portunus approve <name> --request <id>"}`.
+
+A request expires after 15 minutes; an approval from it must be used within 10. Exit 0 when approved or pending, 1 otherwise.
 
 ---
 
@@ -643,6 +697,97 @@ Show what's currently wired — never mutates anything.
 ```
 portunus agent status [--json]
 ```
+
+---
+
+## T3 Code
+
+Let T3 Code's secret-provider slot read from the vault. Setup, guard rails and troubleshooting: [Portunus with T3 Code](t3-code.md). For the other direction (a T3 Code card as the input surface) see [`prompt`](#prompt).
+
+### `t3 status`
+
+Show whether the reader is enabled, which `op` is first on `PATH` and whether it is the Portunus launcher, whether this shell is inside a T3 Code thread (`T3CODE_THREAD_ID`), the reference format, and what to type into T3 Code (Settings → Secrets → Add provider: name `Portunus`, account `portunus`). Never mutates anything.
+
+```
+portunus t3 status [--json]
+```
+
+`--json` prints `{"enabled", "launcher": {"installed", "path", "ours"}, "ready", "in_t3_thread", "prompt_surface", "reference_format", "provider": {"kind", "name", "account"}, "allowed_parents"}`.
+
+---
+
+### `t3 enable` / `t3 disable`
+
+Turn the reader on or off. The flag is a 0600 file, `t3.json`, in the Portunus home. Until `enable` has run, the launcher refuses every read. Both are audited as `t3_config_changed`.
+
+```
+portunus t3 enable
+portunus t3 disable
+```
+
+---
+
+### `t3 install-shim`
+
+Write the `op` launcher that T3 Code's 1Password provider runs. The launcher is a short shell script that execs `portunus t3 op "$@"` by absolute path and carries the marker line `# portunus-t3-op-shim`.
+
+```
+portunus t3 install-shim [--dir <dir>] [--force]
+```
+
+| Flag | Description |
+|---|---|
+| `--dir` | Where to write `op`. Default: the directory of the `portunus` executable, else `~/.local/bin`. It must be on the `PATH` of the T3 Code server |
+| `--force` | Install even when `<dir>/op` exists and is not the Portunus launcher, or another `op` (the 1Password CLI) is on `PATH` |
+
+Without `--force` it exits 1 and changes nothing in both of those cases: T3 Code runs whichever `op` comes first on `PATH`, so a real 1Password CLI and the launcher cannot share one.
+
+---
+
+### `t3 uninstall-shim`
+
+Remove the launcher. Only a file that carries the Portunus marker is removed; any other `op` is left alone (exit 1 if `--dir` points at one).
+
+```
+portunus t3 uninstall-shim [--dir <dir>]
+```
+
+---
+
+### `t3 ref`
+
+Print the reference to type into a T3 Code card or settings field for one Portunus reference. Exits 1 if the reference does not exist, or if its name has characters T3 Code does not accept in a reference.
+
+```
+portunus t3 ref <name>
+```
+
+**Example:**
+```sh
+$ portunus t3 ref sudo-pw
+op://portunus/sudo-pw/value
+```
+
+---
+
+### `t3 op`
+
+Internal: what the `op` launcher runs. It accepts the two calls T3 Code makes and nothing else.
+
+```
+portunus t3 op [--cache=false] read --account=portunus --no-newline op://portunus/<name>/value
+portunus t3 op [--cache=false] inject --account=portunus -i <template-file>
+```
+
+`read` writes the value to stdout with no trailing newline. `inject` writes the template with every `{{ op://portunus/<name>/value }}` replaced, and writes nothing if any one reference cannot be read. A template may be at most 256 KiB and hold at most 64 references.
+
+This is the only command that writes a value to stdout. It refuses unless all of these hold: the reader is enabled; stdout is not a terminal; the parent process is the T3 Code server (`t3code`, `t3`, `node`, `electron`, or a name in `PORTUNUS_T3_PARENTS`) and not a shell or an agent CLI; `--account` is `portunus`; the reference has the form above and exists; and the reference passes the same state, approval and role checks as `resolve`.
+
+| Exit | Meaning |
+|---|---|
+| `0` | Value (or filled template) on stdout |
+| `1` | Refused. One line on stderr, nothing on stdout, and a `t3_provider_read` audit entry with `denied:<reason>` |
+| `2` | Not one of the two calls above |
 
 ---
 
@@ -946,7 +1091,7 @@ portunus discover --provider gcp --project my-gcp-project --register
 
 ### `ui open`
 
-Open the vault web dashboard in a browser. Fire-and-forget — safe for an agent's own tool call. Set `PORTUNUS_UI_URL` to override the default `http://localhost:3000`.
+Open the vault web dashboard in a browser. Fire-and-forget — safe for an agent's own tool call. Set `PORTUNUS_UI_URL` to override the default `http://127.0.0.1:7781`, or `PORTUNUS_UI_PORT` to change only the port (the UI's npm scripts read the same variable).
 
 ```
 portunus ui open [--fulfill <ref_name>]

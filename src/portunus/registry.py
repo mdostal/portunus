@@ -100,6 +100,9 @@ class Reference:
                             # applied to the live field except via Registry.confirm_suggestion()
                             # (portunus-vault-trust-and-access). Only description/purpose/tags/
                             # group are ever suggestible -- see SUGGESTIBLE_FIELDS.
+    card: dict = field(default_factory=dict)  # kind=card only: {"brand", "last4"} --
+                            # the ONLY card data kept outside the vault, so list/status/
+                            # MCP/UI can show "visa ••••4242" (portunus/card.py, GH #251)
     secret_type: str = ""  # "" (opaque secret) | "totp" | "recovery_code" -- see totp.py.
                             # A totp reference never resolves through {{secret:NAME}};
                             # only `portunus otp` / portunus_otp hand out its current code.
@@ -276,6 +279,14 @@ class Registry:
             ref.approval = "required" if required else ""
         return ref
 
+    def set_card(self, name: str, meta: Optional[dict]) -> Reference:
+        """Record a card's display metadata (brand + last four, nothing else)."""
+        allowed = {k: str(v) for k, v in (meta or {}).items() if k in ("brand", "last4")}
+        with self._locked():
+            ref = self.require(name)
+            ref.card = allowed
+        return ref
+
     def migrate_legacy_tags(self) -> int:
         """Additively copy scope/kind into tags{} for references that have no
         tags yet. Never touches scope/kind. Idempotent -- a reference with
@@ -378,13 +389,21 @@ class Registry:
                     full_tags[field_name] = val
             full_tags.update(new_tags_dict)
 
-            colliding = [
+            # Only a change to the tag set can create a collision. A retag
+            # that leaves org/provider/project/env/repo/tags as they are
+            # (say, only --description) is never refused for an overlap that
+            # already existed (GH #251).
+            old_tags = self._full_tag_set(ref.org, ref.provider, ref.project, ref.env,
+                                          ref.repo, ref.tags)
+            colliding = [] if full_tags == old_tags else [
                 other.name for other in self._data.values()
                 if other.name != name and full_tags
                 and all(other.matches_tag(k, v) for k, v in full_tags.items())
             ]
             if colliding:
-                raise AmbiguousMatch(sorted(colliding + [name]))
+                # Name only the OTHER references: the one being retagged
+                # is not something it collides with.
+                raise AmbiguousMatch(sorted(colliding))
 
             ref.org = new_org
             ref.provider = new_provider

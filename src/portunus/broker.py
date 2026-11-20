@@ -15,6 +15,7 @@ Every decision is written to the audit chain.
 from __future__ import annotations
 
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,7 +79,8 @@ class Broker:
             pass
 
     # --- lifecycle guard -------------------------------------------------
-    def check_injectable(self, name: str, requester: Optional[Identity] = None) -> Reference:
+    def check_injectable(self, name: str, requester: Optional[Identity] = None,
+                         consume: bool = True) -> Reference:
         """Return the Reference iff it may be injected right now, else raise.
 
         Enforces the lifecycle state and the approval gate. This is the
@@ -95,6 +97,12 @@ class Broker:
         allows -- enforcement only ever denies within a scope that has at
         least one policy, for a principal not named there
         (design-discussion.md §5, "permissive-if-unconfigured").
+
+        A single-use approval (an approved request, GH #251) is used up by
+        the call that passes the gate. Bulk callers that only look (leak
+        scan, sync) pass ``consume=False``: a single-use approval then
+        counts as no approval, so they can neither use it up nor read
+        through it.
         """
         ref = self.registry.require(name)
         state = ref.state or "enabled"
@@ -113,7 +121,7 @@ class Broker:
                 f"{ref.sm_name} is {state} — not injectable "
                 f"({hints.get(state, 'contact the owner')})"
             )
-        if ref.approval == "required" and not self._has_valid_approval(name):
+        if ref.approval == "required" and not self._has_valid_approval(name, consume=consume):
             self.audit.append("resolve", ref.sm_name, "pending-approval")
             raise ApprovalRequired(
                 f"{ref.sm_name} needs approval — a human must run: portunus approve {name}"
@@ -179,10 +187,17 @@ class Broker:
         return ref
 
     def approve(self, name: str, ttl: int = 3, approver: Optional[str] = None,
-                ttl_seconds: Optional[int] = None) -> Path:
+                ttl_seconds: Optional[int] = None, once: bool = False,
+                requester: str = "", channel: str = "", request_id: str = "",
+                factor: str = "") -> Path:
         """Grant a time-boxed approval. By default it lasts `ttl` audit-clock
         ticks; pass `ttl_seconds` instead for a wall-clock window (e.g. a
-        two-hour sudo session), which isn't capped by access count."""
+        two-hour sudo session), which isn't capped by access count.
+
+        `once` makes it single-use: exactly one resolve passes the gate,
+        then the approval is gone. `requester` binds it to that requester
+        (see approval.requester_name); anyone else is refused. `channel`,
+        `request_id` and `factor` are recorded in the audit entry."""
         ref = self.registry.require(name)
         approver = approver or os.environ.get("USER", "unknown")
         token = self.approvals_dir / name
@@ -190,33 +205,76 @@ class Broker:
             expiry = f"exp_at={int(time.time()) + int(ttl_seconds)}"
         else:
             expiry = f"exp={self._clock_now() + ttl}"
-        token.write_text(f"approved_by={approver} {expiry}\n")
-        os.chmod(token, 0o600)
-        self.audit.append("approve", ref.sm_name, f"approved:{approver}")
+        fields = [f"approved_by={approver}", expiry]
+        if once:
+            fields.append("uses=1")
+        if requester:
+            fields.append(f"for={requester}")
+        if request_id:
+            fields.append(f"req={request_id}")
+        tmp = self.approvals_dir / f".{name}.{secrets.token_hex(4)}.tmp"
+        tmp.write_text(" ".join(fields) + "\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, token)
+        result = f"approved:{approver}"
+        for key, val in (("requester", requester), ("channel", channel),
+                         ("request", request_id), ("factor", factor)):
+            if val:
+                result += f" {key}:{val}"
+        if once:
+            result += " uses:1"
+        self.audit.append("approve", ref.sm_name, result)
         return token
 
-    def _has_valid_approval(self, name: str) -> bool:
-        token = self.approvals_dir / name
-        if not token.exists():
-            return False
-        exp = 0
-        exp_at = None
-        for part in token.read_text().split():
+    @staticmethod
+    def _parse_token(text: str) -> dict:
+        out: dict = {}
+        for part in text.split():
             key, _, raw = part.partition("=")
-            try:
-                if key == "exp":
-                    exp = int(raw)
-                elif key == "exp_at":
-                    exp_at = int(raw)
-            except ValueError:
-                pass
+            out[key] = raw
+        return out
+
+    def _has_valid_approval(self, name: str, consume: bool = True) -> bool:
+        from .approval import requester_name
+
+        token = self.approvals_dir / name
+        try:
+            fields = self._parse_token(token.read_text())
+        except OSError:
+            return False
+        try:
+            exp = int(fields.get("exp", "0"))
+            exp_at = int(fields["exp_at"]) if "exp_at" in fields else None
+            uses = int(fields["uses"]) if "uses" in fields else None
+        except ValueError:
+            token.unlink(missing_ok=True)
+            return False
         if exp_at is not None:
-            if time.time() <= exp_at:
-                return True
-        elif exp >= self._clock_now():
+            live = time.time() <= exp_at
+        else:
+            live = exp >= self._clock_now()
+        if not live:
+            token.unlink(missing_ok=True)
+            return False
+        bound = fields.get("for", "")
+        if bound and bound != requester_name():
+            ref = self.registry.get(name)
+            self.audit.append("resolve", ref.sm_name if ref else name,
+                              f"approval-not-for:{requester_name()}")
+            return False
+        if uses is None:
             return True
-        token.unlink(missing_ok=True)
-        return False
+        if not consume:
+            return False
+        # Single use: claim the token with an atomic rename so that of two
+        # concurrent resolves exactly one gets through.
+        claimed = self.approvals_dir / f".{name}.claimed.{os.getpid()}.{secrets.token_hex(4)}"
+        try:
+            os.rename(token, claimed)
+        except OSError:
+            return False
+        claimed.unlink(missing_ok=True)
+        return True
 
     def _clock_now(self) -> int:
         # Same recovery as AuditChain._tick(): a missing/corrupt .clock falls

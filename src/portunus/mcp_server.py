@@ -762,16 +762,49 @@ def portunus_prompt(
     confirm: bool = False,
     surface: str = "auto",
     timeout: int = 300,
+    value_file: str = "",
+    scope: str = "",
+    repo: str = "",
+    value_files: Optional[dict] = None,
     secret_type: str = "",
 ) -> dict:
     """Ask the HUMAN to type a secret into Portunus directly -- use this
     instead of portunus_drop whenever the human hasn't already pasted the
-    value to you (a sudo password, a master credential). Opens a
-    human-facing surface on their desktop (password dialog, then a fresh
-    terminal window as fallback) and stores what they enter straight into
-    the local vault; the value never enters your context.
+    value to you (a sudo password, a master credential). The value goes
+    from a human-facing surface into the local vault and never enters your
+    context.
 
-    Blocks until the human answers, cancels, or `timeout` seconds pass.
+    Outside T3 Code it opens a surface on the human's desktop (password
+    dialog, then a fresh terminal window as fallback) and blocks until the
+    human answers, cancels, or `timeout` seconds pass.
+
+    Inside T3 Code (surface="auto" picks "t3" there; you can also ask for
+    surface="t3") the surface is T3 Code's secret card, and it takes two
+    calls because only you can raise that card:
+      1. Call this tool. It stores nothing and returns {"stored": False,
+         "pending": True, "surface": "t3", "card": {"tool", "arguments"},
+         "then": {"tool", "arguments"}}.
+      2. Call the card tool named in "card" (mcp__t3-code__request_secret)
+         with exactly those arguments. It returns {"status": "saved",
+         "file": "<path>"}. Never read, print or copy that file.
+      3. Call this tool again with the arguments in "then", with value_file
+         set to that path. Portunus stores the value, deletes the file and
+         returns the usual metadata plus "file_removed".
+    If the result has file_removed False, delete the path yourself without
+    reading it. If the human dismisses the card, make no second call.
+
+    kind="card" stores a payment card (number, expiry, CVC, name, postal
+    code) as ONE reference. Portunus checks it (Luhn, expiry not in the
+    past, CVC length) before storing, and it is only ever shown as brand
+    plus last four ("visa ••••4242", the "card" field of the result and of
+    portunus_list). Desktop surfaces show one form (zenity) or ask one
+    field at a time. Inside T3 Code the first call returns "cards": one
+    card tool call per field (name and postal are optional, skip them if
+    the human does); then call this tool once with value_files mapping each
+    field to the path its card returned, e.g. {"number": "<path>",
+    "expiry": "<path>", "cvc": "<path>"}. A card that fails a check is not
+    stored and its files are deleted -- ask the human to enter it again.
+
     Returns metadata only: {"name", "state", "stored": True, "gated",
     "surface"}, {"cancelled": True} or {"error"} -- never the value, its
     length or a hash. Lands state="dropped" unless enable=True; gate=True
@@ -794,14 +827,50 @@ def portunus_prompt(
     if surface != "auto" and surface not in prompt_mod.SURFACES:
         return {"error": f"unknown surface: {surface}"}
     req = prompt_mod.PromptRequest(
-        name=name, sm_name=sm_name, kind=kind, org=org, provider=provider,
+        name=name, sm_name=sm_name, scope=scope, kind=kind, org=org, provider=provider,
         project=project, env=env, tags=dict(tags or {}), description=description,
-        purpose=purpose, group=group, enable=enable, gate=gate, confirm=confirm,
+        purpose=purpose, group=group, repo=repo, enable=enable, gate=gate, confirm=confirm,
         secret_type=secret_type,
     )
     return prompt_mod.run_prompt(
         req, registry, broker, resolver.backend, surface=surface,
-        open_ui=_open_ui, timeout=timeout,
+        open_ui=_open_ui, timeout=timeout, value_file=value_file,
+        value_files=dict(value_files) if value_files else None,
+    )
+
+
+@mcp.tool()
+def portunus_request_approval(
+    name: str,
+    purpose: str = "",
+    amount: str = "",
+    merchant: str = "",
+    surface: str = "auto",
+    request_id: str = "",
+    code_file: str = "",
+) -> dict:
+    """Ask the HUMAN to allow ONE use of an approval-gated reference.
+
+    You cannot approve yourself: `portunus approve` refuses inside an agent.
+    Instead, call this with what the value is for (`purpose`, and for a
+    payment the `amount` and `merchant`). The human sees that text and
+    approves with a code from their authenticator app, which you cannot
+    reach. An approval lets exactly one resolve through, by you, within ten
+    minutes, and the audit log records requester, approver and channel.
+
+    In a T3 Code thread (surface t3) this is two calls: the first returns a
+    `card` to show with mcp__t3-code__request_secret; call this tool again
+    with `request_id` and `code_file` set to the path the card returned. Do
+    not read that file. With a desktop dialog the human answers inline.
+    Otherwise the result is pending with `ask_human_to_run`: tell the human
+    to run that command. Never returns a secret value.
+    """
+    from . import approval as approval_mod
+
+    registry, _audit, broker, _resolver = _build()
+    return approval_mod.run_request(
+        registry, broker, name, purpose=purpose, amount=amount, merchant=merchant,
+        surface=surface, request_id=request_id, code_file=code_file,
     )
 
 
@@ -922,7 +991,7 @@ def portunus_sync(project: str) -> dict:
     synced, fresh, failed = [], [], []
     for ref in registry.list_by_project(project):
         try:
-            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env())
+            gated_ref = broker.check_injectable(ref.name, requester=Identity.from_env(), consume=False)
         except (NotInjectable, ApprovalRequired, NotAuthorized):
             continue
         backend = resolver.backend_for(gated_ref) if resolver.backend_for else resolver.backend

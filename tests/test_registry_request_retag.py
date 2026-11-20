@@ -80,3 +80,22 @@ def test_retag_open_tags_dict(home):
     reg.add("x", "sm-x", tags={"team": "platform"})
     ref = reg.retag("x", tags={"team": "growth"})
     assert ref.tags == {"team": "growth"}
+
+
+def test_retag_description_only_never_refused_for_an_existing_overlap(home):
+    """GH #251: `retag <name> --description` was refused with "would collide
+    with" when another reference's tags were a superset of this one's."""
+    reg = Registry()
+    reg.add("narrow", "sm-n", provider="stripe", project="shop")
+    reg.add("wide", "sm-w", provider="stripe", project="shop", env="prod")
+    ref = reg.retag("narrow", description="Stripe test key")
+    assert ref.description == "Stripe test key"
+
+
+def test_retag_collision_names_only_the_other_references(home):
+    reg = Registry()
+    reg.add("a", "sm-a", provider="vercel", project="mdostal.com", env="prod")
+    reg.add("b", "sm-b", provider="vercel", project="mdostal.com", env="staging")
+    with pytest.raises(AmbiguousMatch) as exc:
+        reg.retag("b", env="prod")
+    assert exc.value.candidates == ["a"]

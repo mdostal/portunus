@@ -22,6 +22,19 @@ Surfaces, in auto-selection order:
     opens the dashboard's ``?fulfill=<name>`` deep link. Asynchronous -- the
     human finishes in the browser, so this returns ``pending`` rather than
     ``stored``.
+  * ``t3`` (explicit, or chosen by ``auto`` inside a T3 Code thread): the
+    secret card T3 Code shows in the thread. Portunus cannot raise that card
+    itself -- only the agent can call T3's ``request_secret`` tool -- so
+    this surface is a two-step handoff. Step one returns a ``pending``
+    handoff naming the card tool and its arguments and stores nothing. The
+    card writes what the human typed to a private 0600 file and gives the
+    agent the path, not the value. Step two (``value_file=<path>``) reads
+    that file here, stores the value and deletes the file.
+
+Inside a T3 Code thread (``T3CODE_THREAD_ID`` is set) ``auto`` picks ``t3``:
+those threads are often driven from another machine, where a dialog on the
+server's desktop is out of reach. ``PORTUNUS_PROMPT_SURFACE=<surface>``
+overrides what ``auto`` picks; an explicit surface wins over both.
 
 MCP form elicitation is deliberately not a surface: most clients route
 elicitation responses through the model, which is exactly what this
@@ -34,6 +47,7 @@ import json
 import os
 import select
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -41,13 +55,29 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
+from . import card as card_mod
 from . import totp as totp_mod
 from .localvault import written_backend_kind
 from urllib.parse import unquote
 
 DIALOG_SURFACES = ("osascript", "kdialog", "zenity", "pinentry")
 TERMINAL_SURFACES = ("terminal-app", "konsole", "gnome-terminal", "xterm")
-SURFACES = DIALOG_SURFACES + TERMINAL_SURFACES + ("ui",)
+# Not a local dialog, so it stays out of the two tuples above and out of
+# available_surfaces(): the T3 Code secret card, completed in two calls.
+T3_SURFACE = "t3"
+SURFACES = DIALOG_SURFACES + TERMINAL_SURFACES + ("ui", T3_SURFACE)
+
+# T3 Code exports this to every agent process it starts; the Portunus MCP
+# server and CLI inherit it from the agent.
+T3_THREAD_ENV = "T3CODE_THREAD_ID"
+# Overrides what surface="auto" picks. Any name in SURFACES.
+SURFACE_ENV = "PORTUNUS_PROMPT_SURFACE"
+T3_CARD_TOOL = "mcp__t3-code__request_secret"
+T3_LABEL_MAX = 80
+# Upper bound for a card's value file. A secret is a line of text or a key
+# file, not a blob.
+VALUE_FILE_MAX_BYTES = 64 * 1024
+_VALUE_FILE_PLACEHOLDER = "<file path returned by the card>"
 
 # GUI pinentry flavours only: a curses pinentry needs a TTY we don't have.
 _PINENTRY_BINARIES = ("pinentry-qt", "pinentry-gnome3", "pinentry-gtk-2", "pinentry-mac")
@@ -97,6 +127,16 @@ class PromptRequest:
         return "Portunus: enter a secret"
 
     @property
+    def context_lines(self) -> List[str]:
+        """Purpose and group, when set, as the human sees them (GH #251)."""
+        lines = []
+        if self.purpose:
+            lines.append(f"Purpose: {self.purpose}")
+        if self.group:
+            lines.append(f"Group: {self.group}")
+        return lines
+
+    @property
     def text(self) -> str:
         where = "/".join(p for p in (self.org, self.project, self.env) if p)
         detail = f" ({self.provider})" if self.provider else ""
@@ -105,10 +145,25 @@ class PromptRequest:
             lines.append(f"Scope: {where}")
         if self.description:
             lines.append(self.description)
+        lines.extend(self.context_lines)
         if self.secret_type == totp_mod.SECRET_TYPE_TOTP:
             lines.append("Paste the otpauth:// URI or the base32 setup key. Agents will only "
                          "ever get the current 6-digit code, never this key.")
         lines.append("The agent will only learn whether it was stored, never the value.")
+        return "\n".join(lines)
+
+    @property
+    def is_card(self) -> bool:
+        return self.kind == card_mod.KIND
+
+    @property
+    def card_text(self) -> str:
+        detail = f" ({self.provider})" if self.provider else ""
+        lines = [f"An agent asked you to store the payment card '{self.name}'{detail} in Portunus."]
+        if self.description:
+            lines.append(self.description)
+        lines.extend(self.context_lines)
+        lines.append("The agent will only see the card's brand and last four digits.")
         return "\n".join(lines)
 
 
@@ -172,15 +227,18 @@ def _applescript_quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _dialog_argv(surface: str, title: str, text: str) -> List[str]:
+def _dialog_argv(surface: str, title: str, text: str, hidden: bool = True) -> List[str]:
+    """`hidden=False` is only for card fields that are not secret on their
+    own (expiry, name, postal code), so the human can see what they type."""
     if surface == "kdialog":
-        return ["kdialog", "--title", title, "--password", text]
+        return ["kdialog", "--title", title, "--password" if hidden else "--inputbox", text]
     if surface == "zenity":
-        return ["zenity", "--entry", "--hide-text", "--title", title, "--text", text]
+        return ["zenity", "--entry", *(["--hide-text"] if hidden else []),
+                "--title", title, "--text", text]
     if surface == "osascript":
         script = (
             f"display dialog {_applescript_quote(text)} default answer \"\" "
-            f"with hidden answer with title {_applescript_quote(title)}"
+            f"{'with hidden answer ' if hidden else ''}with title {_applescript_quote(title)}"
         )
         return ["osascript", "-e", script, "-e", "text returned of result"]
     raise PromptError(f"not a dialog surface: {surface}")
@@ -218,7 +276,8 @@ def _ask_pinentry(binary: str, title: str, text: str, prompt: str, runner, timeo
     return value
 
 
-def _ask_dialog(surface: str, text: str, title: str, runner, timeout: int, which) -> str:
+def _ask_dialog(surface: str, text: str, title: str, runner, timeout: int, which,
+                hidden: bool = True) -> str:
     if surface == "pinentry":
         binary = _pinentry_binary(which)
         if not binary:
@@ -226,7 +285,7 @@ def _ask_dialog(surface: str, text: str, title: str, runner, timeout: int, which
         return _ask_pinentry(binary, title, text, "Secret:", runner, timeout)
     try:
         proc = runner(
-            _dialog_argv(surface, title, text),
+            _dialog_argv(surface, title, text, hidden),
             capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
@@ -280,13 +339,45 @@ def _shell_quote(arg: str) -> str:
     return "'" + arg.replace("'", "'\"'\"'") + "'"
 
 
-def tty_entry(fifo_path: str, banner: str) -> int:
+def _tty_card_fields() -> dict:
+    """Card mode of tty_entry: one field at a time, each checked as it is
+    entered and asked again (up to three tries) when it fails."""
+    fields: Dict[str, str] = {}
+    steps = card_mod.fields_in_order()
+    for i, fld in enumerate(steps, 1):
+        print(card_mod.field_prompt(fld, i, len(steps)))
+        for attempt in range(3):
+            raw = (getpass.getpass(f"{fld.label}: ") if fld.hidden
+                   else input(f"{fld.label}: ")).strip()
+            if not raw and not fld.required:
+                break
+            problem = card_mod.check_field(fld.key, raw, fields)
+            if problem is None:
+                fields[fld.key] = raw
+                break
+            print(f"  {problem}")
+        else:
+            return {"error": f"{fld.label}: {problem}; nothing stored"}
+    return {"fields": fields}
+
+
+def tty_entry(fifo_path: str, banner: str, card: bool = False) -> int:
     """Runs INSIDE the spawned terminal window. Masked prompt, twice (no
     visual feedback otherwise), then one JSON line down the FIFO to the
-    waiting parent. Prints nothing about the value."""
+    waiting parent. Prints nothing about the value. `card` asks for the
+    fields of a payment card instead (see portunus/card.py)."""
     print(banner)
     print()
     message: dict
+    if card:
+        try:
+            message = _tty_card_fields()
+        except (EOFError, KeyboardInterrupt):
+            message = {"cancelled": True}
+        with open(fifo_path, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(message) + "\n")
+        del message
+        return 0
     try:
         value = getpass.getpass("value: ")
         confirm = getpass.getpass("value (confirm): ")
@@ -304,9 +395,10 @@ def tty_entry(fifo_path: str, banner: str) -> int:
 
 
 def read_from_terminal(surface: str, req: PromptRequest, popen=None,
-                       timeout: int = DEFAULT_TIMEOUT) -> str:
+                       timeout: int = DEFAULT_TIMEOUT, card: bool = False):
     """The value travels child -> parent over a FIFO inside a private 0700
-    directory: never argv, never env, never a regular file on disk."""
+    directory: never argv, never env, never a regular file on disk.
+    Returns the value, or with `card` the dict of raw card fields."""
     popen = popen or subprocess.Popen
     workdir = tempfile.mkdtemp(prefix="portunus-prompt-")
     fifo = os.path.join(workdir, "answer")
@@ -314,7 +406,10 @@ def read_from_terminal(surface: str, req: PromptRequest, popen=None,
     fd = None
     try:
         os.mkfifo(fifo, 0o600)
-        inner = [sys.executable, "-m", "portunus", "_tty-entry", fifo, "--banner", req.text]
+        inner = [sys.executable, "-m", "portunus", "_tty-entry", fifo, "--banner",
+                 req.card_text if card else req.text]
+        if card:
+            inner.append("--card")
         try:
             proc = popen(_terminal_argv(surface, inner),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -350,6 +445,11 @@ def read_from_terminal(surface: str, req: PromptRequest, popen=None,
             raise PromptCancelled()
         if "error" in message:
             raise PromptError(str(message["error"]))
+        if card:
+            fields = message.get("fields")
+            if not isinstance(fields, dict):
+                raise PromptError("unreadable answer from the terminal prompt")
+            return {str(k): str(v) for k, v in fields.items()}
         return str(message.get("value", ""))
     finally:
         if fd is not None:
@@ -389,14 +489,579 @@ def read_secret(req: PromptRequest, surface: str = "auto", *, runner=None,
     raise PromptError(f"unknown surface: {surface}")
 
 
+def choose_surface(surface: str = "auto", env: Optional[Dict[str, str]] = None) -> str:
+    """Settle what ``auto`` means before any surface is opened. An explicit
+    surface is returned untouched. Otherwise ``PORTUNUS_PROMPT_SURFACE``
+    wins if set, then the T3 Code card inside a T3 Code thread, and failing
+    both the answer stays ``auto`` (first available desktop surface)."""
+    if surface != "auto":
+        return surface
+    env = os.environ if env is None else env
+    override = (env.get(SURFACE_ENV) or "").strip()
+    if override:
+        if override not in SURFACES:
+            raise PromptError(
+                f"{SURFACE_ENV} is set to an unknown surface (want one of: {', '.join(SURFACES)})"
+            )
+        return override
+    if env.get(T3_THREAD_ENV):
+        return T3_SURFACE
+    return "auto"
+
+
+# --- t3 surface (T3 Code secret card) ---------------------------------------
+
+def _one_line(text: str, limit: int) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 3].rstrip() + "..."
+
+
+def _request_arguments(req: PromptRequest) -> dict:
+    """The metadata the caller passed, as `portunus_prompt` arguments, so the
+    completing call registers the reference the same way. Defaults are left
+    out."""
+    args: dict = {"name": req.name, "sm_name": req.sm_name,
+                  "value_file": _VALUE_FILE_PLACEHOLDER}
+    for key in ("provider", "project", "org", "env", "scope", "description",
+                "purpose", "group", "repo"):
+        if getattr(req, key):
+            args[key] = getattr(req, key)
+    if req.kind != "password":
+        args["kind"] = req.kind
+    if req.secret_type:
+        args["secret_type"] = req.secret_type
+    if req.tags:
+        args["tags"] = dict(req.tags)
+    if req.enable:
+        args["enable"] = True
+    if req.gate:
+        args["gate"] = True
+    return args
+
+
+def _request_cli(req: PromptRequest) -> List[str]:
+    argv = ["portunus", "prompt", req.name, req.sm_name,
+            "--value-file", _VALUE_FILE_PLACEHOLDER]
+    for key in ("provider", "project", "org", "env", "scope", "description",
+                "purpose", "group", "repo"):
+        if getattr(req, key):
+            argv += [f"--{key}", getattr(req, key)]
+    if req.kind != "password":
+        argv += ["--kind", req.kind]
+    if req.secret_type:
+        argv += ["--type", req.secret_type.replace("_", "-")]
+    if req.tags:
+        argv += ["--tags", ",".join(f"{k}={v}" for k, v in req.tags.items())]
+    if req.enable:
+        argv.append("--enable")
+    if req.gate:
+        argv.append("--gate")
+    return argv
+
+
+def _t3_context(req: PromptRequest) -> str:
+    """Purpose and group as sentences that lead a card's reason, so the human
+    sees name, description (the label), purpose and group in the card."""
+    parts = [f"{line}." if not line.endswith(".") else line for line in req.context_lines]
+    return " ".join(_one_line(p, 200) for p in parts) + (" " if parts else "")
+
+
+def t3_handoff(req: PromptRequest, cli: bool = False) -> dict:
+    """Step one of the t3 surface: tell the agent which card to raise and
+    how to finish. Pure -- touches neither the registry, the vault nor the
+    audit log."""
+    reason = _t3_context(req) + (f"The value is stored in your Portunus vault as "
+                                 f"'{req.name}' and the agent never sees it.")
+    if req.gate:
+        reason += " Each use will need your approval."
+    then: dict = {"tool": "portunus_prompt", "arguments": _request_arguments(req)}
+    if cli:
+        then["cli"] = _request_cli(req)
+    return {
+        "stored": False, "pending": True, "surface": T3_SURFACE, "name": req.name,
+        "card": {
+            "tool": T3_CARD_TOOL,
+            "arguments": {
+                "label": _one_line(req.description or req.name, T3_LABEL_MAX) or req.name,
+                "reason": reason,
+                "delivery": "file",
+            },
+        },
+        "then": then,
+        "note": "Call the card tool, then call portunus_prompt again with value_file set "
+                "to the path it returned. Do not read, print or copy that file.",
+    }
+
+
+def _value_file_problem(st: os.stat_result) -> str:
+    """Why a file with this stat result is not acceptable as a card's value
+    file ("" when it is)."""
+    if stat.S_ISLNK(st.st_mode):
+        return "value_file is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "value_file is not a regular file"
+    if st.st_uid != os.getuid():
+        return "value_file is not owned by the current user"
+    if st.st_mode & 0o077:
+        return "value_file is readable by group or others (want mode 0600)"
+    if st.st_size == 0:
+        return "value_file is empty; nothing stored"
+    if st.st_size > VALUE_FILE_MAX_BYTES:
+        return f"value_file is larger than {VALUE_FILE_MAX_BYTES // 1024} KiB"
+    return ""
+
+
+def read_value_file(path: str) -> str:
+    """Read the value a T3 Code card saved. Raises PromptError (never with
+    the value in it) unless `path` is an absolute path to a private regular
+    file of ours: not a symlink, owned by this uid, no group/other bits,
+    between 1 byte and 64 KiB. Never deletes or modifies the file."""
+    if not path or not os.path.isabs(path):
+        raise PromptError("value_file must be an absolute path")
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        raise PromptError("value_file does not exist")
+    except OSError as exc:
+        raise PromptError(f"cannot inspect value_file: {exc.strerror}")
+    problem = _value_file_problem(before)
+    if problem:
+        raise PromptError(problem)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError as exc:
+        raise PromptError(f"cannot open value_file: {exc.strerror}")
+    try:
+        # Re-check what was actually opened: the path could have been
+        # swapped between lstat() and open().
+        opened = os.fstat(fd)
+        problem = _value_file_problem(opened)
+        if not problem and (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            problem = "value_file changed while it was being opened"
+        if problem:
+            raise PromptError(problem)
+        raw = b""
+        while len(raw) <= VALUE_FILE_MAX_BYTES:
+            chunk = os.read(fd, VALUE_FILE_MAX_BYTES + 1 - len(raw))
+            if not chunk:
+                break
+            raw += chunk
+    finally:
+        os.close(fd)
+    if len(raw) > VALUE_FILE_MAX_BYTES:
+        raise PromptError(f"value_file is larger than {VALUE_FILE_MAX_BYTES // 1024} KiB")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PromptError("value_file is not UTF-8 text")
+    finally:
+        del raw
+
+
+def complete_from_file(req: PromptRequest, registry, broker, backend, value_file: str) -> dict:
+    """Step two of the t3 surface: store what the card saved, then delete
+    the card's file.
+
+    The file is deleted only once the value is in the vault. Every earlier
+    failure (an unsafe file, an empty value, a store that raises) leaves it
+    where it is and says so, so the human does not have to type the value
+    again."""
+    try:
+        value = _strip_one_newline(read_value_file(value_file))
+    except PromptError as exc:
+        return {"error": str(exc)}
+    if not value:
+        return {"error": "empty secret value; nothing stored"}
+
+    existed = req.name in registry
+    progress: List[str] = []
+    try:
+        result = _store_value(req, registry, broker, backend, value, T3_SURFACE,
+                              progress=progress)
+    except Exception as exc:  # noqa: BLE001 -- must decide the file's fate on any failure
+        if not progress:
+            # Nothing reached the vault. Undo a registry entry this call
+            # created, and leave the file for a retry.
+            if not existed and req.name in registry:
+                try:
+                    registry.remove(req.name)
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"error": f"could not store the value ({type(exc).__name__}); nothing stored. "
+                             "The card's file was left in place: fix the problem and call "
+                             "again with the same value_file, or delete the file"}
+        # The value is in the vault but a later step (audit, gate, enable)
+        # failed. The file has done its job, so it still goes.
+        result = {"name": req.name, "stored": True, "surface": T3_SURFACE,
+                  "warning": f"the value was stored but finishing up failed ({type(exc).__name__}); "
+                             f"check `portunus status {req.name}`"}
+    finally:
+        del value
+    if result.get("error"):
+        # Rejected before anything was stored (e.g. not a valid TOTP key):
+        # same rule as any failure, the file stays for a retry.
+        return result
+
+    try:
+        os.unlink(value_file)
+        result["file_removed"] = True
+    except OSError:
+        result["file_removed"] = False
+        note = f"could not delete the card's file; delete it yourself without reading it: {value_file}"
+        result["warning"] = f"{result['warning']}; {note}" if "warning" in result else note
+    return result
+
+
+def _store_value(req: PromptRequest, registry, broker, backend, value: str, used: str,
+                 progress: Optional[List[str]] = None) -> dict:
+    """Register the reference and store `value`: the one place a prompted
+    value enters the vault, whichever surface it came from. Appends
+    "stored" to `progress` the moment the vault has the value. Returns
+    metadata only.
+
+    Re-prompting an existing gated reference keeps its gate: a new value
+    is not a reason to drop the approval requirement (GH #251). Only
+    `portunus gate --off` removes a gate."""
+    try:
+        value, extra = prepare_typed_value(req.secret_type, value)
+    except totp_mod.TotpError as exc:
+        broker.audit.append("prompt", req.sm_name, "rejected:invalid-totp")
+        return {"error": f"{exc}; nothing stored"}
+    prior = registry.get(req.name)
+    keep_gate = prior is not None and prior.approval == "required"
+    ref = registry.add(
+        req.name, req.sm_name, scope=req.scope, kind=req.kind, state="dropped",
+        approval="required" if keep_gate else "",
+        org=req.org, provider=req.provider, project=req.project, env=req.env,
+        tags=req.tags, description=req.description, purpose=req.purpose,
+        group=req.group, repo=req.repo,
+        backend=written_backend_kind(backend), secret_type=req.secret_type,
+    )
+    backend.store(ref.sm_name, value)
+    del value
+    if progress is not None:
+        progress.append("stored")
+    broker.audit.append("drop", ref.sm_name, f"stored:prompt:{used}")
+    if (req.gate or req.secret_type == totp_mod.SECRET_TYPE_RECOVERY_CODE) and not keep_gate:
+        broker.gate(ref.name, on=True)
+    if req.enable:
+        ref = registry.set_state(ref.name, "enabled")
+    ref = registry.require(ref.name)
+    out = {"name": ref.name, "state": ref.state, "stored": True,
+           "gated": ref.approval == "required", "surface": used,
+           "backend": ref.backend}
+    if req.secret_type:
+        out["secret_type"] = req.secret_type
+        out.update(extra)
+    return out
+
+
+# --- card kind (GH #251) ----------------------------------------------------
+#
+# A card is asked for as fields. zenity can show them all in one form; every
+# other desktop surface asks one field at a time, checking each as it is
+# entered and asking again (up to CARD_ATTEMPTS times) when it fails. The
+# finished card is checked as a whole (Luhn, expiry not in the past, CVC
+# length) before anything is stored.
+
+CARD_ATTEMPTS = 3
+_FORM_SEPARATOR = "\x1e"  # ASCII record separator: nobody types it into a card
+
+
+def _card_form_argv(title: str, text: str) -> List[str]:
+    argv = ["zenity", "--forms", "--title", title, "--text", text,
+            "--separator", _FORM_SEPARATOR]
+    for fld in card_mod.FIELDS:
+        label = fld.label if fld.required else f"{fld.label} (optional)"
+        argv += ["--add-password" if fld.hidden else "--add-entry", label]
+    return argv
+
+
+def _read_card_form(req: PromptRequest, runner, timeout: int, today=None) -> "card_mod.Card":
+    """zenity: every field in one window. A card that fails a check reopens
+    the form with the reason, up to CARD_ATTEMPTS times."""
+    text = req.card_text
+    for _ in range(CARD_ATTEMPTS):
+        try:
+            proc = runner(_card_form_argv(req.title, text), capture_output=True,
+                          text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise PromptCancelled("timeout")
+        except OSError as exc:
+            raise PromptError(f"could not start zenity: {exc.strerror}")
+        if proc.returncode != 0:
+            raise PromptCancelled()
+        parts = _strip_one_newline(proc.stdout).split(_FORM_SEPARATOR)
+        fields = {fld.key: (parts[i] if i < len(parts) else "")
+                  for i, fld in enumerate(card_mod.FIELDS)}
+        del parts
+        try:
+            return card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            problem = str(exc)
+            text = f"{req.card_text}\n\nNot saved: {problem}. Please check and try again."
+        finally:
+            del fields
+    raise PromptError(f"{problem}; nothing stored")
+
+
+def _read_card_guided(surface: str, req: PromptRequest, runner, timeout: int, which,
+                      today=None) -> "card_mod.Card":
+    """One dialog per field. Number and CVC are masked; expiry, name and
+    postal code are shown so the human can see what they typed."""
+    fields: Dict[str, str] = {}
+    steps = card_mod.fields_in_order()
+    try:
+        for i, fld in enumerate(steps, 1):
+            text = f"{req.card_text}\n\n{card_mod.field_prompt(fld, i, len(steps))}"
+            for _ in range(CARD_ATTEMPTS):
+                raw = _ask_dialog(surface, text, req.title, runner, timeout, which,
+                                  hidden=fld.hidden).strip()
+                if not raw and not fld.required:
+                    break
+                problem = card_mod.check_field(fld.key, raw, fields, today)
+                if problem is None:
+                    fields[fld.key] = raw
+                    break
+                text = (f"{req.card_text}\n\n{card_mod.field_prompt(fld, i, len(steps))}"
+                        f"\n\nNot accepted: {problem}.")
+            else:
+                raise PromptError(f"{fld.label}: {problem}; nothing stored")
+        try:
+            return card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            raise PromptError(f"{exc}; nothing stored")
+    finally:
+        fields.clear()
+
+
+def read_card(req: PromptRequest, surface: str = "auto", *, runner=None, popen=None,
+              which=None, env=None, platform=None, timeout: int = DEFAULT_TIMEOUT,
+              today=None):
+    """Return (surface_used, Card). Raises PromptCancelled/PromptError."""
+    runner = runner or subprocess.run
+    which = which or shutil.which
+    if surface == "auto":
+        options = available_surfaces(env=env, platform=platform, which=which)
+        if not options:
+            raise PromptError(
+                "no human-facing input surface available for a card -- use --surface t3 "
+                "inside T3 Code, or ask the human to run `portunus prompt <name> <sm_name> "
+                "--kind card` at their own desktop"
+            )
+        surface = options[0]
+    if surface == "zenity":
+        return surface, _read_card_form(req, runner, timeout, today)
+    if surface in DIALOG_SURFACES:
+        return surface, _read_card_guided(surface, req, runner, timeout, which, today)
+    if surface in TERMINAL_SURFACES:
+        fields = read_from_terminal(surface, req, popen=popen, timeout=timeout, card=True)
+        try:
+            return surface, card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            raise PromptError(f"{exc}; nothing stored")
+        finally:
+            fields.clear()
+    raise PromptError(f"unknown surface: {surface}")
+
+
+def _store_card(req: PromptRequest, registry, broker, backend, card, used: str,
+                progress: Optional[List[str]] = None) -> dict:
+    """Store a checked card as ONE reference; keep only brand + last four
+    outside the vault."""
+    result = _store_value(req, registry, broker, backend, card.to_value(), used,
+                          progress=progress)
+    meta = card.meta()
+    registry.set_card(req.name, meta)
+    result["kind"] = card_mod.KIND
+    result["card"] = card_mod.display(meta)
+    return result
+
+
+def t3_card_handoff(req: PromptRequest, cli: bool = False) -> dict:
+    """Step one of a t3 card: one T3 Code secret card per field (a T3 card
+    holds one value), then one completing call with every file."""
+    base = _one_line(req.description or req.name, T3_LABEL_MAX - 30) or req.name
+    reason = _t3_context(req) + (f"Stored in your Portunus vault as the card '{req.name}'. "
+              "The agent only ever sees its brand and last four digits.")
+    if req.gate:
+        reason += " Each use will need your approval."
+    cards = []
+    for fld in card_mod.FIELDS:
+        label = f"{base}: {fld.label}" + ("" if fld.required else " (optional)")
+        cards.append({
+            "field": fld.key, "required": fld.required,
+            "tool": T3_CARD_TOOL,
+            "arguments": {"label": _one_line(label, T3_LABEL_MAX),
+                          "reason": f"{reason} {fld.hint[0].upper()}{fld.hint[1:]}.",
+                          "delivery": "file"},
+        })
+    arguments = _request_arguments(req)
+    arguments.pop("value_file", None)
+    arguments["kind"] = card_mod.KIND
+    arguments["value_files"] = {fld.key: _VALUE_FILE_PLACEHOLDER for fld in card_mod.FIELDS}
+    then: dict = {"tool": "portunus_prompt", "arguments": arguments}
+    if cli:
+        argv = _request_cli(req)
+        at = argv.index("--value-file")
+        del argv[at:at + 2]
+        for fld in card_mod.FIELDS:
+            argv += ["--value-file", f"{fld.key}={_VALUE_FILE_PLACEHOLDER}"]
+        then["cli"] = argv
+    return {
+        "stored": False, "pending": True, "surface": T3_SURFACE, "name": req.name,
+        "kind": card_mod.KIND, "cards": cards, "then": then,
+        "note": "Call the card tool once per field, in order. The optional fields may be "
+                "skipped (leave them out of value_files). Then call portunus_prompt once "
+                "with value_files mapping each field to the path its card returned. Do not "
+                "read, print or copy those files.",
+    }
+
+
+def _remove_files(paths: List[str]) -> List[str]:
+    """Delete card files; return the ones that could not be deleted."""
+    left = []
+    for path in paths:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            left.append(path)
+    return left
+
+
+def complete_card_from_files(req: PromptRequest, registry, broker, backend,
+                             value_files: Dict[str, str], today=None) -> dict:
+    """Step two of a t3 card. `value_files` maps a field (number, expiry,
+    cvc, name, postal) to the file its card saved, or has the single key
+    "card" for one file holding every field (JSON or `field: value` lines).
+
+    A card that fails a check is NOT stored and its files are deleted: the
+    human has to type it again anyway, and a rejected card number should not
+    sit on disk. A file that cannot be read safely is left alone."""
+    if not value_files:
+        return {"error": "value_files is empty"}
+    unknown = sorted(set(value_files) - set(card_mod.FIELD_KEYS) - {"card"})
+    if unknown:
+        return {"error": f"unknown card field(s) in value_files: {', '.join(unknown)} "
+                         f"(want {', '.join(card_mod.FIELD_KEYS)}, or card for one file)"}
+    if "card" in value_files and len(value_files) > 1:
+        return {"error": "value_files has `card` (one file for every field) and separate "
+                         "fields; pass one or the other"}
+    paths = [p for p in value_files.values() if p]
+    fields: Dict[str, str] = {}
+    try:
+        for key, path in value_files.items():
+            if not path:
+                continue
+            try:
+                text = _strip_one_newline(read_value_file(path)).strip()
+            except PromptError as exc:
+                return {"error": f"{key}: {exc}"}
+            if key == "card":
+                try:
+                    fields.update(card_mod.parse_single(text))
+                except card_mod.CardError as exc:
+                    left = _remove_files(paths)
+                    return {"error": f"{exc}; nothing stored", "files_removed": not left}
+            else:
+                fields[key] = text
+            del text
+        try:
+            card = card_mod.from_fields(fields, today)
+        except card_mod.CardError as exc:
+            left = _remove_files(paths)
+            out = {"error": f"{exc}; nothing stored. The card's files were deleted: ask the "
+                            "human to enter the card again", "files_removed": not left}
+            if left:
+                out["warning"] = ("could not delete these files; delete them without reading "
+                                  "them: " + ", ".join(left))
+            return out
+    finally:
+        fields.clear()
+
+    existed = req.name in registry
+    progress: List[str] = []
+    try:
+        result = _store_card(req, registry, broker, backend, card, T3_SURFACE,
+                             progress=progress)
+    except Exception as exc:  # noqa: BLE001
+        if not progress:
+            if not existed and req.name in registry:
+                try:
+                    registry.remove(req.name)
+                except Exception:  # noqa: BLE001
+                    pass
+            return {"error": f"could not store the card ({type(exc).__name__}); nothing "
+                             "stored. The card's files were left in place: fix the problem "
+                             "and call again with the same value_files, or delete the files"}
+        result = {"name": req.name, "stored": True, "surface": T3_SURFACE,
+                  "kind": card_mod.KIND,
+                  "warning": f"the card was stored but finishing up failed "
+                             f"({type(exc).__name__}); check `portunus status {req.name}`"}
+    finally:
+        del card
+    left = _remove_files(paths)
+    result["file_removed"] = not left
+    if left:
+        note = ("could not delete these files; delete them without reading them: "
+                + ", ".join(left))
+        result["warning"] = f"{result['warning']}; {note}" if "warning" in result else note
+    return result
+
+
+def _run_card_prompt(req, registry, broker, backend, surface, value_file, value_files,
+                     cli, env, kwargs) -> dict:
+    if value_file and not value_files:
+        value_files = {"card": value_file}
+    if value_files:
+        if surface not in ("auto", T3_SURFACE):
+            return {"error": f"value_files completes a t3 prompt and cannot be combined "
+                             f"with surface={surface}"}
+        return complete_card_from_files(req, registry, broker, backend, value_files,
+                                        today=kwargs.get("today"))
+    try:
+        surface = choose_surface(surface, env)
+    except PromptError as exc:
+        return {"error": str(exc)}
+    if surface == T3_SURFACE:
+        return t3_card_handoff(req, cli=cli)
+    if surface == "ui":
+        return {"error": "the ui surface cannot take a card yet -- use --surface t3, a "
+                         "desktop dialog or a terminal window"}
+    try:
+        used, card = read_card(req, surface, env=env, **kwargs)
+    except PromptCancelled as exc:
+        broker.audit.append("prompt", req.sm_name, f"cancelled:{exc.reason}")
+        out = {"cancelled": True}
+        if exc.reason != "cancelled":
+            out["reason"] = exc.reason
+        return out
+    except PromptError as exc:
+        return {"error": str(exc)}
+    try:
+        return _store_card(req, registry, broker, backend, card, used)
+    finally:
+        del card
+
+
+
 def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "auto",
-               open_ui: Optional[Callable[[str], dict]] = None, **kwargs) -> dict:
+               open_ui: Optional[Callable[[str], dict]] = None, value_file: str = "",
+               cli: bool = False, env=None, value_files: Optional[Dict[str, str]] = None,
+               **kwargs) -> dict:
     """Prompt the human, store the answer, return metadata only.
 
     Every return path is a plain dict with no value in it:
     ``{"name", "state", "stored": True, "surface"}``, ``{"cancelled": True}``,
     ``{"name", "state": "requested", "stored": False, "pending": True, ...}``
-    (ui surface) or ``{"error": ...}``.
+    (ui surface), ``{"stored": False, "pending": True, "surface": "t3",
+    "card", "then", ...}`` (t3 surface, first call) or ``{"error": ...}``.
+
+    `value_file` completes a t3 prompt: the path a T3 Code card returned.
+    `cli` adds the equivalent `portunus prompt` argv to a t3 handoff.
+    `value_files` completes a t3 card (``--kind card``): field -> path.
     """
     if not hasattr(backend, "store"):
         return {
@@ -414,9 +1079,28 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
     if req.secret_type not in totp_mod.SECRET_TYPES:
         return {"error": f"unknown secret_type {req.secret_type!r} "
                          f"(want one of {', '.join(t for t in totp_mod.SECRET_TYPES if t)})"}
+    if req.secret_type and req.is_card:
+        return {"error": "--kind card cannot be combined with --type "
+                         f"{req.secret_type.replace('_', '-')}; a card is its own kind"}
     if surface == "ui" and req.secret_type:
         return {"error": f"the ui surface cannot store a {req.secret_type} secret yet -- "
                          "use a desktop dialog or terminal surface"}
+    if req.is_card:
+        return _run_card_prompt(req, registry, broker, backend, surface, value_file,
+                                value_files, cli, env, kwargs)
+    if value_files:
+        return {"error": "value_files is only for --kind card; use value_file"}
+    if value_file:
+        if surface not in ("auto", T3_SURFACE):
+            return {"error": f"value_file completes a t3 prompt and cannot be combined "
+                             f"with surface={surface}"}
+        return complete_from_file(req, registry, broker, backend, value_file)
+    try:
+        surface = choose_surface(surface, env)
+    except PromptError as exc:
+        return {"error": str(exc)}
+    if surface == T3_SURFACE:
+        return t3_handoff(req, cli=cli)
     if surface == "ui":
         if open_ui is None:
             return {"error": "the ui surface is not available from here"}
@@ -432,7 +1116,7 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
                 "surface": "ui", **opened}
 
     try:
-        used, value = read_secret(req, surface, **kwargs)
+        used, value = read_secret(req, surface, env=env, **kwargs)
     except PromptCancelled as exc:
         broker.audit.append("prompt", req.sm_name, f"cancelled:{exc.reason}")
         out = {"cancelled": True}
@@ -443,34 +1127,7 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
         return {"error": str(exc)}
     if not value:
         return {"error": "empty secret value; nothing stored"}
-    try:
-        value, extra = prepare_typed_value(req.secret_type, value)
-    except totp_mod.TotpError as exc:
-        broker.audit.append("prompt", req.sm_name, "rejected:invalid-totp")
-        return {"error": f"{exc}; nothing stored"}
-
-    ref = registry.add(
-        req.name, req.sm_name, scope=req.scope, kind=req.kind, state="dropped",
-        org=req.org, provider=req.provider, project=req.project, env=req.env,
-        tags=req.tags, description=req.description, purpose=req.purpose,
-        group=req.group, repo=req.repo,
-        backend=written_backend_kind(backend), secret_type=req.secret_type,
-    )
-    backend.store(ref.sm_name, value)
-    del value
-    broker.audit.append("drop", ref.sm_name, f"stored:prompt:{used}")
-    if req.gate or req.secret_type == totp_mod.SECRET_TYPE_RECOVERY_CODE:
-        broker.gate(ref.name, on=True)
-    if req.enable:
-        ref = registry.set_state(ref.name, "enabled")
-    ref = registry.require(ref.name)
-    out = {"name": ref.name, "state": ref.state, "stored": True,
-           "gated": ref.approval == "required", "surface": used,
-           "backend": ref.backend}
-    if req.secret_type:
-        out["secret_type"] = req.secret_type
-        out.update(extra)
-    return out
+    return _store_value(req, registry, broker, backend, value, used)
 
 
 def prepare_typed_value(secret_type: str, value: str):

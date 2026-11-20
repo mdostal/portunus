@@ -117,7 +117,21 @@ portunus approve my-ref --ttl 5
 portunus gate my-ref --off
 ```
 
-The approval is scoped to the **reference name only** — not to the requesting identity. Any caller can resolve an approved reference until the approval expires. This is a known gap: future work will scope approvals to a specific principal.
+A plain `portunus approve` is scoped to the **reference name only**, not to the requesting identity: any caller can resolve the reference until the approval expires. `--once` limits it to a single resolve. Approvals that answer an agent's request (below) are bound to the requester.
+
+### Approval windows
+
+An agent can ask for an approval but cannot grant one.
+
+- **Self-approval is refused.** `portunus approve`, `portunus approval enroll` and `portunus approval remove` exit 1 when an agent marker is set in the environment (`DOSTAL_AGENT`, `PORTUNUS_AGENT`, `AI_AGENT`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `T3CODE_THREAD_ID`, `MULTICA_AGENT_ID`), and the attempt is audited as `refused:agent requester:<who> marker:<variable>`.
+- **The agent asks.** `portunus request-approval <name> --purpose ... --amount ... --merchant ...` (MCP `portunus_request_approval`) records a request, audited as `approval_request requested:<id> requester:<who>`. Requests expire after 15 minutes.
+- **The human approves with a factor the agent cannot reach.** `portunus approval enroll` registers a TOTP authenticator app; keep it on your phone. Every approval then needs a current 6-digit code. A code is accepted once, and never an older one after a newer one, so a code seen once cannot be replayed. The human can answer in a T3 Code card, a desktop dialog, or by running `portunus approve <name> --request <id>`.
+- **Exactly one resolve.** The approval is single-use: the first resolve claims it with an atomic rename, so of two concurrent resolves only one gets through. It is bound to the requester (`DOSTAL_AGENT`, `PORTUNUS_AGENT` or `MULTICA_AGENT_NAME`, else `agent:$USER`): another caller gets `ApprovalRequired`, audited as `approval-not-for:<who>`, and does not use it up. It must be used within 10 minutes. Non-consuming checks such as leak-scan and sync do not use it up.
+- **Audited.** The `approve` line records `approved:<approver> requester:<who> channel:<t3|dialog:<surface>|cli> request:<id> factor:totp uses:1`. Wrong codes are audited as `refused:bad-code`; three wrong codes or a cancelled dialog deny the request.
+
+Without an enrolled factor, `portunus approve` keeps working at a human's terminal but warns, and requests can only be approved there.
+
+**Limits.** The markers and the factor stop an agent from approving by accident or by asking Portunus. They are not an operating-system boundary: a process running as your user with raw access to `~/.portunus` could write an approval file itself. To close that, run agents as a different OS user from the one that owns the vault.
 
 ---
 

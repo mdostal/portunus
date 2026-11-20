@@ -802,8 +802,8 @@ portunus ui open                              # just opens the dashboard
 portunus ui open --fulfill vercel-mdostal     # deep-links straight into that pending request's form
 ```
 
-Reads `PORTUNUS_UI_URL` (default `http://localhost:3000`, matching `npm run dev`'s own default
-below). Refuses clearly — before ever opening a browser — if `--fulfill NAME` doesn't exist or
+Reads `PORTUNUS_UI_URL` (default `http://127.0.0.1:7781`, matching `npm run dev` below; set
+`PORTUNUS_UI_PORT` to move both the UI and this default together). Refuses clearly — before ever opening a browser — if `--fulfill NAME` doesn't exist or
 isn't `state=requested` anymore, and if no UI is reachable at that URL at all (never opens a
 browser to a broken page). The same "Fulfill…" action is also reachable by hand: click any
 `requested`-state reference in the Console/Project Explorer, then "Fulfill…" in its detail
@@ -878,6 +878,13 @@ codebase, now available to any Claude Code session on the machine, in any projec
 the actual usage conventions (when to use `ask` vs. `drop`, the fail-closed-means-don't-guess
 discipline, never echoing a value back after a successful store) that the raw MCP tool table
 below doesn't — a fresh agent gets the *judgment*, not just the tool names.
+
+**T3 Code.** Inside a [T3 Code](docs/t3-code.md) thread, `portunus_prompt` uses T3 Code's own
+secret card as its input surface: the agent raises the card, the human types into it, and
+Portunus stores the value and deletes the card's file. In the other direction,
+`portunus t3 enable` plus `portunus t3 install-shim` let T3 Code's secret-provider slot read a
+reference such as `op://portunus/sudo-pw/value` from the vault. Setup, guard rails and
+troubleshooting are in [docs/t3-code.md](docs/t3-code.md).
 
 **Tools:**
 
@@ -1188,7 +1195,7 @@ auto-block anything; v1 is deliberately advisory-only (docs/architecture.md §11
 ```bash
 cd ui
 npm install
-npm run dev   # http://localhost:3000
+npm run dev   # http://127.0.0.1:7781 (PORTUNUS_UI_PORT to change)
 ```
 
 **Bind address.** Every way of starting the UI (`npm run dev`, `npm start`, and the standalone
