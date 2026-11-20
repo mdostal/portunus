@@ -30,6 +30,18 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **TOTP seeds held by Portunus (PANT-1404, GH #253).** A new `totp` secret type stores an
+  `otpauth://totp` URI. `portunus otp <ref>` and the MCP tool `portunus_otp` return only the current
+  code and its seconds left, never the seed or the URI. Every resolve sink refuses a totp reference.
+  Seeds come in through `portunus prompt --type totp` (MCP `portunus_prompt(secret_type="totp")`)
+  or `portunus drop --qr IMAGE` (via `zbarimg`), so they never pass through chat. `otp` is gated
+  like any resolve (per use: `approve --ttl 1`, per session: `approve --ttl 2h`), and each code
+  writes an `otp … issued` audit line. `recovery_code` references are gated by default and move to
+  the new `used` state after the one resolve that hands them out. `leak-scan` searches for a totp
+  reference's base32 seed. RFC 6238 SHA1/SHA256/SHA512 vectors are tested. `secret_type` is only
+  written to `registry.json` when set; a registry that holds a totp or recovery-code reference
+  can't be read by older Portunus versions.
+
 - **Keyless Claude access through Anthropic Workload Identity Federation (PANT-1406, GH #248).**
   `portunus identity-token mint --audience A --out FILE [--watch]` mints a Google identity token
   into a 0600 file and keeps it fresh. The token can come from gcloud impersonation, the

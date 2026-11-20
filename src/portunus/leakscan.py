@@ -35,6 +35,7 @@ scan's time budget on noise instead of signal).
 """
 from __future__ import annotations
 
+import base64
 import glob as glob_module
 import json
 import os
@@ -46,6 +47,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+from . import totp as totp_mod
 from .backend import BackendError, SecretBackend
 from .broker import ApprovalRequired, Broker, Identity, NotAuthorized, NotInjectable
 from .atomicio import atomic_write
@@ -140,10 +142,29 @@ def get_values(
             value = chosen_backend.access(gated.sm_name, project=gated.project)
         except BackendError:
             continue
+        if getattr(gated, "secret_type", "") == totp_mod.SECRET_TYPE_TOTP:
+            # A totp reference stores a canonical otpauth URI, which is never
+            # how the seed shows up in a transcript or log. Search for the
+            # seed itself instead: it's what an issuer's setup page shows and
+            # what any otpauth:// URI carrying this seed contains, so one
+            # needle catches both a pasted seed and a pasted URI.
+            value = _totp_seed_needle(value)
+            if value is None:
+                continue
         if len(value) < MIN_SEARCHABLE_VALUE_LENGTH:
             continue
         values[gated.name] = value
     return values
+
+
+def _totp_seed_needle(stored: str) -> Optional[str]:
+    """The canonical (uppercase, unpadded base32) seed for a stored totp
+    value, or None when it won't parse. Never raises with the value."""
+    try:
+        params = totp_mod.parse(stored)
+    except totp_mod.TotpError:
+        return None
+    return base64.b32encode(params.secret).decode("ascii").rstrip("=")
 
 
 def _compile_pattern(values: Dict[str, str]):

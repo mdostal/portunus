@@ -27,8 +27,9 @@ import stat
 import tempfile
 from typing import Callable, List, Optional, Sequence
 
+from . import totp as totp_mod
 from .backend import SecretBackend
-from .broker import Broker, Identity
+from .broker import Broker, Identity, NotInjectable
 
 # {{secret:NAME}} where NAME is anything but a closing brace.
 PLACEHOLDER_RE = re.compile(r"\{\{secret:([^}]+)\}\}")
@@ -36,6 +37,17 @@ PLACEHOLDER_RE = re.compile(r"\{\{secret:([^}]+)\}\}")
 
 class UnknownReference(KeyError):
     """A placeholder names a reference that is not in the registry."""
+
+
+class TotpNotResolvable(NotInjectable):
+    """A totp reference was named in a {{secret:NAME}} template. Its value is
+    the seed, which never leaves Portunus -- only `portunus otp` hands out a
+    code. Subclasses NotInjectable so every existing boundary's error path
+    already catches it."""
+
+
+class NotTotp(ValueError):
+    """`otp` was asked for a reference that is not a totp secret."""
 
 
 class Resolver:
@@ -68,11 +80,50 @@ class Resolver:
         """Policy-gate then fetch one value. Caller must not leak the result."""
         if name not in self.registry:
             raise UnknownReference(name)
+        pre = self.registry.get(name)
+        if pre is not None and pre.secret_type == totp_mod.SECRET_TYPE_TOTP:
+            # Checked BEFORE the gate so a refused seed never consumes an
+            # approval or shows up as an "ok" resolve.
+            self.broker.audit.append("resolve", pre.sm_name, "denied-totp-seed")
+            raise TotpNotResolvable(
+                f"{pre.sm_name} is a TOTP seed -- it never resolves into a template; "
+                f"use `portunus otp {name}` (MCP: portunus_otp) for the current code"
+            )
         ref = self.broker.check_injectable(name, requester=Identity.from_env())   # raises on dropped/revoked/gated
-        backend = self.backend_for(ref) if self.backend_for is not None else self.backend
-        value = backend.access(ref.sm_name, project=ref.project)  # the only place a value appears
+        value = self._access(ref)  # the only place a value appears
         self.broker.audit.append("resolve", ref.sm_name, "ok")
+        if ref.secret_type == totp_mod.SECRET_TYPE_RECOVERY_CODE:
+            # One-time use: burn it the moment it has been handed out.
+            self.registry.set_state(ref.name, "used")
+            self.broker.audit.append("recovery_code", ref.sm_name, "used")
         return value
+
+    def _access(self, ref) -> str:
+        backend = self.backend_for(ref) if self.backend_for is not None else self.backend
+        return backend.access(ref.sm_name, project=ref.project)
+
+    # --- TOTP (PANT-1404) ---------------------------------------------------
+    def otp(self, name: str, now: Optional[float] = None) -> dict:
+        """Current TOTP code for a totp reference: {"code", "seconds_left",
+        "period", "digits"}. Same gate as any resolve (lifecycle, approval,
+        roles) and one audit line per code handed out. The seed itself never
+        leaves this method -- not in the return value, not in an exception."""
+        if name not in self.registry:
+            raise UnknownReference(name)
+        pre = self.registry.require(name)
+        if pre.secret_type != totp_mod.SECRET_TYPE_TOTP:
+            raise NotTotp(f"{name} is not a totp secret (secret_type={pre.secret_type or 'opaque'})")
+        ref = self.broker.check_injectable(name, requester=Identity.from_env())
+        seed_uri = self._access(ref)
+        try:
+            result = totp_mod.current(seed_uri, now=now)
+        except totp_mod.TotpError as exc:
+            self.broker.audit.append("otp", ref.sm_name, "error:unreadable-seed")
+            raise totp_mod.TotpError(f"{ref.sm_name}: stored seed is unusable ({exc})") from None
+        finally:
+            del seed_uri
+        self.broker.audit.append("otp", ref.sm_name, "issued")
+        return result
 
     def _substitute(self, text: str) -> str:
         """Return `text` with every placeholder replaced by its live value.
