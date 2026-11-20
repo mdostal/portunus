@@ -212,21 +212,42 @@ def cmd_reg(args) -> int:
                            injected_as=injected_as, group=args.group or "", related=related,
                            repo=args.repo or "")
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
+        sharing = _refs_sharing_value(registry, resolver, ref)
+        if sharing:
+            _err(
+                f"warning: {{{{secret:{ref.name}}}}} shares stored value {ref.sm_name!r} "
+                f"in the same backend with: {', '.join(sharing)} -- they resolve to the "
+                "same secret, and purging it for one affects all of them"
+            )
         return 0
     if args.action == "rm":
         ref = registry.get(args.name)
         if ref is None:
             print("no such reference")
             return 0
-        # Best-effort: also purge the underlying stored value from whichever
-        # backend actually serves this reference -- registry.remove() alone
-        # only drops the pointer, leaving the encrypted value (local
-        # backend) or the cloud secret (GCP/other) orphaned forever. Not
-        # every backend supports a programmatic remove (GCP Secret Manager
+        # Default: drop the registry pointer only. Purging the stored value is
+        # opt-in (--purge-value), because several references may share one
+        # backend + sm_name -- an unconditional purge silently destroyed a
+        # value other references still resolved to (portunus#247 / PANT-1407).
+        if not getattr(args, "purge_value", False):
+            registry.remove(args.name)
+            print(
+                f"removed {{{{secret:{args.name}}}}} -- registry entry only "
+                f"(stored value {ref.sm_name!r} kept; pass --purge-value to delete it)"
+            )
+            return 0
+        sharing = _refs_sharing_value(registry, resolver, ref)
+        if sharing:
+            return _err(
+                f"refusing to purge stored value {ref.sm_name!r}: still used by "
+                f"{', '.join(sharing)} in the same backend. Nothing was removed. "
+                "Run without --purge-value to drop only this registry entry."
+            )
+        # Not every backend supports a programmatic remove (GCP Secret Manager
         # deletion is deliberately out of scope here -- a human should do
-        # that explicitly in the console); those are skipped silently, the
-        # registry entry is still removed either way.
-        backend = resolver.backend_for(ref) if resolver.backend_for else resolver.backend
+        # that explicitly in the console); the registry entry is still
+        # removed either way.
+        backend = _backend_of(resolver, ref)
         purged_value = False
         if hasattr(backend, "remove"):
             try:
@@ -247,6 +268,37 @@ def cmd_reg(args) -> int:
         print(json.dumps({r.name: r.to_dict() for r in registry}, indent=2))
         return 0
     return _err(f"unknown reg action: {args.action}")
+
+
+def _backend_of(resolver, ref):
+    return resolver.backend_for(ref) if resolver.backend_for else resolver.backend
+
+
+def _storage_kinds(backend) -> set:
+    """The storage tiers a backend instance reads/writes, as a set of classes.
+    Compared by class, not identity: the router builds a separate
+    LocalEncryptedBackend for the fallback and for kind="local", but both
+    hit the same on-disk vault. A SyncingBackend counts as both its remote
+    and its local cache tier. Over-matching is deliberate -- a false
+    "shared" only blocks a purge, a false "unshared" loses data."""
+    kinds = {type(backend)}
+    for attr in ("remote", "local"):
+        inner = getattr(backend, attr, None)
+        if inner is not None and not isinstance(inner, (str, bytes, os.PathLike)):
+            kinds.add(type(inner))
+    return kinds
+
+
+def _refs_sharing_value(registry, resolver, ref) -> list:
+    """Names of other references whose sm_name equals ref's and that resolve
+    to the same storage backend -- i.e. would lose their value if ref's
+    stored value were purged. Metadata only; never touches a value."""
+    mine = _storage_kinds(_backend_of(resolver, ref))
+    return sorted(
+        other.name for other in registry
+        if other.name != ref.name and other.sm_name == ref.sm_name
+        and mine & _storage_kinds(_backend_of(resolver, other))
+    )
 
 
 def _parse_tags(raw: str) -> dict:
@@ -3342,8 +3394,11 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--group", default="", help="hierarchical path, e.g. project-y/supabase/auth")
     a.add_argument("--related", default="", help="comma-separated reference names")
     a.add_argument("--repo", default="", help="the git repo that consumes this secret")
-    rm = rs.add_parser("rm", help="remove a reference")
+    rm = rs.add_parser("rm", help="remove a reference (registry entry only by default)")
     rm.add_argument("name")
+    rm.add_argument("--purge-value", action="store_true",
+                    help="also delete the stored value; refused while another reference "
+                         "shares the same backend + sm_name")
     rs.add_parser("json", help="dump the registry as JSON")
     r.set_defaults(func=cmd_reg)
 
