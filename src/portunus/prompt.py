@@ -394,6 +394,14 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
             "error": "prompt requires the local-encrypted backend "
             "(unset PORTUNUS_BACKEND or set it to unset/local)"
         }
+    # Refuse a tag collision BEFORE asking the human for anything (#246).
+    clash = registry.identical_tags(
+        req.name, org=req.org, provider=req.provider, project=req.project,
+        env=req.env, repo=req.repo, tags=req.tags,
+    )
+    if clash:
+        return {"error": f"{req.name!r} would have exactly the same tags as "
+                         f"{', '.join(clash)} -- add a distinguishing tag; nothing was asked"}
     if surface == "ui":
         if open_ui is None:
             return {"error": "the ui surface is not available from here"}

@@ -6,6 +6,14 @@ All notable changes to Portunus are documented in this file.
 
 ### Fixed
 
+- **`reg rm` no longer purges a stored value other references still share (PANT-1407, GH #247).**
+  `portunus reg rm <ref>` used to delete the stored value along with the registry entry. When
+  another reference shared the same backend + sm_name, that reference silently lost its value.
+  `reg rm` now removes the registry entry only. `--purge-value` also deletes the stored value, but
+  is refused (nothing removed, non-zero exit) while any other reference resolves to the same
+  backend + sm_name, and lists those references. `reg add` now warns on stderr when a new
+  reference shares an sm_name with an existing one in the same backend.
+
 - **A ref written by `prompt`/`drop` resolves from where it was written (PANT-1218, GH #242).**
   `prompt`, `drop` and `drop-bulk` (CLI and MCP) store into the local vault but used to leave the
   ref's `backend` empty, so resolve followed the project's VaultBinding. For a GCP-bound project
@@ -15,6 +23,10 @@ All notable changes to Portunus are documented in this file.
   text `list` output, so you can see where a ref lives without resolving it. Refs created before
   this fix keep an empty backend; pin them with the new `portunus retag <name> --backend local`
   (`--backend default` clears a pin).
+- **No bare NOT_FOUND for a value that is in the local vault (PANT-1408, GH #246).** Follow-up to
+  #242 for refs that are still unpinned: an unpinned reference whose remote says NOT_FOUND falls back to its
+  local value, with a warning and an audit entry; other errors name where the value really is.
+  A write whose tags exactly match an existing reference is refused.
 
 ### Added
 
@@ -34,6 +46,11 @@ All notable changes to Portunus are documented in this file.
   `exec` and `env` remove `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and the other
   credentials that outrank federation, so a federated run can't bill the wrong account. No
   token is ever printed. See docs/anthropic-wif.md for the Console setup.
+- **`portunus doctor --fix-routing`**: finds stranded references and pins them local, pins them
+  remote (`--prefer remote`) or pushes them into GCP (`--push`, verified). It is a dry run unless
+  `--apply`. `portunus health` reports them as a degraded `routing` check, and `vault status` (run
+  by the installer) shows it. `bindings set` refuses to reroute local-only references unless
+  `--pin-local`, `--push` or `--force`.
 - **Anthropic liveness check (`anthropic`, PANT-1132, GH #197).** An LLM API key (`sk-ant-api…`)
   is probed with `GET https://api.anthropic.com/v1/models?limit=1`, which bills no tokens; 401 is
   `dead`. A Claude Code OAuth setup-token (`claude-code-oauth*`, or an `sk-ant-oat` value) is never

@@ -18,7 +18,9 @@ from mcp.server.fastmcp import FastMCP
 
 from .backend import BackendError, SyncingBackend, load_vault_bindings
 from .broker import ApprovalRequired, Identity, NotAuthorized, NotInjectable
-from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_configured
+from .cli import (
+    _build, _build_tree, _collision_message, _eager_sync_down, _TREE_KEY_FNS, _wif_configured,
+)
 from .crawl import crawl_candidates
 from .impact import impact as impact_of
 from .health import run_health
@@ -722,14 +724,16 @@ def portunus_drop(
         }
     if not value:
         return {"error": "empty secret value; nothing dropped"}
-    ref = registry.add(
-        name, sm_name, scope=scope, kind=kind, state="dropped",
-        provider=provider, project=project, env=env, tags=tags,
-        description=description, purpose=purpose, injected_as=injected_as,
-        group=group, related=related,
-        backend=written_backend_kind(local_backend, backend),
-        repo=repo, source_files=source_files,
-    )
+    try:
+        ref = registry.add(
+            name, sm_name, scope=scope, kind=kind, state="dropped",
+            provider=provider, project=project, env=env, tags=tags,
+            description=description, purpose=purpose, injected_as=injected_as,
+            group=group, related=related, backend=written_backend_kind(local_backend, backend),
+            repo=repo, source_files=source_files, reject_collisions=True,
+        )
+    except AmbiguousMatch as exc:
+        return {"error": _collision_message(name, exc)}
     local_backend.store(ref.sm_name, value)
     del value
     broker.audit.append("drop", ref.sm_name, "stored")
@@ -830,11 +834,14 @@ def portunus_drop_bulk(entries: List[dict]) -> dict:
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
                 related=entry.get("related"),
                 backend=written_backend_kind(local_backend, entry.get("backend", "")),
+                reject_collisions=True,
             )
             local_backend.store(ref.sm_name, entry_value)
             del entry_value
             broker.audit.append("drop", ref.sm_name, "stored")
             created.append(ref.name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": entry_name, "error": _collision_message(entry_name, exc)})
         except (ValueError, KeyError) as exc:
             failed.append({"name": entry_name, "error": str(exc)})
     return {"created": created, "failed": failed}

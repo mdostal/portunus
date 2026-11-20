@@ -11,7 +11,9 @@ def test_fresh_home_reports_not_initialized(home, capsys):
     rc = main(["vault", "status", "--json"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert json.loads(out) == {"initialized": False}
+    data = json.loads(out)
+    assert data["initialized"] is False
+    assert data["routing"]["ok"] is True
 
 
 def test_a_single_reference_marks_it_initialized(home, capsys):
@@ -19,7 +21,7 @@ def test_a_single_reference_marks_it_initialized(home, capsys):
     rc = main(["vault", "status", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert data == {"initialized": True}
+    assert data["initialized"] is True
 
 
 def test_a_single_binding_marks_it_initialized_even_with_no_references(home, capsys):
@@ -27,4 +29,4 @@ def test_a_single_binding_marks_it_initialized_even_with_no_references(home, cap
     rc = main(["vault", "status", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert rc == 0
-    assert data == {"initialized": True}
+    assert data["initialized"] is True

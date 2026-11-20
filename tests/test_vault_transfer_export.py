@@ -79,7 +79,9 @@ def test_resolved_backend_matches_the_real_router_for_real(monkeypatch, tmp_path
     ]
     kind_by_class = {"LocalEncryptedBackend": "local", "GcloudBackend": "gcp", "AWSSecretsManagerBackend": "aws"}
     for ref in scenarios:
-        real_kind = kind_by_class[type(router(ref)).__name__]
+        routed = router(ref)
+        routed = getattr(routed, "remote", routed)  # unwrap LocalFallbackBackend (#246)
+        real_kind = kind_by_class[type(routed).__name__]
         assert resolved_backend_kind(ref, bindings) == real_kind, ref.name
 
 
