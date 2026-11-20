@@ -116,6 +116,8 @@ No route is in the **secret value** class. No route returns a secret value over 
 
 | Route | Method | Class | What it does |
 |---|---|---|---|
+| `/api/approvals` | GET | metadata | Approval-gate status per gated reference (`portunus approvals --json`): gated, approved, time box (`expires_at` or `ticks_left`), pending. `?project=` narrows it to one project. |
+| `/api/approve` | POST | state-changing | Approves a gated reference for a time box: `{name, ttl}` runs `portunus approve <name> --ttl <ttl>` (`15m`, `2h`, `1d`, or a bare count of accesses). |
 | `/api/ask` | POST | state-changing | Resolve-only preview of a natural-language request; returns the matched reference's metadata. A "rotate" request tags the reference `rotation_requested=true` (a retag). |
 | `/api/audit` | GET | metadata | Audit trail entries (actor, action, reference name, result). |
 | `/api/auth-login` | POST | state-changing | Runs `gcloud auth login <email>` on the server host (a browser OAuth flow). |
@@ -126,6 +128,7 @@ No route is in the **secret value** class. No route returns a secret value over 
 | `/api/discover` | GET | metadata | Diff of a GCP project's Secret Manager secret names against the registry. Calls the GCP API with the server's credentials. |
 | `/api/discover` | POST | state-changing | Registers the discovered references. |
 | `/api/drop` | POST | state-changing | Stores a secret value sent in the request body (piped to the CLI over stdin, never echoed back). |
+| `/api/gate` | POST | state-changing | Turns a reference's approval gate on or off: `{name, on}` runs `portunus gate <name> [--off]`. |
 | `/api/health` | GET | metadata | Deep self-check (`portunus health`), the Host check and the write-credential check. `?shallow=1` is liveness only. |
 | `/api/impact` | GET | metadata | A reference's blast radius. |
 | `/api/inject` | POST | state-changing | Resolves a secret and writes its **value to a file at a caller-chosen path** (or into the env of the short-lived CLI process, which then exits). The response carries the file's owner/group/mode, never the value. A file target must not exist yet and is never written through a symlink (see below). |
@@ -138,7 +141,7 @@ No route is in the **secret value** class. No route returns a secret value over 
 | `/api/metadata` | POST | state-changing | Confirms (applies via retag) or rejects a suggested metadata field. |
 | `/api/oauth-store` | GET | metadata | `?detect=adc`: whether the server user's gcloud ADC file is usable (a boolean only). |
 | `/api/oauth-store` | POST | state-changing | Stores an OAuth credential bundle (from the body, or from the server user's ADC file with `use_local_adc`) and registers its reference. |
-| `/api/registry` | GET | metadata | The whole registry (every reference's metadata). |
+| `/api/registry` | GET | metadata | The whole registry (every reference's metadata). `?project=<name>` returns only that project's references (matched on project, repo or group root). This narrows the view; it is not an access boundary. |
 | `/api/report` | GET | metadata | Markdown deploy-docs report. |
 | `/api/retag` | POST | state-changing | Changes a reference's routing fields and tags. |
 | `/api/roles` | GET | metadata | Policy records. |
@@ -146,6 +149,7 @@ No route is in the **secret value** class. No route returns a secret value over 
 | `/api/rotation-status` | GET | metadata | Rotation bindings per provider. |
 | `/api/rotation-status` | POST | state-changing | Sets a provider's rotation `account` hint. |
 | `/api/search` | GET | metadata | Metadata search. |
+| `/api/state` | POST | state-changing | Sets a reference's lifecycle state: `{name, state}` with state one of enabled, locked, dropped, revoked; runs `portunus state <name> <state>`. |
 | `/api/vault-status` | GET | metadata | Whether a vault is configured (first-run detection). |
 | `/api/views` | GET | metadata | Custom views (reference names). |
 | `/api/views` | POST | state-changing | Creates/edits/deletes a view. |
