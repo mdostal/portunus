@@ -851,6 +851,23 @@ portunus rotate zernio --webhook 6a73653a0ce2dee3dc80b152 --dry-run
 
 ---
 
+### `reset`
+
+Reset a web account's password through the account's own inbox (GitHub, via an AgentMail inbox). Portunus requests the reset email, reads the link with the inbox's API key, stores a new password, then submits it headless. See [inbox-reset.md](inbox-reset.md).
+
+```
+portunus reset <name> [--dry-run] [--yes] [--force] [--json]
+```
+
+The reference needs the `reset_email` and `reset_inbox_ref` tags. `reset_provider` defaults to the reference's provider. A read-only preflight always runs first and prints the plan. Without `--yes` it asks before changing anything, and if stdin is not a terminal it exits 1. `--force` starts even though an earlier reset of this reference did not finish. It exits 2 when the provider shows a captcha or another human check. Output carries metadata only, never the password or the reset link.
+
+**Example:**
+```sh
+portunus reset skewbald-io-github-password --dry-run
+```
+
+---
+
 ### `rotation audit`
 
 Inventory what is stored vs. what can actually be rotated: group by provider, report `auto`/`manual`/`unknown` capability with reference names and any un-retired superseded key IDs.

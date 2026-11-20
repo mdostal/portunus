@@ -70,6 +70,11 @@ Real adapters:
   (preview): rotate with a grace window, decrypt the JWE-wrapped secret
   in-process, verify, store, and (with --retire-old) expire the old key.
 
+- `InboxResetRotationAdapter` (inbox_reset.py, PANT-1402) resets a web
+  account's password (provider `github-password`) through the account's own
+  inbox: request the provider's reset email, read the link with the inbox's
+  API key, store a new password, then submit it headless.
+
 No stub adapters remain. A new real adapter authenticates using its OWN
 admin credential resolved through `Resolver.resolve_call()` -- see
 docs/architecture.md for the worked example.
@@ -3113,6 +3118,12 @@ def _zernio_adapter():
     return ZernioRotationAdapter()
 
 
+def _github_password_adapter():
+    # Lazy: inbox_reset.py builds on this module.
+    from .inbox_reset import InboxResetRotationAdapter
+    return InboxResetRotationAdapter()
+
+
 _ADAPTERS = {
     "oauth": OAuthRefreshRotationAdapter,
     "gcp": GCPServiceAccountKeyRotationAdapter,
@@ -3128,6 +3139,7 @@ _ADAPTERS = {
     "stripe": _stripe_adapter,
     "sentry": SentryRotationAdapter,
     "zernio": _zernio_adapter,
+    "github-password": _github_password_adapter,
 }
 
 
