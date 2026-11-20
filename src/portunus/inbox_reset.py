@@ -379,6 +379,7 @@ class InboxPasswordReset:
         self._poll = poll_interval
         self._actor = actor or os.environ.get("DOSTAL_AGENT") or os.environ.get("USER", "unknown")
         self._bindings_path = bindings_path
+        self._needs_person = ""
 
     # -- public --------------------------------------------------------------
 
