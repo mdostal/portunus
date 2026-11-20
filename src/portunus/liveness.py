@@ -45,7 +45,9 @@ long-tail single-API-key SaaS providers; Vercel, PANT-1149, reads only the
 probes a deploy key and reads deployment env vars for parity; PANT-1127 adds
 APNs auth keys, probed with an undeliverable HTTP/2 push; Zernio, PANT-1146,
 probes API keys only; Clerk, PANT-1148, probes the instance secret key
-against the JWKS endpoint). See docs/liveness.md.
+against the JWKS endpoint; PostHog, PANT-1130, picks its probe from the
+key's prefix because a project token and a personal API key authenticate
+different routes). See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -1544,3 +1546,169 @@ class MulticaLivenessAdapter(HTTPLivenessAdapter):
 
 
 register_liveness_adapter("multica", MulticaLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# PostHog (PANT-1130, GH #199). PostHog issues two different credentials that
+# are easy to mix up, and each one is checked a different way:
+#
+# * personal API key (`phx_...`): a developer's key for the private API.
+#   Probed with `GET /api/users/@me/`.
+# * project API key / project token (`phc_...`): the public, write-only token
+#   apps embed to send events. The private API rejects it with 401, so probing
+#   it there would read as a false "dead". It is probed with `POST /flags`,
+#   the route the SDKs call with it, which answers an unknown token with 401.
+#
+# Checked against PostHog Cloud on 2026-11-20: a bogus `phx_` key got 401 from
+# `/api/users/@me/` on both regions; a bogus `phc_` token got 401 from
+# `/flags/?v=2` on both regions; a real project token got 200 from its own
+# region and 401 from the other. That last result is why a Cloud key is only
+# `dead` when both regions reject it.
+# ---------------------------------------------------------------------------
+
+# Reference tag: a PostHog base URL, for a self-hosted instance or to pin one
+# Cloud region (`https://eu.posthog.com`). Without it both Cloud regions are tried.
+POSTHOG_HOST_TAG = "posthog_host"
+POSTHOG_CLOUD_HOSTS = ("https://us.posthog.com", "https://eu.posthog.com")
+
+# transport(method, url, headers, body, timeout) -> HTTP status code
+BodyTransport = Callable[[str, str, Mapping[str, str], Optional[bytes], float], int]
+
+
+def _default_body_transport(method: str, url: str, headers: Mapping[str, str],
+                            body: Optional[bytes], timeout: float) -> int:
+    """Like `_default_transport`, but can send a request body. The response
+    body is never read: `/flags` answers a valid token with the project's
+    flag definitions."""
+    headers = {"User-Agent": "portunus-liveness", **headers}
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+        exc.close()
+        return code
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise LivenessError(f"request failed: {type(reason).__name__}") from None
+
+
+class PostHogLivenessAdapter:
+    """PostHog: which credential a reference holds decides the probe.
+
+    The stored value's prefix decides first, inside the boundary: `phx_` is
+    a personal API key, `phc_` a project token, `phs_` a project secret key
+    (not probed: it is only accepted together with the project token, for
+    local flag evaluation). An older value without a prefix falls back to the
+    `liveness_kind` tag or the reference name (`*-personal-key`,
+    `*-project-key`, `*-project-token`, ...). A value nothing identifies is
+    not sent.
+
+    Personal key: `GET <host>/api/users/@me/` (Bearer). 401 is dead. 403 is
+    a key PostHog accepted that lacks the `user:read` scope, so it stays
+    unknown.
+
+    Project token: `POST <host>/flags/?v=2` with `{"api_key": ..,
+    "distinct_id": "portunus-liveness"}`. 401 is dead. It records no event
+    and creates no person; PostHog does count it as one feature-flag request.
+
+    Host: the `posthog_host` tag, else both Cloud regions (US first). A key
+    is live as soon as one host accepts it and dead only when every host
+    answers 401. Anything else stays unknown.
+
+    `*-posthog-host` and `*-posthog-tracking` references are configuration,
+    not credentials, and are left out of sweeps."""
+
+    provider = "posthog"
+    PERSONAL, PROJECT = "personal-key", "project-key"
+    # Name suffixes / `liveness_kind` values -> credential.
+    KINDS: Dict[str, str] = {
+        "personal-key": PERSONAL, "personal-api-key": PERSONAL,
+        "project-key": PROJECT, "project-api-key": PROJECT, "project-token": PROJECT,
+    }
+    CONFIG_KINDS = ("host", "tracking")
+    PATHS = {PERSONAL: "/api/users/@me/", PROJECT: "/flags/?v=2"}
+    NO_KIND = -1     # boundary sentinel: never a real HTTP status
+    SECRET_KEY = -2  # boundary sentinel: phs_ project secret key
+
+    def __init__(self, transport: Optional[BodyTransport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        self._transport = transport or _default_body_transport
+        self._timeout = timeout
+
+    def can_probe(self, ref) -> bool:
+        return credential_kind(ref, self.CONFIG_KINDS) not in self.CONFIG_KINDS
+
+    @staticmethod
+    def hosts(ref) -> Tuple[str, ...]:
+        """Base URLs to try, or () when the tag is not an http(s) URL."""
+        tagged = ((getattr(ref, "tags", None) or {}).get(POSTHOG_HOST_TAG, "") or "").strip()
+        if not tagged:
+            return POSTHOG_CLOUD_HOSTS
+        parsed = urllib.parse.urlsplit(tagged)
+        if (parsed.scheme not in ("http", "https") or not parsed.netloc or "@" in parsed.netloc
+                or parsed.query or parsed.fragment):
+            return ()
+        return (tagged.rstrip("/"),)
+
+    def kind_from_name(self, ref) -> str:
+        return self.KINDS.get(credential_kind(ref, self.KINDS), "")
+
+    def check(self, ref, resolver) -> LivenessResult:
+        if not self.can_probe(ref):
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: PostHog host/tracking setting -- config, not a credential")
+        hosts = self.hosts(ref)
+        if not hosts:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"{POSTHOG_HOST_TAG!r} tag is not an http(s) URL -- not probed")
+        named = self.kind_from_name(ref)
+        trail: List[Tuple[str, int]] = []   # (request line, status) -- never the value
+        picked = {}
+
+        def boundary(value: str) -> int:
+            value = value.strip()
+            if value.startswith("phs_"):
+                return self.SECRET_KEY
+            kind = (self.PERSONAL if value.startswith("phx_")
+                    else self.PROJECT if value.startswith("phc_") else named)
+            if not kind:
+                return self.NO_KIND
+            picked["kind"] = kind
+            code = self.NO_KIND
+            for host in hosts:
+                url = host + self.PATHS[kind]
+                if kind == self.PERSONAL:
+                    code = self._transport("GET", url, {"Authorization": f"Bearer {value}"}, None,
+                                           self._timeout)
+                    trail.append((f"GET {url}", code))
+                else:
+                    body = json.dumps({"api_key": value, "distinct_id": "portunus-liveness"}).encode()
+                    code = self._transport("POST", url, {"Content-Type": "application/json"}, body,
+                                           self._timeout)
+                    trail.append((f"POST {url}", code))
+                if 200 <= code < 300:
+                    break
+            return code
+
+        code = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.SECRET_KEY:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: phs_ project secret key -- only accepted "
+                                         "together with the project token for local flag evaluation")
+        if code == self.NO_KIND:
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail="not probed: value has no phx_/phc_ prefix and neither the name nor a "
+                                         f"{KIND_TAG!r} tag says personal-key or project-key")
+        codes = [c for _, c in trail]
+        if any(200 <= c < 300 for c in codes):
+            status = LIVE
+        elif codes and all(c == 401 for c in codes):
+            status = DEAD
+        else:
+            status = UNKNOWN
+        detail = f"{picked['kind']}: " + "; ".join(f"{line} -> {c}" for line, c in trail)
+        return LivenessResult(ref.name, self.provider, status, http_status=code, detail=detail)
+
+
+register_liveness_adapter("posthog", PostHogLivenessAdapter)
