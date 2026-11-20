@@ -1,5 +1,5 @@
-"""Five honest ARCA stubs (story 01, portunus-swappable-trio): Vault,
-Infisical, Doppler, 1Password Connect, Azure Key Vault. Each mirrors
+"""Honest ARCA stubs (story 01, portunus-swappable-trio): Vault, Doppler,
+1Password Connect, Azure Key Vault. Each mirrors
 AWSSecretsManagerBackend's exact restraint -- access() unconditionally
 raises BackendError, no real calls, no store()/latest_version() (nothing
 calls those on an unrecognized/stub backend)."""
@@ -9,14 +9,12 @@ from portunus.backend import (
     AzureKeyVaultBackend,
     BackendError,
     DopplerBackend,
-    InfisicalBackend,
     OnePasswordConnectBackend,
     VaultServerBackend,
 )
 
 STUB_CLASSES = [
     (VaultServerBackend, "Vault"),
-    (InfisicalBackend, "Infisical"),
     (DopplerBackend, "Doppler"),
     (OnePasswordConnectBackend, "1Password"),
     (AzureKeyVaultBackend, "Azure"),
