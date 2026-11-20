@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Account profiles, with one-command swaps (`portunus profile`).** Keep several logins for the
+  same service and switch which is active. A `gcloud` profile is a logged-in account email;
+  `portunus profile use gcloud <name>` runs `gcloud config set account` after checking the
+  account is logged in. A `posthog` profile names a vault reference holding a PostHog personal
+  API key. `portunus mcp-headers posthog` is a Claude Code MCP `headersHelper`: it prints
+  `{"Authorization": "Bearer ..."}` for the active profile, so the PostHog MCP server signs in
+  as whichever account is active after a reconnect. It is a new boundary sink: it writes only
+  when stdout is not a terminal and `CLAUDE_CODE_MCP_SERVER_NAME` is set. It is audited by
+  profile name, and its errors never contain the value. `profiles.json` (0600) holds names,
+  emails and reference names only.
+
 - **Write credential on every state-changing UI route (first-cut-trust t1c).** Every non-GET
   `/api/*` request now needs `X-Portunus-Write-Token`. The server checks it against the file
   named by `PORTUNUS_WRITE_TOKEN_FILE`, re-read on every write, with a constant-time compare.

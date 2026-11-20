@@ -40,6 +40,7 @@ from .backend import (
 )
 from .backup import ExportError, export_archive, import_archive
 from .paths import home
+from .profiles import PROVIDERS as PROFILE_PROVIDERS, ProfileError, add_profile, emit_mcp_headers, load_profiles, remove_profile, use_profile
 from .rotation import (
     RotationBinding, capability_for_status, load_rotation_bindings,
     rotation_audit_data, update_rotation_bindings,
@@ -1467,6 +1468,66 @@ def _binding_credential_state(binding, credentialed=None):
             return "account", "ok"
         return "account", "expired"
     return "ambient", "unchecked"
+
+
+def cmd_profile_add(args) -> int:
+    registry = Registry()
+    try:
+        p = add_profile(args.provider, args.name, account=args.account, ref=args.ref, note=args.note, known_ref=lambda r: r in registry)
+    except ProfileError as exc:
+        return _err(str(exc))
+    print(f"added {args.provider} profile {p.name}" + (f" ({p.account})" if p.account else f" (ref {p.ref})"))
+    return 0
+
+
+def cmd_profile_use(args) -> int:
+    try:
+        p = use_profile(args.provider, args.name)
+    except ProfileError as exc:
+        return _err(str(exc))
+    extra = f": gcloud now uses {p.account}" if args.provider == "gcloud" else ": reconnect the PostHog MCP server (/mcp) to pick it up"
+    print(f"{args.provider} profile {p.name} is active{extra}")
+    return 0
+
+
+def cmd_profile_list(args) -> int:
+    data = load_profiles()
+    providers = [args.provider] if args.provider else list(data)
+    if args.json:
+        print(json.dumps({pr: {"active": data[pr].active, "profiles": {n: {"account": p.account, "ref": p.ref, "note": p.note} for n, p in data[pr].profiles.items()}} for pr in providers}))
+        return 0
+    for pr in providers:
+        print(f"{pr}:")
+        if not data[pr].profiles:
+            print("  (none)")
+        for n, p in sorted(data[pr].profiles.items()):
+            mark = "*" if n == data[pr].active else " "
+            print(f"  {mark} {n:<16} {p.account or p.ref}" + (f"  -- {p.note}" if p.note else ""))
+    return 0
+
+
+def cmd_profile_remove(args) -> int:
+    try:
+        remove_profile(args.provider, args.name)
+    except ProfileError as exc:
+        return _err(str(exc))
+    print(f"removed {args.provider} profile {args.name}")
+    return 0
+
+
+def cmd_mcp_headers(args) -> int:
+    """headersHelper boundary sink. The value goes only to stdout when stdout is Claude Code's pipe (see
+    profiles.emit_mcp_headers); errors go to stderr and name the profile, never the value."""
+    _, _, _, resolver = _build()
+    try:
+        emit_mcp_headers(args.provider, resolver, sys.stdout)
+    except ProfileError as exc:
+        return _err(str(exc))
+    except UnknownReference as exc:
+        return _err(f"the active {args.provider} profile points at a missing reference {exc.args[0]!r}")
+    except (NotInjectable, ApprovalRequired, NotAuthorized, BackendError) as exc:
+        return _err(str(exc))
+    return 0
 
 
 def cmd_auth_status(args) -> int:
@@ -3524,6 +3585,35 @@ def build_parser() -> argparse.ArgumentParser:
     auth_status.add_argument("--strict", action="store_true",
                              help="exit 1 if any binding's credential is missing or expired")
     auth_status.set_defaults(func=cmd_auth_status)
+
+    prof_p = sub.add_parser("profile", help="several logins per provider (gcloud, posthog), one active, swapped with `use`")
+    prof_sub = prof_p.add_subparsers(dest="profile_cmd", required=True)
+    prof_add = prof_sub.add_parser("add", help="add or replace a profile (the first one for a provider becomes active)")
+    prof_add.add_argument("provider", choices=PROFILE_PROVIDERS)
+    prof_add.add_argument("name")
+    prof_add.add_argument("--account", default="", help="gcloud: the logged-in account email")
+    prof_add.add_argument("--ref", default="", help="posthog: the vault reference holding a PostHog personal API key")
+    prof_add.add_argument("--note", default="")
+    prof_add.set_defaults(func=cmd_profile_add)
+    prof_use = prof_sub.add_parser("use", help="make a profile active (gcloud: also `gcloud config set account`)")
+    prof_use.add_argument("provider", choices=PROFILE_PROVIDERS)
+    prof_use.add_argument("name")
+    prof_use.set_defaults(func=cmd_profile_use)
+    prof_list = prof_sub.add_parser("list", help="list profiles and which is active (names only)")
+    prof_list.add_argument("provider", nargs="?", choices=PROFILE_PROVIDERS)
+    prof_list.add_argument("--json", action="store_true")
+    prof_list.set_defaults(func=cmd_profile_list)
+    prof_rm = prof_sub.add_parser("remove", help="remove a profile")
+    prof_rm.add_argument("provider", choices=PROFILE_PROVIDERS)
+    prof_rm.add_argument("name")
+    prof_rm.set_defaults(func=cmd_profile_remove)
+
+    mh_p = sub.add_parser(
+        "mcp-headers",
+        help="Claude Code MCP headersHelper: print the active profile's headers as JSON (only into Claude Code's pipe)",
+    )
+    mh_p.add_argument("provider", choices=PROFILE_PROVIDERS)
+    mh_p.set_defaults(func=cmd_mcp_headers)
 
     gcp_p = sub.add_parser("gcp", help="write to GCP Secret Manager through a project's binding")
     gcp_sub = gcp_p.add_subparsers(dest="action", required=True)
