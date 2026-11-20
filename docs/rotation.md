@@ -99,6 +99,8 @@ programmatic rotation endpoint. If you store a Linear personal API key in Portun
 2. Re-store it: `portunus drop <name> <sm_name> --backend local` (or via the UI).
 3. Revoke the old key in Linear settings.
 
+This is final: don't re-research it (evidence: [provider-rotation-matrix.md](provider-rotation-matrix.md#linear-personal-api-key)). What Portunus can do is tell you when a stored key has stopped working: the `linear` liveness probe, see [liveness.md](liveness.md#linear).
+
 ### n8n (encryption key, basic auth)
 
 Both are startup configuration values with no provider API. The encryption key is the

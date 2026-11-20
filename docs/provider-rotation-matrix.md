@@ -516,6 +516,8 @@ Linear personal API keys are created and managed exclusively through the account
 
 **Why the distinction matters**: Linear does document OAuth token management (access tokens, refresh tokens) for registered OAuth applications. Reading that documentation and applying its capabilities to personal API keys would be incorrect. The secrets in `ffe-cicd` (`*-linear-api-key`) are personal API keys, not OAuth app tokens.
 
+**Portunus status (PANT-1133)**: rotation is `manual` for good. Liveness is covered by the `linear` probe (`{ viewer { id } }`, 401 = dead); see [liveness.md](liveness.md#linear).
+
 ---
 
 ### Anthropic LLM API key
