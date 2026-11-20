@@ -40,6 +40,8 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
+
+from .localvault import written_backend_kind
 from urllib.parse import unquote
 
 DIALOG_SURFACES = ("osascript", "kdialog", "zenity", "pinentry")
@@ -424,6 +426,7 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
         org=req.org, provider=req.provider, project=req.project, env=req.env,
         tags=req.tags, description=req.description, purpose=req.purpose,
         group=req.group, repo=req.repo,
+        backend=written_backend_kind(backend),
     )
     backend.store(ref.sm_name, value)
     del value
@@ -434,4 +437,5 @@ def run_prompt(req: PromptRequest, registry, broker, backend, surface: str = "au
         ref = registry.set_state(ref.name, "enabled")
     ref = registry.require(ref.name)
     return {"name": ref.name, "state": ref.state, "stored": True,
-            "gated": ref.approval == "required", "surface": used}
+            "gated": ref.approval == "required", "surface": used,
+            "backend": ref.backend}

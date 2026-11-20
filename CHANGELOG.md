@@ -4,6 +4,18 @@ All notable changes to Portunus are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A ref written by `prompt`/`drop` resolves from where it was written (PANT-1218, GH #242).**
+  `prompt`, `drop` and `drop-bulk` (CLI and MCP) store into the local vault but used to leave the
+  ref's `backend` empty, so resolve followed the project's VaultBinding. For a GCP-bound project
+  (e.g. `ffe-cicd`) that meant a secret a human had just typed in failed to resolve in gcloud. These
+  paths now record `backend: local` on the ref; an explicit `--backend` / `backend=` still wins.
+  The recorded backend is in the `prompt`/`drop` responses, in `list`/`search --json`, and in the
+  text `list` output, so you can see where a ref lives without resolving it. Refs created before
+  this fix keep an empty backend; pin them with the new `portunus retag <name> --backend local`
+  (`--backend default` clears a pin).
+
 ### Added
 
 - **Anthropic liveness check (`anthropic`, PANT-1132, GH #197).** An LLM API key (`sk-ant-api…`)

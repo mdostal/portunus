@@ -22,6 +22,7 @@ from .cli import _build, _build_tree, _eager_sync_down, _TREE_KEY_FNS, _wif_conf
 from .crawl import crawl_candidates
 from .impact import impact as impact_of
 from .health import run_health
+from .localvault import written_backend_kind
 from .leakscan import (
     add_scan_path,
     load_leak_status,
@@ -695,7 +696,11 @@ def portunus_drop(
     `related` is a plain list of reference names -- no CLI-style comma-
     separated string parsing. `backend` optionally overrides which backend
     THIS reference routes to later (e.g. "gcp") once you've dropped it here
-    locally -- empty means "use the project's default binding." `repo` is
+    locally -- empty (the normal case) records backend="local", because
+    that is where the value was written: the ref resolves from the local
+    vault even when its project's binding is GCP, until it is explicitly
+    synced or migrated (portunus#242). The return carries the recorded
+    `backend` so you can see where it went. `repo` is
     the git repo that consumes this secret (distinct from `project`, which
     can be one cloud project shared by many repos); `source_files` is a
     plain list of file paths in that repo, same posture as `related`.
@@ -721,13 +726,15 @@ def portunus_drop(
         name, sm_name, scope=scope, kind=kind, state="dropped",
         provider=provider, project=project, env=env, tags=tags,
         description=description, purpose=purpose, injected_as=injected_as,
-        group=group, related=related, backend=backend,
+        group=group, related=related,
+        backend=written_backend_kind(local_backend, backend),
         repo=repo, source_files=source_files,
     )
     local_backend.store(ref.sm_name, value)
     del value
     broker.audit.append("drop", ref.sm_name, "stored")
-    return {"name": ref.name, "sm_name": ref.sm_name, "state": ref.state}
+    return {"name": ref.name, "sm_name": ref.sm_name, "state": ref.state,
+            "backend": ref.backend}
 
 
 @mcp.tool()
@@ -821,7 +828,8 @@ def portunus_drop_bulk(entries: List[dict]) -> dict:
                 env=entry.get("env", ""), tags=entry.get("tags"),
                 description=entry.get("description", ""), purpose=entry.get("purpose", ""),
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
-                related=entry.get("related"), backend=entry.get("backend", ""),
+                related=entry.get("related"),
+                backend=written_backend_kind(local_backend, entry.get("backend", "")),
             )
             local_backend.store(ref.sm_name, entry_value)
             del entry_value
