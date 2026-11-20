@@ -499,6 +499,20 @@ portunus approve <name> [--ttl <N | duration>]
 
 ---
 
+### `approvals`
+
+Show approval-gate status: which references are gated, whether an approval is live and until when, and which have an access waiting for approval. Read-only: it never consumes or deletes an approval.
+
+```
+portunus approvals [--name <name>] [--pending] [--json]
+```
+
+With no flags it lists every gated reference. `--name` shows one reference, gated or not. `--pending` keeps only gated references with no live approval whose last access was refused. `--json` prints a list of objects with `name`, `sm_name`, `state`, `gated`, `approved`, `approved_by`, `expires_at` (epoch seconds, wall-clock approvals), `ticks_left` (tick approvals), `pending`, `last_requested_seq` and `last_requested_ts`. The vault UI's gate controls and Requests tab read this.
+
+A re-drop (rotation or request fulfil) over a gated reference keeps its gate; only `portunus gate <name> --off` removes it.
+
+---
+
 ### `grant`
 
 Record an access widening to a named member in the audit log only. No IAM change is made; apply the real permission at the provider yourself.

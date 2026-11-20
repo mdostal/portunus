@@ -62,11 +62,13 @@ const has = (marker: string) => (line: string) => line.includes(marker);
 // Every state-changing route, with a body that makes the route reach the CLI
 // carrying `m` in its argv. docs/http-routes.md lists the same set.
 const WRITE_ROUTES: { route: string; body: (m: string) => unknown; seen?: (m: string) => (l: string) => boolean }[] = [
+  { route: "approve", body: (m) => ({ name: m, ttl: "15m" }) },
   { route: "ask", body: (m) => ({ request: m }) },
   { route: "auth-login", body: (m) => ({ email: m }) },
   { route: "bindings", body: (m) => ({ project: m }) },
   { route: "discover", body: (m) => ({ project: m }) },
   { route: "drop", body: (m) => ({ name: m, sm_name: "sm-t1c", value: "not-a-real-value" }) },
+  { route: "gate", body: (m) => ({ name: m, on: true }) },
   { route: "inject", body: (m) => ({ tags: { provider: m }, target: "env", var: "T1C" }) },
   { route: "leak-scan-config", body: (m) => ({ action: "add", glob: m }) },
   // Takes no arguments, so its argv carries no marker; no other spec calls it.
@@ -83,6 +85,7 @@ const WRITE_ROUTES: { route: string; body: (m: string) => unknown; seen?: (m: st
   { route: "retag", body: (m) => ({ name: m, provider: "x" }) },
   { route: "roles", body: (m) => ({ scope_type: "project", scope_value: m, role: "reader" }) },
   { route: "rotation-status", body: (m) => ({ provider: m }) },
+  { route: "state", body: (m) => ({ name: m, state: "enabled" }) },
   { route: "views", body: (m) => ({ action: "create", name: m }) },
 ];
 

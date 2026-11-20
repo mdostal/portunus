@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import webbrowser
+from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -1506,6 +1507,42 @@ def cmd_approve(args) -> int:
         print(f"approved {args.name} for {args.ttl} (wall-clock)")
     else:
         print(f"approved {args.name} for the next {amount} access(es)")
+    return 0
+
+
+def cmd_approvals(args) -> int:
+    """List the gate status of every gated reference (GH #257) -- or, with
+    --name, of one reference whether gated or not. Metadata only: gate
+    on/off, whether an approval is live and its time box, and whether an
+    access is waiting on a human. --pending keeps only the waiting ones."""
+    registry, _, broker, _ = _build()
+    if args.name:
+        try:
+            rows = [broker.approval_status(args.name)]
+        except KeyError:
+            return _err(f"unknown reference: {args.name}")
+    else:
+        rows = [broker.approval_status(r.name) for r in registry if r.approval == "required"]
+        if args.pending:
+            rows = [r for r in rows if r["pending"]]
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    if not rows:
+        print("no gated references" if not args.pending else "no pending approvals")
+        return 0
+    for r in rows:
+        if r["approved"]:
+            if r["expires_at"] is not None:
+                left = max(0, int(r["expires_at"] - time.time()))
+                box = f"approved until {datetime.fromtimestamp(r['expires_at'], timezone.utc):%Y-%m-%d %H:%M} UTC ({left // 60}m left)"
+            else:
+                box = f"approved for {r['ticks_left']} more access(es)"
+        elif r["pending"]:
+            box = "PENDING approval"
+        else:
+            box = "gated" if r["gated"] else "not gated"
+        print(f"{r['name']:<32} {r['state']:<10} {box}")
     return 0
 
 
@@ -4381,6 +4418,14 @@ def build_parser() -> argparse.ArgumentParser:
              "duration such as 90s, 30m, 2h, 1d",
     )
     ap.set_defaults(func=cmd_approve)
+
+    aps = sub.add_parser(
+        "approvals", help="gate status of gated references: live approvals, time boxes, pending",
+    )
+    aps.add_argument("--name", default="", help="one reference (gated or not)")
+    aps.add_argument("--pending", action="store_true", help="only references waiting on approval")
+    aps.add_argument("--json", action="store_true", help="machine-readable output")
+    aps.set_defaults(func=cmd_approvals)
 
     gr = sub.add_parser(
         "grant", help="record an access widening in the audit log only (makes no IAM change)",

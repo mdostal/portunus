@@ -175,3 +175,19 @@ export interface ImpactResult {
   };
   suggested_related: { name: string; reasons: string[] }[];
 }
+
+// `portunus approvals --json` / /api/approvals (GH #257) -- one gated
+// reference's gate status. Metadata only, never a value.
+export interface ApprovalStatus {
+  name: string;
+  sm_name: string;
+  state: string;
+  gated: boolean;
+  approved: boolean;
+  approved_by: string;
+  expires_at: number | null; // epoch seconds (wall-clock approval)
+  ticks_left: number | null; // audit-clock approval
+  pending: boolean; // an access was denied and is waiting on a human
+  last_requested_seq: number | null;
+  last_requested_ts: number | null;
+}

@@ -180,7 +180,7 @@ class Registry:
         scope: str = "",
         kind: str = "",
         state: str = "enabled",
-        approval: str = "",
+        approval: Optional[str] = None,
         org: str = "",
         project: str = "",
         provider: str = "",
@@ -204,13 +204,21 @@ class Registry:
         org/provider/project/env/repo/tags set -- two such references can
         never be told apart by `inject --tags` nor retagged independently,
         so the error belongs here, not in a later unrelated retag (#246).
-        Raised before anything is written, so a drop stores no value."""
+        Raised before anything is written, so a drop stores no value.
+
+        approval=None (the default) keeps an existing reference's gate when
+        this call overwrites it (GH #257): re-dropping or fulfilling a gated
+        reference must never quietly ungate it. Only `gate --off` (or an
+        explicit approval="") clears a gate."""
         if state not in VALID_STATES:
             raise ValueError(f"invalid state: {state!r} (want one of {VALID_STATES})")
         if secret_type not in _SECRET_TYPES:
             raise ValueError(f"invalid secret_type: {secret_type!r} (want one of {_SECRET_TYPES})")
         sm_path = f"projects/{project}/secrets/{sm_name}" if project else ""
         with self._locked():
+            if approval is None:
+                existing = self._data.get(name)
+                approval = existing.approval if existing is not None else ""
             if reject_collisions:
                 clash = self.identical_tags(
                     name, org=org, provider=provider, project=project, env=env,

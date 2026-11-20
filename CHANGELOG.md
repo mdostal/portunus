@@ -6,6 +6,17 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Vault UI: gate and approval controls, a Requests tab, a working filter, project scoping (PANT-1401, GH #257).**
+  Each row shows whether a reference is gated, approved or waiting for approval. The detail drawer
+  turns the gate on or off and approves for a chosen time box (15m to 1d, or the next 1 or 3
+  accesses), showing when the current approval ends. A new Requests tab lists requested secrets
+  (with Fill), accesses waiting for approval (with Approve) and stored-but-not-enabled references
+  (with Enable). The Console filter narrows the list as you type and lives in `?q=`; a deep link
+  whose `q` is an exact reference name opens that reference. `?project=<name>` shows only that
+  project's references. The fill form no longer closes on a stray click outside it, stays in the
+  URL as `?fulfill=`, can enable the reference on save, and works at narrow widths. New CLI
+  command `portunus approvals [--name] [--pending] [--json]`; new routes `/api/approvals`,
+  `/api/approve`, `/api/gate`, `/api/state`.
 - **Infisical backend: `backend=infisical` is now a real adapter (PANT-1403, GH #254).** It used
   to be a stub that always failed. It is read-only and logs in with a machine identity through
   universal auth. Credentials come from `INFISICAL_TOKEN`, from
@@ -15,7 +26,6 @@ All notable changes to Portunus are documented in this file.
   `bindings set <project> --backend infisical`. Missing credentials, a rejected login, a denied
   read or an unreachable server all fail closed. `portunus infisical status [--check]` and
   `portunus health` report mappings and where credentials come from.
-
 - **`portunus reset <name>`: reset a web account's password through its inbox (PANT-1402, GH #256).**
   For accounts whose email is an inbox Portunus can read (AgentMail first), Portunus requests the
   provider's reset email, reads the link with the inbox's API key, and stores a new random
@@ -34,6 +44,12 @@ All notable changes to Portunus are documented in this file.
 
 ### Fixed
 
+- **Re-dropping a gated reference kept no gate (PANT-1401, GH #257).** A rotation or request fulfil
+  over a gated reference silently removed its approval gate. The gate now survives a re-drop; only
+  `portunus gate <name> --off` removes it.
+- **Gate errors name the reference (PANT-1401, GH #257).** "Not injectable" and "needs approval"
+  errors printed only the vault key; they now read `<name> (<vault key>)`, and a dropped reference's
+  hint is the exact `portunus state <name> enabled` command.
 - **`reg rm` no longer purges a stored value other references still share (PANT-1407, GH #247).**
   `portunus reg rm <ref>` used to delete the stored value along with the registry entry. When
   another reference shared the same backend + sm_name, that reference silently lost its value.

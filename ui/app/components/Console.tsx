@@ -1,22 +1,45 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { LeakSummary, PortunusReference, PortunusView } from "../types";
+import type { ApprovalStatus, LeakSummary, PortunusReference, PortunusView } from "../types";
 import StatePill from "./StatePill";
 import RotationBadge from "./RotationBadge";
 import CompletenessBadge from "./CompletenessBadge";
 import LeakBadge from "./LeakBadge";
 import { checkMetadataCompleteness } from "../completeness";
-import SearchBar from "./SearchBar";
+import GateBadge from "./GateBadge";
+
+/** Case-insensitive text filter over the metadata a human would search by
+ * (GH #257: the search box must narrow the list, not open a second panel).
+ * Every whitespace-separated term must match somewhere. */
+export function matchesQuery(r: PortunusReference, query: string): boolean {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const hay = [
+    r.name, r.sm_name, r.description, r.purpose, r.provider, r.project, r.env,
+    r.org, r.group, r.repo, r.kind, r.state,
+    ...Object.entries(r.tags || {}).map(([k, v]) => `${k}=${v}`),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return terms.every((t) => hay.includes(t));
+}
 
 export default function Console({
   refs,
   onSelect,
   leakMap = {},
+  approvals = {},
+  query = "",
+  onQueryChange = () => {},
 }: {
   refs: PortunusReference[];
   onSelect: (ref: PortunusReference) => void;
   leakMap?: Record<string, LeakSummary>;
+  approvals?: Record<string, ApprovalStatus>;
+  query?: string;
+  onQueryChange?: (q: string) => void;
 }) {
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [stateFilter, setStateFilter] = useState<string | null>(null);
@@ -101,8 +124,13 @@ export default function Console({
     [refs, leakMap],
   );
 
+  const gatedCount = useMemo(() => refs.filter((r) => r.approval === "required").length, [refs]);
+  const [gatedFilter, setGatedFilter] = useState(false);
+
   const filtered = refs.filter(
     (r) =>
+      matchesQuery(r, query) &&
+      (!gatedFilter || r.approval === "required") &&
       (!providerFilter || (r.provider || "(none)") === providerFilter) &&
       (!stateFilter || r.state === stateFilter) &&
       matchesCompletenessFilter(r) &&
@@ -111,8 +139,32 @@ export default function Console({
   );
 
   return (
+    <div className="console-wrap">
+      <form
+        className="console-filter"
+        role="search"
+        onSubmit={(e) => e.preventDefault()}
+      >
+        <input
+          className="field mono"
+          type="search"
+          name="q"
+          data-testid="console-filter"
+          aria-label="filter references"
+          placeholder="Filter by name, project, tag, description…"
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+        />
+        {query && (
+          <button type="button" className="btn quiet" onClick={() => onQueryChange("")}>
+            clear
+          </button>
+        )}
+        <span className="console-count">
+          {filtered.length} of {refs.length}
+        </span>
+      </form>
     <div className="console">
-      <SearchBar />
       <aside className="console-rail">
         <div className="rail-group">
           <span className="k">Provider</span>
@@ -140,6 +192,18 @@ export default function Console({
             </button>
           ))}
         </div>
+        {gatedCount > 0 && (
+          <div className="rail-group">
+            <span className="k">Gate</span>
+            <button
+              className={`rail-facet ${gatedFilter ? "active" : ""}`}
+              onClick={() => setGatedFilter((v) => !v)}
+            >
+              <span>🔒 gated</span>
+              <span>{gatedCount}</span>
+            </button>
+          </div>
+        )}
         {leakedCount > 0 && (
           <div className="rail-group">
             <span className="k">Leaked</span>
@@ -218,6 +282,7 @@ export default function Console({
             <span>{r.env || "—"}</span>
             <span>
               <StatePill state={r.state} />
+              <GateBadge reference={r} status={approvals[r.name]} />
               <RotationBadge reference={r} />
               <CompletenessBadge reference={r} />
               <LeakBadge summary={leakMap[r.name]} />
@@ -226,6 +291,7 @@ export default function Console({
         ))}
         {filtered.length === 0 && <p className="inline-status">no references match these filters</p>}
       </div>
+    </div>
     </div>
   );
 }
