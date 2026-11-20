@@ -627,6 +627,10 @@ def cmd_retag(args) -> int:
         kwargs["repo"] = args.repo
     if source_files is not None:
         kwargs["source_files"] = source_files
+    if getattr(args, "backend", ""):
+        # "default" clears the pin so the ref follows its project's
+        # VaultBinding again -- metadata only, it never moves a value.
+        kwargs["backend"] = "" if args.backend == "default" else args.backend
 
     try:
         ref = registry.retag(args.name, **kwargs)
@@ -3429,6 +3433,13 @@ def build_parser() -> argparse.ArgumentParser:
     rt.add_argument("--repo", default="", help="the git repo that consumes this secret")
     rt.add_argument("--source-files", default="",
                      help="comma-separated file paths in that repo, replaces the source_files list")
+    rt.add_argument(
+        "--backend", default="",
+        choices=("", "default", "local", "gcp", "aws", "vault", "infisical", "doppler",
+                 "onepassword", "azure", "oauth", "chrome", "bitwarden"),
+        help="pin which backend this reference resolves from ('default' clears the pin so it "
+             "follows the project's VaultBinding). Metadata only: it does not move the value",
+    )
     rt.set_defaults(func=cmd_retag)
 
     rtb = sub.add_parser(
@@ -3573,8 +3584,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--backend",
         choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden"),
         default="",
-        help="override which backend this one reference uses (default: '' -- follow the "
-             "project's VaultBinding/PORTUNUS_BACKEND as normal)",
+        help="override which backend this one reference uses (default: 'local' -- the "
+             "local vault this command writes to, regardless of the project's VaultBinding)",
     )
     dr.add_argument(
         "--keep-whitespace", action="store_true",

@@ -696,7 +696,11 @@ def portunus_drop(
     `related` is a plain list of reference names -- no CLI-style comma-
     separated string parsing. `backend` optionally overrides which backend
     THIS reference routes to later (e.g. "gcp") once you've dropped it here
-    locally -- empty means "use the project's default binding." `repo` is
+    locally -- empty (the normal case) records backend="local", because
+    that is where the value was written: the ref resolves from the local
+    vault even when its project's binding is GCP, until it is explicitly
+    synced or migrated (portunus#242). The return carries the recorded
+    `backend` so you can see where it went. `repo` is
     the git repo that consumes this secret (distinct from `project`, which
     can be one cloud project shared by many repos); `source_files` is a
     plain list of file paths in that repo, same posture as `related`.
