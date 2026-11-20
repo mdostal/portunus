@@ -107,6 +107,7 @@ class Broker:
             hints = {
                 "dropped": "re-enable it",
                 "requested": "a human must fulfill it via `portunus drop`",
+                "used": "a one-time recovery code that was already handed out",
             }
             raise NotInjectable(
                 f"{ref.sm_name} is {state} — not injectable "

@@ -18,11 +18,13 @@ from typing import Dict, Iterator, List, Optional
 from .atomicio import atomic_write
 from .filelock import LockTimeout, flock_path
 from .paths import home
+from .totp import SECRET_TYPES as _SECRET_TYPES
 
 # Lifecycle states, mirroring bin/secrets. "enabled"/"locked" are injectable;
 # "dropped"/"revoked"/"requested" fail closed. "requested" is an agent-initiated
-# placeholder (no value stored yet) -- see Registry.request().
-VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested")
+# placeholder (no value stored yet) -- see Registry.request(). "used" is a
+# one-time recovery code that has already been handed out (PANT-1404).
+VALID_STATES = ("enabled", "locked", "dropped", "revoked", "requested", "used")
 
 # Tag keys resolved against Reference's own fields; anything else is looked
 # up in the open `tags` dict. Keep in sync with Reference's structured fields.
@@ -87,6 +89,9 @@ class Reference:
                             # applied to the live field except via Registry.confirm_suggestion()
                             # (portunus-vault-trust-and-access). Only description/purpose/tags/
                             # group are ever suggestible -- see SUGGESTIBLE_FIELDS.
+    secret_type: str = ""  # "" (opaque secret) | "totp" | "recovery_code" -- see totp.py.
+                            # A totp reference never resolves through {{secret:NAME}};
+                            # only `portunus otp` / portunus_otp hand out its current code.
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -179,6 +184,7 @@ class Registry:
         repo: str = "",
         source_files: Optional[list] = None,
         reject_collisions: bool = False,
+        secret_type: str = "",
     ) -> Reference:
         """Register (or overwrite) a reference. Value is never accepted here.
 
@@ -190,6 +196,8 @@ class Registry:
         Raised before anything is written, so a drop stores no value."""
         if state not in VALID_STATES:
             raise ValueError(f"invalid state: {state!r} (want one of {VALID_STATES})")
+        if secret_type not in _SECRET_TYPES:
+            raise ValueError(f"invalid secret_type: {secret_type!r} (want one of {_SECRET_TYPES})")
         sm_path = f"projects/{project}/secrets/{sm_name}" if project else ""
         with self._locked():
             if reject_collisions:
@@ -207,6 +215,7 @@ class Registry:
                 injected_as=dict(injected_as or {}),
                 group=group, related=list(related or []), backend=backend,
                 repo=repo, source_files=list(source_files or []),
+                secret_type=secret_type,
             )
             self._data[name] = ref
         return ref
