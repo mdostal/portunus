@@ -34,6 +34,7 @@ from cryptography.fernet import Fernet
 
 from .audit import verify_entries
 from .backend import BackendError, GcloudBackend, VaultBinding
+from . import routing
 from .paths import home_path
 from .registry import Reference
 
@@ -86,6 +87,7 @@ def run_health(runner: Optional[Callable] = None) -> dict:
     _check_audit(report, base)
     bindings = _check_bindings(report, base)
     _check_backends(report, base, refs, bindings, runner)
+    _check_routing(report, base, refs, bindings)
     return report.to_dict()
 
 
@@ -312,6 +314,21 @@ def _check_backends(report, base, refs, bindings, runner) -> None:
                        "fail-closed stub")
         else:
             report.add(f"backend:{kind}", False, f"unknown backend {kind!r}")
+
+
+def _check_routing(report, base, refs, bindings) -> None:
+    """#246: a reference that follows its project's binding to a remote
+    store while its value sits in the local vault resolves from a store it
+    was never written to. Key names only -- no decrypt, no network."""
+    fallback = os.environ.get("PORTUNUS_BACKEND", "local")
+    fallback = "gcp" if fallback == "gcloud" else fallback
+    if fallback == "mock":
+        return
+    mismatches = routing.find_mismatches(refs, bindings, routing.local_vault_keys(base), fallback)
+    if mismatches:
+        report.add("routing", False, routing.summarize(mismatches))
+    else:
+        report.add("routing", True, "every reference resolves from where its value is")
 
 
 def _check_local(report: _Report, base: Path) -> None:

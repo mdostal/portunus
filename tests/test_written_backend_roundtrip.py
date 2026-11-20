@@ -100,8 +100,9 @@ def test_cli_drop_then_resolve_round_trips_without_gcloud(home, capsys):
 
 def test_drop_bulk_entries_round_trip_without_gcloud(home):
     result = mcp_server.portunus_drop_bulk([
-        {"name": "a", "sm_name": "sm-a", "value": "VA", "project": PROJECT},
-        {"name": "b", "sm_name": "sm-b", "value": "VB", "project": PROJECT},
+        # Distinct tags: identical tag sets are refused at drop time (#246).
+        {"name": "a", "sm_name": "sm-a", "value": "VA", "project": PROJECT, "tags": {"slot": "a"}},
+        {"name": "b", "sm_name": "sm-b", "value": "VB", "project": PROJECT, "tags": {"slot": "b"}},
     ])
     assert result["created"] == ["a", "b"]
     for name, want in (("a", "VA"), ("b", "VB")):
@@ -109,7 +110,8 @@ def test_drop_bulk_entries_round_trip_without_gcloud(home):
         assert _resolve_back(name) == want
 
     entries = home / "entries.json"
-    entries.write_text(json.dumps([{"name": "c", "sm_name": "sm-c", "value": "VC", "project": PROJECT}]))
+    entries.write_text(json.dumps([{"name": "c", "sm_name": "sm-c", "value": "VC", "project": PROJECT,
+                                       "tags": {"slot": "c"}}]))
     assert main(["drop-bulk", str(entries)]) == 0
     main(["state", "c", "enabled"])
     assert _resolve_back("c") == "VC"

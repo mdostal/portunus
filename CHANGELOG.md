@@ -23,8 +23,18 @@ All notable changes to Portunus are documented in this file.
   text `list` output, so you can see where a ref lives without resolving it. Refs created before
   this fix keep an empty backend; pin them with the new `portunus retag <name> --backend local`
   (`--backend default` clears a pin).
+- **No bare NOT_FOUND for a value that is in the local vault (PANT-1408, GH #246).** Follow-up to
+  #242 for refs that are still unpinned: an unpinned reference whose remote says NOT_FOUND falls back to its
+  local value, with a warning and an audit entry; other errors name where the value really is.
+  A write whose tags exactly match an existing reference is refused.
 
 ### Added
+
+- **`portunus doctor --fix-routing`**: finds stranded references and pins them local, pins them
+  remote (`--prefer remote`) or pushes them into GCP (`--push`, verified). It is a dry run unless
+  `--apply`. `portunus health` reports them as a degraded `routing` check, and `vault status` (run
+  by the installer) shows it. `bindings set` refuses to reroute local-only references unless
+  `--pin-local`, `--push` or `--force`.
 
 - **Anthropic liveness check (`anthropic`, PANT-1132, GH #197).** An LLM API key (`sk-ant-api…`)
   is probed with `GET https://api.anthropic.com/v1/models?limit=1`, which bills no tokens; 401 is

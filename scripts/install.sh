@@ -50,6 +50,10 @@ fi
 echo "-- wiring up any agent CLIs already on this machine"
 portunus agent init
 
+echo "-- checking that every secret resolves from where it is stored"
+# Read-only; a degraded result is reported, never fatal to the install.
+portunus vault status || true
+
 echo
 echo "Done. 'portunus' is installed and wired into every agent CLI detected above."
 echo "Next: 'portunus agent status' any time to see what's registered, or"

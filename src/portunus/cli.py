@@ -36,10 +36,13 @@ from .backend import (
     AWSSecretsManagerBackend, AzureKeyVaultBackend, BackendError, BitwardenBackend, ChromeBackend, DopplerBackend,
     GcloudBackend, InfisicalBackend, MockBackend, OAuthBackend, OnePasswordConnectBackend,
     SyncingBackend,
-    VaultBinding, VaultServerBackend, gcp_reauth_remediation, load_vault_bindings,
+    LocalFallbackBackend,
+    VaultBinding, VaultServerBackend, gcp_reauth_remediation, is_not_found, load_vault_bindings,
     save_vault_bindings,
 )
 from .backup import ExportError, export_archive, import_archive
+from . import routing as routing_mod
+from .routing import REMOTE_STORE_KINDS
 from .paths import home
 from .profiles import PROVIDERS as PROFILE_PROVIDERS, ProfileError, add_profile, emit_mcp_headers, load_profiles, remove_profile, use_profile
 from .rotation import (
@@ -136,17 +139,31 @@ def _make_backend_router(vault_bindings, audit, fallback_backend):
         if "synced-gcp" not in instances:
             instances["synced-gcp"] = SyncingBackend(
                 _for_kind("gcp"), _for_kind("local"), home() / "sync-state.json",
+                audit=audit, where="gcp",
             )
         return instances["synced-gcp"]
 
+    def _with_local_fallback(kind: str):
+        """A remote store, but a reference whose value was written to the
+        local vault (drop/prompt/rotation) still resolves: on a remote
+        NOT_FOUND the plain local value is served, loudly (#246)."""
+        if kind not in REMOTE_STORE_KINDS:
+            return _for_kind(kind)
+        key = f"fallback-{kind}"
+        if key not in instances:
+            instances[key] = LocalFallbackBackend(
+                _for_kind(kind), _for_kind("local"), audit=audit, where=kind,
+            )
+        return instances[key]
+
     def router(ref):
         if ref.backend:
-            return _for_kind(ref.backend)
+            return _with_local_fallback(ref.backend)
         binding = vault_bindings.get(ref.project)
         if binding is not None:
             if binding.backend == "gcp" and binding.sync_mode == "cached":
                 return _synced_gcp()
-            return _for_kind(binding.backend)
+            return _with_local_fallback(binding.backend)
         return fallback_backend
 
     return router
@@ -206,11 +223,15 @@ def cmd_reg(args) -> int:
             related = _parse_related(args.related) if args.related else None
         except ValueError as exc:
             return _err(str(exc))
-        ref = registry.add(args.name, args.sm_name, scope=args.scope,
-                           kind=args.kind, org=args.org or "", project=args.project or "",
-                           description=args.description or "", purpose=args.purpose or "",
-                           injected_as=injected_as, group=args.group or "", related=related,
-                           repo=args.repo or "")
+        try:
+            ref = registry.add(args.name, args.sm_name, scope=args.scope,
+                               kind=args.kind, org=args.org or "", project=args.project or "",
+                               description=args.description or "", purpose=args.purpose or "",
+                               injected_as=injected_as, group=args.group or "", related=related,
+                               repo=args.repo or "", reject_collisions=True)
+        except AmbiguousMatch as exc:
+            _err(_collision_message(args.name, exc))
+            return EXIT_AMBIGUOUS
         print(f"registered {{{{secret:{ref.name}}}}} -> {ref.sm_name}")
         sharing = _refs_sharing_value(registry, resolver, ref)
         if sharing:
@@ -695,7 +716,8 @@ def cmd_retag(args) -> int:
 
     broker.audit.append("retag", ref.sm_name, "ok")
     print(f"  {{{{secret:{ref.name}}}}}  ->  {ref.sm_name}  "
-          f"(org={ref.org}, provider={ref.provider}, project={ref.project}, env={ref.env}, tags={ref.tags})")
+          f"(org={ref.org}, provider={ref.provider}, project={ref.project}, env={ref.env}, "
+          f"tags={ref.tags}, backend={ref.backend or '(binding)'})")
     return 0
 
 
@@ -1021,6 +1043,22 @@ def cmd_session_remove(args) -> int:
     return 0
 
 
+
+def _collision_message(name: str, exc: AmbiguousMatch) -> str:
+    others = [c for c in exc.candidates if c != name]
+    return (f"{name!r} would have exactly the same tags as {', '.join(others)} -- "
+            "two references must differ in at least one tag (e.g. add --tags key=<which>) "
+            "so they can be resolved and retagged independently; nothing was stored")
+
+
+def _warn_unpushed(ref) -> None:
+    """An explicit remote backend on a drop: the value is still only local."""
+    if ref.backend in REMOTE_STORE_KINDS:
+        print(f"note: {ref.name}'s value was written to the LOCAL vault; it resolves from "
+              f"there until {ref.sm_name} exists in {ref.backend} (for gcp: `portunus "
+              f"doctor --fix-routing --push --apply`)", file=sys.stderr)
+
+
 def _clean_value(raw: str, keep_whitespace: bool) -> str:
     """Default: trim surrounding whitespace (pasted keys often carry a stray
     space or newline). With keep_whitespace (--keep-whitespace, implied by
@@ -1087,15 +1125,22 @@ def cmd_drop(args) -> int:
         source_files = _parse_related(args.source_files) if args.source_files else []
     except ValueError as exc:
         return _err(str(exc))
-    ref = registry.add(
-        args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
-        org=args.org, provider=args.provider, project=args.project, env=args.env, tags=extra_tags,
-        description=args.description, purpose=args.purpose, injected_as=injected_as,
-        group=args.group, related=related,
-        backend=written_backend_kind(backend, args.backend or ""), repo=args.repo,
-        source_files=source_files,
-    )
+    try:
+        ref = registry.add(
+            args.name, args.sm_name, scope=args.scope, kind=args.kind, state="dropped",
+            org=args.org, provider=args.provider, project=args.project, env=args.env,
+            tags=extra_tags, description=args.description, purpose=args.purpose,
+            injected_as=injected_as, group=args.group, related=related,
+            # Pin on write (#246): the value goes to the local vault, so the
+            # reference says so -- never "" left to follow a remote binding.
+            backend=written_backend_kind(backend, args.backend or ""), repo=args.repo,
+            source_files=source_files, reject_collisions=True,
+        )
+    except AmbiguousMatch as exc:
+        _err(_collision_message(args.name, exc))
+        return EXIT_AMBIGUOUS
     backend.store(ref.sm_name, value)
+    _warn_unpushed(ref)
     del value  # scrub our local reference promptly
     broker.audit.append("drop", ref.sm_name, "stored")
     print(
@@ -1180,11 +1225,15 @@ def cmd_drop_bulk(args) -> int:
                 injected_as=entry.get("injected_as"), group=entry.get("group", ""),
                 related=entry.get("related"),
                 backend=written_backend_kind(backend, entry.get("backend", "")),
+                reject_collisions=True,
             )
             backend.store(ref.sm_name, value)
             del value
             broker.audit.append("drop", ref.sm_name, "stored")
+            _warn_unpushed(ref)
             created.append(ref.name)
+        except AmbiguousMatch as exc:
+            failed.append({"name": entry_name, "error": _collision_message(entry_name, exc)})
         except (ValueError, KeyError) as exc:
             failed.append({"name": entry_name, "error": str(exc)})
 
@@ -1502,6 +1551,124 @@ def cmd_health(args) -> int:
             mark = "ok  " if check["ok"] else "FAIL"
             print(f"  {mark} {check['name']:<14} {check['detail']}")
     return health_mod.exit_code(result)
+
+
+def _routing_state():
+    """(registry, bindings, local vault key names, mismatches) -- metadata only."""
+    registry = Registry()
+    bindings = load_vault_bindings()
+    keys = routing_mod.local_vault_keys(home())
+    return registry, bindings, keys, routing_mod.find_mismatches(registry, bindings, keys)
+
+
+def _probe_remote(backend, kind: str, sm_name: str, project: str) -> str:
+    """'present' | 'absent' | 'unknown: <why>' -- a metadata-only recency
+    probe (gcp `versions describe`); other kinds can't be probed yet."""
+    if kind != "gcp":
+        return f"unknown: {kind} cannot be probed"
+    try:
+        backend.latest_version(sm_name, project=project)
+        return "present"
+    except (BackendError, AuthError, ValueError) as exc:
+        if is_not_found(exc):
+            return "absent"
+        return f"unknown: {str(exc)[:160]}"
+
+
+def _push_local_value(local, gcp, ref_sm_name: str, project: str) -> None:
+    """Copy a local-only value into GCP, read it back to verify, then drop
+    the plain local copy (it would otherwise shadow nothing but still read
+    as a routing mismatch). The value never leaves this process's memory."""
+    value = local.access(ref_sm_name)
+    try:
+        gcp.push(ref_sm_name, value, project=project)
+        if gcp.access(ref_sm_name, project=project) != value:
+            raise BackendError(f"read-back of {ref_sm_name} from gcp did not match; "
+                               "local copy kept")
+    finally:
+        del value
+    local.remove(ref_sm_name)
+
+
+def cmd_doctor(args) -> int:
+    """`portunus doctor --fix-routing`: find references that resolve from a
+    remote backend while their value is in the local vault (#246) and pin
+    or migrate them. Dry run unless --apply."""
+    if not args.fix_routing:
+        return _err("nothing to do -- pass --fix-routing")
+    registry, bindings, _keys, mismatches = _routing_state()
+    audit = AuditChain()
+    local = LocalEncryptedBackend()
+    gcp = GcloudBackend(bindings=bindings, audit=audit)
+
+    plan = []
+    for m in mismatches:
+        if args.push:
+            if m.routes_to != "gcp":
+                plan.append((m, "skip", f"--push supports gcp only (routes to {m.routes_to})"))
+            else:
+                plan.append((m, "push", "copy the local value into GCP, verify, drop local copy"))
+            continue
+        remote = "unknown: not probed (--no-probe)" if args.no_probe else \
+            _probe_remote(gcp, m.routes_to, m.sm_name, m.project)
+        if remote == "absent" or args.prefer == "local":
+            why = (f"not in {m.routes_to}" if remote == "absent"
+                   else f"--prefer local ({m.routes_to}: {remote})")
+            plan.append((m, "pin-local", why))
+        elif args.prefer == "remote":
+            plan.append((m, "pin-remote",
+                         f"--prefer remote ({m.routes_to}: {remote}); local copy becomes a fallback"))
+        elif remote == "present":
+            plan.append((m, "skip", f"value exists in BOTH local and {m.routes_to} -- "
+                                    "choose with --prefer local|remote"))
+        else:
+            plan.append((m, "skip", f"{m.routes_to} {remote} -- choose with --prefer local|remote"))
+
+    results = []
+    failed = 0
+    for m, action, why in plan:
+        outcome = "planned" if action != "skip" else "skipped"
+        if args.apply and action != "skip":
+            try:
+                if action == "pin-local":
+                    registry.retag(m.name, backend="local")
+                elif action == "pin-remote":
+                    registry.retag(m.name, backend=m.routes_to)
+                elif action == "push":
+                    _push_local_value(local, gcp, m.sm_name, m.project)
+                outcome = "applied"
+                audit.append("routing-fix", m.sm_name, f"ok:{action}")
+            except (BackendError, AuthError, KeyError, ValueError) as exc:
+                outcome, why = "failed", str(exc)[:200]
+                audit.append("routing-fix", m.sm_name, f"error:{action}")
+                failed += 1
+        if outcome == "skipped" and args.apply:
+            failed += 1
+        results.append({**m.to_dict(), "action": action, "reason": why, "outcome": outcome})
+
+    if args.json:
+        print(json.dumps({"dry_run": not args.apply, "mismatches": results}, indent=2))
+    else:
+        if not results:
+            print("routing ok: every reference resolves from where its value is")
+        else:
+            head = "would" if not args.apply else "did"
+            print(f"{len(results)} reference(s) route to a remote backend but their value "
+                  f"is in the local vault ({'dry run' if not args.apply else 'applied'}):")
+            for r in results:
+                print(f"  {r['outcome']:<8} {r['action']:<10} {r['name']}  "
+                      f"(project={r['project'] or '-'}, routes_to={r['routes_to']}) -- {r['reason']}")
+            if not args.apply:
+                print(f"re-run with --apply to make these changes ({head} change nothing yet)")
+    return 1 if failed else 0
+
+
+def _routing_report() -> dict:
+    """For `vault status`: the health routing check, standalone."""
+    _registry, _bindings, _keys, mismatches = _routing_state()
+    return {"ok": not mismatches, "mismatches": [m.name for m in mismatches],
+            "detail": (routing_mod.summarize(mismatches) if mismatches
+                       else "every reference resolves from where its value is")}
 
 
 def cmd_auth_gcp(args) -> int:
@@ -1949,11 +2116,54 @@ def cmd_bindings_set(args) -> int:
             print(f"warning: {cred_path} is readable by group/other -- run `chmod 600 {cred_path}`",
                   file=sys.stderr)
         credential_file = str(cred_path)
-    bindings[args.project] = VaultBinding(
+    new_binding = VaultBinding(
         project=args.project, wif_audience=wif_audience, account=account,
         impersonate_service_account=impersonate_service_account,
         backend=backend, sync_mode=sync_mode, credential_file=credential_file,
     )
+    # Never silently strand local values (#246): references in this project
+    # that follow the binding but whose value is in the local vault would
+    # start resolving from a remote store that doesn't have them.
+    registry = Registry()
+    stranded = routing_mod.rerouted_by_binding(
+        registry, args.project, backend, routing_mod.local_vault_keys(home()),
+        previous_backend=existing.backend if existing else "local",
+    )
+    if stranded and not (args.pin_local or args.push or args.force):
+        print(f"refusing: binding {args.project} to {backend} would reroute "
+              f"{len(stranded)} reference(s) whose value is in the LOCAL vault:", file=sys.stderr)
+        for ref in stranded:
+            print(f"  {ref.name}  ({ref.sm_name}, state={ref.state})", file=sys.stderr)
+        push_hint = "  --push       copy them into GCP first (verified), then bind\n" \
+            if backend == "gcp" else ""
+        print("re-run with one of:\n"
+              "  --pin-local  keep them resolving from the local vault (backend=local)\n"
+              f"{push_hint}"
+              "  --force      bind anyway (they resolve from the local copy only while the "
+              "remote says NOT_FOUND)", file=sys.stderr)
+        return 1
+    if stranded and args.push:
+        if backend != "gcp":
+            return _err(f"--push supports gcp only, not {backend}")
+        audit = AuditChain()
+        gcp = GcloudBackend(bindings={**bindings, args.project: new_binding}, audit=audit)
+        local = LocalEncryptedBackend()
+        for ref in stranded:
+            try:
+                _push_local_value(local, gcp, ref.sm_name, args.project)
+            except (BackendError, AuthError) as exc:
+                audit.append("routing-fix", ref.sm_name, "error:push")
+                return _err(f"push of {ref.name} failed, binding NOT changed: {exc}")
+            audit.append("routing-fix", ref.sm_name, "ok:push")
+            print(f"  pushed  {ref.name} -> gcp {args.project}/{ref.sm_name}")
+    elif stranded and args.pin_local:
+        for ref in stranded:
+            registry.retag(ref.name, backend="local")
+            print(f"  pinned  {ref.name} -> backend=local")
+    elif stranded:
+        print(f"warning: --force: {len(stranded)} local-only reference(s) now route to "
+              f"{backend}: {', '.join(r.name for r in stranded)}", file=sys.stderr)
+    bindings[args.project] = new_binding
     save_vault_bindings(bindings)
     print(
         f"binding set: {args.project} (backend={backend}, sync_mode={sync_mode}, "
@@ -2581,10 +2791,14 @@ def cmd_vault_status(args) -> int:
     rather than duplicated as filesystem logic in TypeScript."""
     base = home()
     initialized = (base / "registry.json").exists() or (base / "vault-bindings.json").exists()
+    # The health routing check (#246): a reference resolving from a backend
+    # that doesn't hold its value is the first thing worth knowing.
+    routing = _routing_report()
     if args.json:
-        print(json.dumps({"initialized": initialized}))
+        print(json.dumps({"initialized": initialized, "routing": routing}))
         return 0
     print("initialized" if initialized else "not yet initialized (first run)")
+    print(f"routing: {'ok' if routing['ok'] else 'DEGRADED'} -- {routing['detail']}")
     return 0
 
 
@@ -3639,8 +3853,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--backend",
         choices=("", "local", "gcp", "aws", "vault", "infisical", "doppler", "onepassword", "azure", "oauth", "chrome", "bitwarden"),
         default="",
-        help="override which backend this one reference uses (default: 'local' -- the "
-             "local vault this command writes to, regardless of the project's VaultBinding)",
+        help="which backend this reference resolves from (default: local -- where drop "
+             "writes the value; a remote backend here means you will push it there "
+             "yourself, until then it resolves from the local copy)",
     )
     dr.add_argument(
         "--keep-whitespace", action="store_true",
@@ -3780,6 +3995,25 @@ def build_parser() -> argparse.ArgumentParser:
     hl.add_argument("--json", action="store_true")
     hl.set_defaults(func=cmd_health)
 
+    doc = sub.add_parser(
+        "doctor",
+        help="repair state problems; --fix-routing pins or migrates references that route "
+             "to a remote backend while their value is in the local vault (dry run first)",
+    )
+    doc.add_argument("--fix-routing", action="store_true",
+                     help="find references whose routed backend doesn't hold their value")
+    doc.add_argument("--apply", action="store_true", help="make the changes (default: dry run)")
+    doc.add_argument("--prefer", choices=("local", "remote"), default="",
+                     help="when the remote also has (or can't be checked for) the value: pin to "
+                          "local, or pin to the remote with the local copy as fallback")
+    doc.add_argument("--push", action="store_true",
+                     help="gcp: copy each local-only value into GCP (verified), then drop the "
+                          "local copy -- instead of pinning local")
+    doc.add_argument("--no-probe", action="store_true",
+                     help="don't ask the remote whether it has the value (offline)")
+    doc.add_argument("--json", action="store_true")
+    doc.set_defaults(func=cmd_doctor)
+
     auth_p = sub.add_parser("auth", help="check keyless cloud credential minting")
     auth_sub = auth_p.add_subparsers(dest="provider", required=True)
     auth_gcp = auth_sub.add_parser("gcp", help="mint a GCP WIF access token without printing it")
@@ -3880,6 +4114,14 @@ def build_parser() -> argparse.ArgumentParser:
                           help="service account key or external_account (WIF) config JSON gcloud loads "
                                "for this project -- non-interactive, never hits a reauth prompt; "
                                "only the path is stored ('none' clears it)")
+    strand = bnd_set.add_mutually_exclusive_group()
+    strand.add_argument("--pin-local", action="store_true",
+                        help="if references in this project have local-only values, pin them "
+                             "to backend=local before rebinding")
+    strand.add_argument("--push", action="store_true",
+                        help="gcp only: copy local-only values into GCP (verified) before rebinding")
+    strand.add_argument("--force", action="store_true",
+                        help="rebind even though local-only values would be rerouted")
     bnd_set.set_defaults(func=cmd_bindings_set)
     bnd_show = bnd_sub.add_parser("show", help="show one or all bindings (real values, not presence-only)")
     bnd_show.add_argument("project", nargs="?", default="")
