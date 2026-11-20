@@ -581,7 +581,10 @@ class InboxPasswordReset:
             tags = dict(ref.tags or {})
             tags[LAST_AT_TAG] = _iso(now)
             tags[LAST_BY_TAG] = self._actor
-            self._registry.retag(ref.name, tags=tags)
+            # The new value lives in the local vault: pin an unpinned ref there so it
+            # resolves from where it was written (same rule as prompt/drop, PANT-1218).
+            pin = {"backend": "local"} if not getattr(ref, "backend", "") else {}
+            self._registry.retag(ref.name, tags=tags, **pin)
         return f"rotation binding {provider} updated; reset by {self._actor} at {_iso(now)}"
 
     def _audit_append(self, name: str, result: str) -> None:

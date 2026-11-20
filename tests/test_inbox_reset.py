@@ -196,8 +196,9 @@ class _Registry:
     def __init__(self):
         self.retags = []
 
-    def retag(self, name, tags=None):
+    def retag(self, name, tags=None, backend=None):
         self.retags.append((name, dict(tags)))
+        self.backend = backend
 
 
 @pytest.fixture
@@ -253,6 +254,7 @@ def test_reset_records_audit_binding_and_tags(world):
     name, tags = world.registry.retags[-1]
     assert name == REF and tags["password_reset_by"] == "skewbald"
     assert tags["password_reset_at"].startswith("2027-")
+    assert world.registry.backend == "local"   # pinned to where the value was written
 
 
 def test_no_value_or_link_in_report_audit_or_bindings(world):
