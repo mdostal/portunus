@@ -1635,7 +1635,7 @@ class PostHogLivenessAdapter:
         self._timeout = timeout
 
     def can_probe(self, ref) -> bool:
-        return credential_kind(ref, self.CONFIG_KINDS) == ""
+        return credential_kind(ref, self.CONFIG_KINDS) not in self.CONFIG_KINDS
 
     @staticmethod
     def hosts(ref) -> Tuple[str, ...]:
