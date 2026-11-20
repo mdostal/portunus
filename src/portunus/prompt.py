@@ -121,6 +121,16 @@ class PromptRequest:
         return "Portunus: enter a secret"
 
     @property
+    def context_lines(self) -> List[str]:
+        """Purpose and group, when set, as the human sees them (GH #251)."""
+        lines = []
+        if self.purpose:
+            lines.append(f"Purpose: {self.purpose}")
+        if self.group:
+            lines.append(f"Group: {self.group}")
+        return lines
+
+    @property
     def text(self) -> str:
         where = "/".join(p for p in (self.org, self.project, self.env) if p)
         detail = f" ({self.provider})" if self.provider else ""
@@ -129,6 +139,7 @@ class PromptRequest:
             lines.append(f"Scope: {where}")
         if self.description:
             lines.append(self.description)
+        lines.extend(self.context_lines)
         lines.append("The agent will only learn whether it was stored, never the value.")
         return "\n".join(lines)
 
@@ -142,6 +153,7 @@ class PromptRequest:
         lines = [f"An agent asked you to store the payment card '{self.name}'{detail} in Portunus."]
         if self.description:
             lines.append(self.description)
+        lines.extend(self.context_lines)
         lines.append("The agent will only see the card's brand and last four digits.")
         return "\n".join(lines)
 
@@ -534,12 +546,19 @@ def _request_cli(req: PromptRequest) -> List[str]:
     return argv
 
 
+def _t3_context(req: PromptRequest) -> str:
+    """Purpose and group as sentences that lead a card's reason, so the human
+    sees name, description (the label), purpose and group in the card."""
+    parts = [f"{line}." if not line.endswith(".") else line for line in req.context_lines]
+    return " ".join(_one_line(p, 200) for p in parts) + (" " if parts else "")
+
+
 def t3_handoff(req: PromptRequest, cli: bool = False) -> dict:
     """Step one of the t3 surface: tell the agent which card to raise and
     how to finish. Pure -- touches neither the registry, the vault nor the
     audit log."""
-    reason = (f"The value is stored in your Portunus vault as '{req.name}' "
-              "and the agent never sees it.")
+    reason = _t3_context(req) + (f"The value is stored in your Portunus vault as "
+                                 f"'{req.name}' and the agent never sees it.")
     if req.gate:
         reason += " Each use will need your approval."
     then: dict = {"tool": "portunus_prompt", "arguments": _request_arguments(req)}
@@ -837,7 +856,7 @@ def t3_card_handoff(req: PromptRequest, cli: bool = False) -> dict:
     """Step one of a t3 card: one T3 Code secret card per field (a T3 card
     holds one value), then one completing call with every file."""
     base = _one_line(req.description or req.name, T3_LABEL_MAX - 30) or req.name
-    reason = (f"Stored in your Portunus vault as the card '{req.name}'. "
+    reason = _t3_context(req) + (f"Stored in your Portunus vault as the card '{req.name}'. "
               "The agent only ever sees its brand and last four digits.")
     if req.gate:
         reason += " Each use will need your approval."

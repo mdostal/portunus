@@ -37,6 +37,8 @@ Portunus cannot show a T3 Code card itself. Only the agent can call T3 Code's to
      "note": "Call the card tool, then call portunus_prompt again with value_file set to the path it returned. Do not read, print or copy that file."}
     ```
 
+   The card's label is the description (or the name). Its reason names the reference and starts with `Purpose: ...` and `Group: ...` when those were given, so you can see what you are storing.
+
 2. The agent calls the card tool. You type the value into the card. T3 Code writes it to a file only you can read and gives the agent the path: `{"status": "saved", "file": "<path>"}`.
 
 3. The agent calls `portunus_prompt` again with `value_file` set to that path. Portunus reads the file, stores the value in the local vault, deletes the file and returns `{"name", "state", "stored": true, "gated", "surface": "t3", "file_removed": true}`.

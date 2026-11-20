@@ -476,3 +476,42 @@ def test_mcp_docstring_explains_the_t3_surface():
     assert "value_file" in doc
     assert "Inside T3 Code" in doc
     assert "Never read, print or copy that file" in doc
+
+
+# --- GH #251 review: the card shows name, description, purpose and group --------
+
+def test_t3_card_shows_name_description_purpose_and_group(capsys):
+    rc = main(["prompt", "gh-token", "dostal-gh", "--surface", "t3",
+               "--description", "GitHub deploy token", "--purpose", "CI releases",
+               "--group", "github/deploy"])
+    assert rc == 0
+    args = json.loads(capsys.readouterr().out)["card"]["arguments"]
+    assert args["label"] == "GitHub deploy token"
+    assert "'gh-token'" in args["reason"]
+    assert "Purpose: CI releases." in args["reason"]
+    assert "Group: github/deploy." in args["reason"]
+    assert set(args) == {"label", "reason", "delivery"}
+
+
+def test_t3_card_without_purpose_or_group_is_unchanged(capsys):
+    assert main(["prompt", "gh-token", "dostal-gh", "--surface", "t3"]) == 0
+    reason = json.loads(capsys.readouterr().out)["card"]["arguments"]["reason"]
+    assert reason.startswith("The value is stored in your Portunus vault as 'gh-token'")
+
+
+def test_t3_payment_cards_show_purpose_and_group(capsys):
+    assert main(["prompt", "visa-work", "dostal-visa", "--kind", "card", "--surface", "t3",
+                 "--purpose", "domain renewals", "--group", "payments"]) == 0
+    cards = json.loads(capsys.readouterr().out)["cards"]
+    for c in cards:
+        assert "Purpose: domain renewals." in c["arguments"]["reason"]
+        assert "Group: payments." in c["arguments"]["reason"]
+
+
+def test_dialog_text_shows_purpose_and_group():
+    req = prompt_mod.PromptRequest(name="gh-token", sm_name="dostal-gh",
+                                   description="GitHub deploy token",
+                                   purpose="CI releases", group="github/deploy")
+    for text in (req.text, req.card_text):
+        assert "Purpose: CI releases" in text and "Group: github/deploy" in text
+        assert "gh-token" in text and "GitHub deploy token" in text
