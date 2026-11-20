@@ -1,0 +1,27 @@
+{
+ "mode": "ext-isolated",
+ "old_sha": "42d9f116defeffd0",
+ "new_sha": "7a5cd86d58025fda",
+ "call": {
+  "hasActivation": false,
+  "ok": true
+ },
+ "shot": "/home/node/spike-work/shots/ext-isolated.png",
+ "internals": [
+  "Message:  PasswordManager::CreatePendingLoginManagers ",
+  "Message:  PasswordManager::CreatePendingLoginManagers ",
+  "Message:  PasswordManager::IsAutomaticSavePromptAvailable ",
+  "Message:  No provisional save manager ",
+  "Message:  FormFetcherImpl::OnGetPasswordStoreResults ",
+  "Number of results from:   Profile Store: 0 ",
+  "Number of results from:   Account Store: 0 ",
+  "Number of unique matched credentials: 0",
+  "CM API save a credential: origin=http://localhost:8765, CredentialType=CredentialType::CREDENTIAL_TYPE_PASSWORD",
+  "Message:  FormFetcherImpl::OnGetPasswordStoreResults ",
+  "Number of results from:   Profile Store: 0 ",
+  "Number of results from:   Account Store: 0 ",
+  "Number of unique matched credentials: 0",
+  "The new state of the UI:  PENDING_PASSWORD_STATE (1) "
+ ],
+ "leak_check_internals": "clean"
+}

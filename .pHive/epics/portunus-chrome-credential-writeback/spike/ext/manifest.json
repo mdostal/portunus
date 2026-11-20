@@ -1,0 +1,6 @@
+{ "manifest_version": 3, "name": "portunus-spike-writeback", "version": "0.0.1",
+  "permissions": ["scripting", "tabs"], "host_permissions": ["http://localhost:8765/*"],
+  "background": {"service_worker": "sw.js"},
+  "content_scripts": [
+    {"matches": ["http://localhost:8765/*"], "js": ["main_capture.js"], "run_at": "document_start", "world": "MAIN"}
+  ] }

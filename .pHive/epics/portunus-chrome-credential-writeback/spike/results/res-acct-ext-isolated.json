@@ -1,0 +1,36 @@
+{
+ "mode": "ext-isolated",
+ "old_sha": "e17ec17ff2a56a5a",
+ "new_sha": "f75cc7975f745ad6",
+ "seed": "ok",
+ "seed_account": "err:Could not add the password. Either the url is invalid, the password is empty or an entry with such origin and username already exists.",
+ "list_after_seed": [
+  {
+   "user": "spike-user",
+   "storedIn": "DEVICE"
+  }
+ ],
+ "call": {
+  "hasActivation": false,
+  "ok": true
+ },
+ "shot": "/home/node/spike-work/shots/ext-isolated.png",
+ "internals": [
+  "Message:  PasswordManager::CreatePendingLoginManagers ",
+  "Message:  PasswordManager::CreatePendingLoginManagers ",
+  "Message:  PasswordManager::IsAutomaticSavePromptAvailable ",
+  "Message:  No provisional save manager ",
+  "Message:  FormFetcherImpl::OnGetPasswordStoreResults ",
+  "Number of results from:   Profile Store: 1 ",
+  "Number of results from:   Account Store: 0 ",
+  "Number of unique matched credentials: 1",
+  "CM API save a credential: origin=http://localhost:8765, CredentialType=CredentialType::CREDENTIAL_TYPE_PASSWORD",
+  "Message:  FormFetcherImpl::OnGetPasswordStoreResults ",
+  "Number of results from:   Profile Store: 1 ",
+  "Number of results from:   Account Store: 0 ",
+  "Number of unique matched credentials: 1",
+  "Message:  Decision: UPDATE the saved credential with a new password on Profile Store ",
+  "The new state of the UI:  UPDATE_CONFIRMATION_STATE (3) "
+ ],
+ "leak_check_internals": "clean"
+}
