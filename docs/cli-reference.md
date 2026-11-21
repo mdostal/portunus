@@ -774,7 +774,8 @@ portunus parity check --all [--json]
 
 ### `rotation-bindings`
 
-Configure per-provider rotation provenance.
+Configure per-provider rotation provenance. To bind a provider and prove its first rotation, see the
+[Rotation Bindings Runbook](rotation-bindings-runbook.md).
 
 ```
 portunus rotation-bindings set <provider> [--status real|stub|manual] [--account <hint>]

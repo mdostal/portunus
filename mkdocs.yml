@@ -59,6 +59,7 @@ nav:
     - HTTP Routes & Write Credential: http-routes.md
   - Rotation: rotation.md
   - Provider Rotation Matrix: provider-rotation-matrix.md
+  - Rotation Bindings Runbook: rotation-bindings-runbook.md
   - n8n Rotation Runbook: n8n-rotation-runbook.md
   - Mobile Credentials Runbook: mobile-credentials-runbook.md
   - Zernio Rotation Runbook: zernio-rotation.md
