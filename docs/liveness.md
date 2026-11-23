@@ -110,6 +110,7 @@ provider's API docs and a real key.
 | `zernio` | `GET https://zernio.com/api/v1/profiles` (Bearer) | 401 only | Probes `*-api-key` only. 401 (`invalid_credentials`) is an invalid, revoked or expired key. A 403 is a valid key with its `accounts` group switched off, so it reads `unknown`. The webhook signing secret is never sent to Zernio's API: it reads `unknown` with no request, and sweeps skip it. `portunus rotate zernio` verifies it with a test delivery instead (see [zernio-rotation.md](zernio-rotation.md)). Tag a key stored under `gcp` with `liveness_provider=zernio`. |
 | `stripe` | `GET https://api.stripe.com/v1/balance` (Bearer) | 401 only | Probes secret (`sk_`) and restricted (`rk_`) keys. The key type comes from the prefix inside the resolver boundary and is named in the detail (`live restricted key: GET … -> 200`), and nothing after the prefix leaves the boundary. A 403 on a restricted key means Stripe accepted it but it lacks Balance read, so it reads `live` with that note. On a secret key a 403 reads `unknown`. Publishable keys (`pk_`), webhook secrets (`whsec_`), organization keys (`sk_org_`, which need a `Stripe-Context` header) and unrecognised values read `unknown` with no request. Sweeps skip `*-publishable-key` / `*-webhook-secret` names. Tag keys stored under `gcp` with `liveness_provider=stripe`. Not confirmed against a real key yet. Rotation: `StripeRotationAdapter`, `auto` through the v2 IAM preview API (see [rotation.md](rotation.md#stripe-api-keys)). |
 | `clerk` | `GET https://api.clerk.com/v1/jwks` (Bearer) | 401 only | Probes `*-clerk-secret-key` only. JWKS needs the secret key but returns only the instance's public signing keys, with no users, sessions or settings. A bogus `sk_test_` key got 401 `clerk_key_invalid` on 2026-10-18. A 403 reads `unknown`. The publishable key is public and the webhook signing secret is never sent to Clerk, so both read `unknown` with no request and sweeps skip them. A `pk_`/`whsec_` value stored under a secret-key name is also not sent, since it would read as a false `dead`. The live 200 path hasn't been confirmed against a real key yet. Tag keys stored under `gcp` with `liveness_provider=clerk`. See [Clerk](#clerk). |
+| `autumn` | `POST https://api.useautumn.com/v1/plans.list` with `{}` (Bearer) | 401 with `code: invalid_secret_key` only | Lists the environment's pricing plans: no customers, subscriptions or balances. Autumn answers every auth failure with 401 (`invalid_request` for a malformed header, `no_secret_key` for none), so the adapter reads the error body, but only to extract that `code` when it is one of those three; the message echoes the start of the key and is dropped. Any other 401, 403, 429 or 5xx reads `unknown`. Probes `am_sk_live_` (production) and `am_sk_test_` (sandbox) keys, named in the detail. A publishable key (`am_pk_`), a webhook secret (`whsec_`) or any other value isn't sent, and sweeps skip `*-publishable-key` / `*-webhook-secret` names. Bogus `am_sk_live_` and `am_sk_test_` keys got 401 `invalid_secret_key` on 2026-11-23. The live 200 path hasn't been confirmed against a real key yet. Tag keys stored under `gcp` with `liveness_provider=autumn`. No rotation API. See [Autumn](#autumn). |
 | `multica` | `GET <api>/api/me` (Bearer) | 401 only | Multica workspace personal access token (`mul_…`). Returns only the token owner's profile. A missing, unknown, revoked or expired PAT gets 401 `invalid token`; Multica's 403s are a temporarily disabled user or a CSRF failure, so they read `unknown`. The API base is the `multica_url` tag (a self-hosted instance's public API address), else `https://api.multica.ai`. A token sent to the wrong instance would read as a false `dead`, so tag self-hosted tokens. A stored value without the `mul_` prefix (a `mat_` run token, a session JWT) is not sent and reads `unknown`. A bogus `mul_` token got 401 from both `api.multica.ai` and a self-hosted backend on 2026-11-20, and a valid credential got 200 on the same route. See [Multica](#multica). |
 | `posthog` | personal key (`phx_`): `GET <host>/api/users/@me/` (Bearer); project token (`phc_`): `POST <host>/flags/?v=2` with the token in the JSON body | 401 on every host tried | The value's prefix picks the probe: a project token sent to the private API gets 401, a false `dead`. An unprefixed value falls back to the name (`*-personal-key`, `*-project-key`, `*-project-token`) or a `liveness_kind` tag; otherwise it isn't sent. `phs_` secret keys and `*-posthog-host` / `*-posthog-tracking` config aren't probed. Hosts: the `posthog_host` tag, else US then EU Cloud. A key only works on its own region, so it's `dead` only when every host answers 401. A 403 on the personal route (missing `user:read` scope) reads `unknown`. See [PostHog](#posthog). |
 | `linear` | `POST https://api.linear.app/graphql` with `{ viewer { id } }` | 401 only | Personal API key (`lin_api_…`) sent raw in `Authorization`, as Linear documents it; OAuth access token (`lin_oauth_…`) sent as Bearer. Returns only the key owner's user id. A value with neither prefix isn't sent (the wrong header form would read as a false `dead`). Linear answers rate limiting with 400 `RATELIMITED`, so 400/403/5xx read `unknown`. A bogus key got 401 `AUTHENTICATION_ERROR` on 2026-11-20. No rotation adapter: Linear has no API that issues or revokes personal API keys. See [Linear](#linear). |
@@ -131,8 +132,8 @@ Long-tail providers with no probe yet. They read `unknown` (no adapter):
 | Slack incoming webhooks | The URL is the credential. The only call is a POST to it, and a valid payload posts a message. |
 | Slack OAuth app credentials | Client secret, signing secret and verification token don't authenticate any read-only call on their own. |
 
-The other provider sub-issue of #141 adds its own: Autumn (#143). Linear (#196) is the `linear` row above.
-Vercel (#144), Convex (#142) and Clerk (#145) are the `vercel`, `convex` and `clerk` rows above.
+Autumn (#143), Linear (#196), Vercel (#144), Convex (#142) and Clerk (#145), the provider sub-issues of #141, are
+the `autumn`, `linear`, `vercel`, `convex` and `clerk` rows above.
 
 The event-source probes (PANT-1126 / #203) pick their adapter from `provider`, so they only
 apply once the references carry their real provider rather than `gcp`. See
@@ -219,6 +220,50 @@ per-instance variant, with `delay_old_secrets_expiration_hours` for overlap.
 It's in private beta and needs a Platform API access token, not the instance
 secret key, so auto-rotation isn't built. Rotate in the Clerk Dashboard
 (**API keys**) and re-sync every copy.
+
+## Autumn
+
+Autumn (PANT-1150, GH #143) is the key from the 2026-09-13 incident:
+`social-engine-prod-autumn-secret-key` in GCP Secret Manager had been invalid
+for about 4.5 months, and Autumn rejected it with
+`401 {"code":"invalid_secret_key", ...}`. Production kept working only because
+Convex held a different, valid copy (see [Parity](#parity)).
+
+```sh
+# --tags replaces the whole dict: include any tags the reference already has
+portunus retag social-engine-prod-autumn-secret-key --tags liveness_provider=autumn
+portunus liveness check social-engine-prod-autumn-secret-key
+#   DEAD     social-engine-prod-autumn-secret-key  provider=autumn  live secret key: POST https://api.useautumn.com/v1/plans.list -> 401 (invalid_secret_key) -- regenerate it in the Autumn dashboard and re-sync every copy  failing for 9s
+portunus liveness status --failing
+#   DEAD     social-engine-prod-autumn-secret-key  provider=autumn  checked 1s ago  failing for 9s (2 checks)
+```
+
+`check` exits `2` on a dead key, and the reference stays in
+`liveness status --failing` with its `first_failed_at` until a live check
+clears it. That is the escalation clock described above. Scheduled sweeps
+belong to #141.
+
+**Why only `invalid_secret_key` is dead.** Checked against
+`api.useautumn.com` on 2026-11-23: a well-formed but unknown key gets 401
+`invalid_secret_key`, a value without the `am_sk_` prefix gets 401
+`invalid_request` ("Invalid authorization token prefix") and a request with no
+key gets 401 `no_secret_key`. Autumn authenticates before routing, so an
+unknown path gets the same answers. The adapter keeps the `code` only when it
+is one of those three, and never reads a 2xx body.
+
+**Probe route.** The ticket proposed `GET /v1/customers?limit=10`. The
+current API is RPC-style (`POST /v1/<resource>.<method>`), and listing
+customers returns customer data, so the probe uses `POST /v1/plans.list`
+instead, which returns only the pricing catalog.
+
+**Rotation.** Autumn has no API that rotates or regenerates an
+organization's secret key. The `keys` API (`mint`, `refresh`, `revoke`) only
+handles per-customer `am_jwt_` tokens, `atmn login` writes keys through a
+browser sign-in, and the Platform API only creates keys for new tenant
+organizations. So Portunus can only detect and alert: a human regenerates the
+key in the Autumn dashboard, then updates every copy (GCP Secret Manager, the
+Convex `AUTUMN_SECRET_KEY` env var, ...) and confirms with
+`portunus parity check`.
 
 ## Multica
 

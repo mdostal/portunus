@@ -746,7 +746,7 @@ Rotation is still `unknown` for these rows, but Browserbase, Firecrawl, Healthch
 
 | provider | credential_type | vault_examples | what to verify |
 |---|---|---|---|
-| Autumn | App secret key / webhook secret | `autumn-sandbox-flayr-secret-key`, `*-autumn-secret-key`, `*-autumn-webhook-secret` | Autumn (useautumn.com) subscription billing; no rotation API found in public docs at research time |
+| Autumn | App secret key / webhook secret | `autumn-sandbox-flayr-secret-key`, `*-autumn-secret-key`, `*-autumn-webhook-secret` | Autumn (useautumn.com) subscription billing. No API rotates an organization's secret key: the `keys` API only handles per-customer `am_jwt_` tokens (checked 2026-11-23, PANT-1150). Regenerate in the dashboard. The secret key has a liveness probe (`autumn`, see [liveness.md](liveness.md#autumn)) |
 | Browserbase | API key | `browserbase-api-key`, `browserbase-project-id` | Browser automation SaaS; `browserbase-project-id` is a config value, not a credential; key rotation API not found |
 | Clerk | Backend secret key / webhook secret | `*-clerk-secret-key`, `*-clerk-webhook-secret`, `*-clerk-publishable-key` | Clerk Dashboard has a "Rotate API key" UI. The Backend API has no instance-key rotate endpoint. The private-beta Platform API has `POST /v1/platform/applications/{id}/rotate_secret_keys` (needs a Platform API token; checked 2026-10-18, PANT-1148). The secret key has a liveness probe (`clerk`, see [liveness.md](liveness.md#clerk)) |
 | Convex | Deploy key / internal secret | `*-convex-deploy-key`, `*-convex-internal-secret`, `*-convex-deployment` | Convex management API exists; key rotation endpoints for deploy keys not confirmed; `*-convex-deployment` is a URL (config, not credential) |

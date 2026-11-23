@@ -48,7 +48,9 @@ probes API keys only; Clerk, PANT-1148, probes the instance secret key
 against the JWKS endpoint; PostHog, PANT-1130, picks its probe from the
 key's prefix because a project token and a personal API key authenticate
 different routes; Anthropic, PANT-1132, probes LLM API keys via the free Models
-API and only date-checks Claude Code OAuth setup-tokens). See docs/liveness.md.
+API and only date-checks Claude Code OAuth setup-tokens; Autumn, PANT-1150,
+reads only the error `code` because every Autumn auth failure is a 401).
+See docs/liveness.md.
 """
 from __future__ import annotations
 
@@ -1473,6 +1475,134 @@ class ClerkLivenessAdapter(CredentialKindLivenessAdapter):
 
 
 register_liveness_adapter("clerk", ClerkLivenessAdapter)
+
+
+# ---------------------------------------------------------------------------
+# Autumn (PANT-1150, GH #143). The 2026-09-13 incident's dead key:
+# `social-engine-prod-autumn-secret-key` in GCP Secret Manager had been
+# invalid for ~4.5 months and nothing noticed.
+#
+# Checked against api.useautumn.com on 2026-11-23 with bogus keys: Autumn
+# answers EVERY auth failure with 401 and tells them apart only by the body's
+# `code` -- `invalid_secret_key` (a well-formed key Autumn doesn't know),
+# `invalid_request` ("Invalid authorization token prefix"), `no_secret_key`
+# (no Authorization header). Auth runs before routing, so even an unknown
+# path gets the same 401s. Only `invalid_secret_key` proves the stored key is
+# dead. The error message echoes the start of the key back, so the body is
+# read only to pull out `code`, and only when it is one of the known codes.
+# ---------------------------------------------------------------------------
+
+# transport(method, url, headers, body, timeout) -> (HTTP status, error code).
+# The error code is one of `AUTUMN_ERROR_CODES` or "" -- never anything else
+# from the body.
+AutumnTransport = Callable[[str, str, Mapping[str, str], Optional[bytes], float], Tuple[int, str]]
+
+AUTUMN_ERROR_CODES = ("invalid_secret_key", "invalid_request", "no_secret_key")
+_AUTUMN_BODY_LIMIT = 16 * 1024
+
+
+def _autumn_error_code(raw: bytes) -> str:
+    """The body's `code` if it is one of the known auth codes, else "".
+    The parsed body is dropped here: the `message` echoes part of the key."""
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        return ""
+    code = data.get("code") if isinstance(data, dict) else None
+    return code if code in AUTUMN_ERROR_CODES else ""
+
+
+def _default_autumn_transport(method: str, url: str, headers: Mapping[str, str],
+                              body: Optional[bytes], timeout: float) -> Tuple[int, str]:
+    """Like `_default_body_transport`, but on an error status reads the
+    (bounded) body for the error code. A 2xx body (the plan catalog) is
+    never read."""
+    headers = {"User-Agent": "portunus-liveness", **headers}
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, ""
+    except urllib.error.HTTPError as exc:
+        try:
+            code = _autumn_error_code(exc.read(_AUTUMN_BODY_LIMIT))
+        except OSError:
+            code = ""
+        finally:
+            exc.close()
+        return exc.code, code
+    except (urllib.error.URLError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise LivenessError(f"request failed: {type(reason).__name__}") from None
+
+
+class AutumnLivenessAdapter:
+    """Autumn: `POST https://api.useautumn.com/v1/plans.list` with `{}` and
+    the secret key as a bearer token. It lists the environment's pricing
+    plans -- no customers, subscriptions or balances -- and changes nothing.
+
+    401 with `code: invalid_secret_key` is dead. Any other 401 (malformed
+    header, no key) is not proof the key is dead and reads unknown, as do
+    403, 429 and 5xx.
+
+    The key prefix picks the environment (`am_sk_test_` is sandbox,
+    `am_sk_live_` is production, both on the same host) and is named in the
+    detail; nothing after the prefix leaves the boundary. A publishable key
+    (`am_pk_`), a webhook signing secret (`whsec_`) or any other value is not
+    sent. Sweeps skip `*-publishable-key` / `*-webhook-secret` names.
+
+    Autumn has no API that rotates an organization's secret key (the `keys`
+    API only mints per-customer `am_jwt_` tokens), so a dead key has to be
+    regenerated in the Autumn dashboard."""
+
+    provider = "autumn"
+    URL = "https://api.useautumn.com/v1/plans.list"
+    BODY = b"{}"
+    NOT_SENT = -1  # boundary sentinel: never a real HTTP status
+    KEY_PREFIXES = (("am_sk_live_", "live secret key"), ("am_sk_test_", "sandbox secret key"))
+    _NOT_SECRET = (("am_pk_", "publishable key"), ("whsec_", "webhook signing secret"))
+    _SKIP_NAME_KINDS = ("publishable-key", "webhook-secret")
+
+    def __init__(self, transport: Optional[AutumnTransport] = None, timeout: float = _DEFAULT_TIMEOUT):
+        self._transport = transport or _default_autumn_transport
+        self._timeout = timeout
+
+    def can_probe(self, ref) -> bool:
+        return credential_kind(ref, self._SKIP_NAME_KINDS) == ""
+
+    def check(self, ref, resolver) -> LivenessResult:
+        def boundary(value: str) -> Tuple[str, int, str]:
+            value = value.strip()
+            for prefix, label in self.KEY_PREFIXES:
+                if value.startswith(prefix):
+                    headers = {"Authorization": f"Bearer {value}", "Content-Type": "application/json"}
+                    code, err = self._transport("POST", self.URL, headers, self.BODY, self._timeout)
+                    return label, code, err
+            for prefix, label in self._NOT_SECRET:
+                if value.startswith(prefix):
+                    return label, self.NOT_SENT, ""
+            return "", self.NOT_SENT, ""
+
+        kind, code, err = resolver.resolve_call("{{secret:%s}}" % ref.name, boundary)
+        if code == self.NOT_SENT:
+            what = kind or "unrecognised prefix (not am_sk_live_/am_sk_test_)"
+            return LivenessResult(ref.name, self.provider, UNKNOWN,
+                                  detail=f"{what}: not probed -- only an Autumn secret key "
+                                         "authenticates the API")
+        detail = f"{kind}: POST {self.URL} -> {code}"
+        if 200 <= code < 300:
+            status = LIVE
+        elif code == 401 and err == "invalid_secret_key":
+            status = DEAD
+            detail += (" (invalid_secret_key) -- regenerate it in the Autumn dashboard "
+                       "and re-sync every copy")
+        else:
+            status = UNKNOWN
+            if code == 401:
+                detail += f" ({err or 'no error code'}; not proof the key is dead)"
+        return LivenessResult(ref.name, self.provider, status, http_status=code, detail=detail)
+
+
+register_liveness_adapter("autumn", AutumnLivenessAdapter)
 
 
 # ---------------------------------------------------------------------------

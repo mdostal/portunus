@@ -6,6 +6,14 @@ All notable changes to Portunus are documented in this file.
 
 ### Added
 
+- **Autumn secret key liveness probe (PANT-1150, GH #143).** `portunus liveness check` now
+  probes Autumn secret keys (`am_sk_live_` / `am_sk_test_`) with `POST /v1/plans.list`, which
+  returns only the pricing catalog. Autumn uses 401 for every auth failure, so a key reads `dead`
+  only on 401 `invalid_secret_key`, the response the incident key got. The error body is reduced
+  to that code (its message echoes part of the key). Publishable keys and webhook secrets are not
+  sent. Tag keys stored under `gcp` with `liveness_provider=autumn`. Autumn has no API to rotate
+  an organization's secret key, so a dead key still has to be regenerated in the dashboard.
+
 - **`portunus browser fill`: type a secret into a browser tab field (PANT-1400, GH #258).** Over
   the Chrome DevTools Protocol (stdlib client, loopback endpoints only) Portunus types a value into
   a field of an open tab and returns only "typed N characters" plus the origin. Fields of a JSON
